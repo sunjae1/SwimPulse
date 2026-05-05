@@ -1,0 +1,29 @@
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Java / Gradle
+backend/.gradle/
+backend/build/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+
+# Logs
+*.log
+
+# Local secrets
+.env
+!.env.example
+backend/.env
+!backend/.env.example
+frontend/.env
+!frontend/.env.example
+firebase-service-account*.json
+backend/firebase-service-account*.json
+backend/*firebase-adminsdk*.json

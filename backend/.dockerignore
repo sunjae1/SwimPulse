@@ -1,0 +1,8 @@
+.gradle
+build
+out
+*.iml
+*.log
+.env
+*firebase-adminsdk*.json
+firebase-service-account*.json
