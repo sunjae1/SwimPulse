@@ -4,13 +4,82 @@ export type NotificationStatus = "QUEUED" | "SENT" | "FAILED";
 
 export type NotificationType = "REGISTRATION_REMINDER" | "REGISTRATION_OPEN";
 
+export type GeocodeStatus = "PENDING" | "SUCCESS" | "FAILED";
+
 export type Pool = {
   id: number;
   name: string;
+  address: string | null;
+  district: string | null;
+  websiteUrl: string | null;
+  description: string | null;
+  completionYear: number | null;
+  indoorOutdoorTypeName: string | null;
+  ownerAgencyName: string | null;
+  managementAgencyName: string | null;
+  operatingOrganizationName: string | null;
+  contactNumber: string | null;
+  standardPoolLengthMeters: number | null;
+  standardPoolLaneCount: number | null;
+  postalCode: string | null;
+  lotNumberAddress: string | null;
+  roadNameAddress: string | null;
+  homepageUrl: string | null;
+  imageUrl: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geocodeStatus: GeocodeStatus;
+};
+
+export type NearbyPool = {
+  pool: Pool;
+  distanceMeters: number;
+};
+
+export type LocationSearchCandidate = {
+  title: string;
+  category: string | null;
+  address: string | null;
+  roadAddress: string | null;
+  link: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  alreadyExists: boolean;
+  matchedPoolId: number | null;
+  distanceMeters: number | null;
+  homepageUrl: string | null;
+};
+
+export type GeocodedLocation = {
   address: string;
-  district: string;
-  websiteUrl: string;
-  description: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type NoticeExtractionStatus = "EXTRACTED" | "LINK_ONLY" | "FAILED";
+
+export type PoolNotice = {
+  id: number;
+  poolId: number;
+  poolName: string;
+  title: string;
+  url: string;
+  publishedAt: string | null;
+  extractionStatus: NoticeExtractionStatus;
+  confidence: number | null;
+  registrationStartsAt: string | null;
+  registrationEndsAt: string | null;
+  reason: string | null;
+};
+
+export type NoticeScanResponse = {
+  poolId: number;
+  poolName: string;
+  homepageUrl: string;
+  scannedLinks: number;
+  notices: PoolNotice[];
+  message: string;
+  trace: string[];
 };
 
 export type RegistrationEvent = {

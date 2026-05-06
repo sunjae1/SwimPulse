@@ -23,7 +23,8 @@ public class SecurityConfig {
 				.csrf(AbstractHttpConfigurer::disable)
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
-						.requestMatchers(HttpMethod.GET, "/api/pools", "/api/events").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/pools", "/api/pools/nearby", "/api/events").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/locations/search", "/api/locations/geocode").permitAll()
 						.requestMatchers("/api/**").authenticated()
 						.anyRequest().permitAll()
 				)

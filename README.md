@@ -10,9 +10,23 @@
 
 ## Local Run
 
-백엔드, MySQL, Redis는 Docker Compose로 실행합니다. 프론트는 Next.js dev server로 따로 실행합니다.
+백엔드와 Redis는 Docker Compose로 실행합니다. MySQL은 로컬 PC에 설치된 MySQL을 사용하고, 프론트는 Next.js dev server로 따로 실행합니다.
 
 처음 실행 전 `backend/.env.example`을 기준으로 `backend/.env`를 만들고 Google OAuth/FCM 값을 채웁니다. 이 파일은 로컬 비밀값이므로 Git에 올리지 않습니다.
+
+로컬 MySQL에는 아래 DB와 계정이 준비되어 있어야 합니다.
+
+```sql
+CREATE DATABASE swimpulse
+  DEFAULT CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+CREATE USER 'swimpulse'@'localhost' IDENTIFIED BY 'swimpulse';
+
+GRANT ALL PRIVILEGES ON swimpulse.* TO 'swimpulse'@'localhost';
+
+FLUSH PRIVILEGES;
+```
 
 ```powershell
 docker compose up -d
@@ -25,8 +39,8 @@ npm run dev
 
 - Backend API: http://localhost:8080
 - Frontend: http://localhost:3000
-- MySQL: localhost:3307 -> container 3306
-- Redis: localhost:6379
+- MySQL: localhost:3306
+- Redis: localhost:6379 -> container 6379
 
 Google OAuth를 사용하려면 백엔드 실행 환경에 아래 값을 넣습니다.
 
@@ -37,14 +51,24 @@ SWIMPULSE_JWT_SECRET=change-this-to-a-random-secret-at-least-32-characters
 SWIMPULSE_OAUTH2_REDIRECT_URI=http://localhost:3000/login/oauth2/code/google
 SWIMPULSE_AUTH_COOKIE_SECURE=false
 SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=http://localhost:3000?login=success
+NAVER_MAPS_CLIENT_ID=
+NAVER_MAPS_CLIENT_SECRET=
+NAVER_SEARCH_CLIENT_ID=
+NAVER_SEARCH_CLIENT_SECRET=
+OPENAI_API_KEY=
+SWIMPULSE_OPENAI_MODEL=gpt-5.4-mini
 ```
 
-Docker Compose에서는 이 값들이 `env_file: ./backend/.env`로 백엔드 컨테이너에 주입됩니다. 백엔드 컨테이너 내부에서는 MySQL/Redis를 `localhost`가 아니라 compose 서비스명으로 접근합니다.
+Docker Compose에서는 이 값들이 `env_file: ./backend/.env`로 백엔드 컨테이너에 주입됩니다. 백엔드 컨테이너 내부에서 로컬 PC의 MySQL에 붙을 때는 `localhost`가 아니라 `host.docker.internal`을 사용합니다. Redis는 compose 서비스명이 `redis`이므로 그대로 `redis`를 사용합니다.
 
 ```env
-SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/swimpulse?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/swimpulse?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+SPRING_DATASOURCE_USERNAME=swimpulse
+SPRING_DATASOURCE_PASSWORD=swimpulse
 SPRING_DATA_REDIS_HOST=redis
 ```
+
+IntelliJ나 `gradlew bootRun`처럼 백엔드를 Docker 밖에서 직접 실행할 때는 기본값으로 `localhost:3306` MySQL과 `localhost:6379` Redis를 사용합니다.
 
 Google Cloud Console의 OAuth Client에는 로컬 개발용 redirect URI로 아래 값을 등록합니다.
 
@@ -106,6 +130,7 @@ SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=https://unnamable-preset-contact.ngrok-free.
 ## MVP Features
 
 - 수영장 목록 조회
+- 현재 위치 기준 가까운 수영장 10개 조회
 - Google OAuth 로그인
 - JWT HttpOnly 쿠키 기반 로그인 유지
 - 로그인 사용자 기준 수영장 구독/해지
@@ -125,6 +150,12 @@ SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=https://unnamable-preset-contact.ngrok-free.
 | GET | `/api/me` | 현재 로그인 사용자 |
 | POST | `/api/auth/logout` | 로그아웃 |
 | GET | `/api/pools` | 수영장 목록 |
+| GET | `/api/pools/nearby?latitude=37.5665&longitude=126.9780&limit=10` | 가까운 수영장 목록 |
+| GET | `/api/locations/search?query=화성남부국민체육센터&display=5` | 네이버 지역 검색 후보 |
+| GET | `/api/locations/geocode?address=경기 화성시 우정읍 조암리 385` | 주소 좌표 변환 |
+| POST | `/api/pools/from-location-candidate` | 검색 후보를 수영장으로 추가 |
+| POST | `/api/pools/homepages/enrich?limit=50` | 네이버 지역 검색으로 홈페이지 URL 보강 |
+| POST | `/api/pools/{poolId}/notices/scan` | 홈페이지 공지 후보 수집과 모집 기간 추출 |
 | GET | `/api/events` | 접수 이벤트 목록 |
 | POST | `/api/events` | 수동 접수 이벤트 등록 |
 | GET | `/api/subscriptions` | 현재 사용자 구독 목록 |

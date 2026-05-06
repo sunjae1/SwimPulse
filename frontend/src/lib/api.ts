@@ -2,7 +2,11 @@ import type {
   AppUser,
   DashboardInitialData,
   DeviceRegistration,
+  GeocodedLocation,
   InAppNotification,
+  LocationSearchCandidate,
+  NearbyPool,
+  NoticeScanResponse,
   Pool,
   RegistrationEvent,
   Subscription,
@@ -24,6 +28,22 @@ const fallbackPools: Pool[] = [
     district: "강남구",
     websiteUrl: "https://www.gangnam.go.kr",
     description: "새벽반과 저녁반 경쟁률이 높은 공공 수영장입니다.",
+    completionYear: 2016,
+    indoorOutdoorTypeName: "실내",
+    ownerAgencyName: "강남구",
+    managementAgencyName: "시설관리공단",
+    operatingOrganizationName: "시설관리공단",
+    contactNumber: "02-0000-0000",
+    standardPoolLengthMeters: 25,
+    standardPoolLaneCount: 6,
+    postalCode: "06362",
+    lotNumberAddress: "서울특별시 강남구 수서동 718",
+    roadNameAddress: "서울 강남구 밤고개로1길 52",
+    homepageUrl: "https://www.gangnam.go.kr",
+    imageUrl: null,
+    latitude: null,
+    longitude: null,
+    geocodeStatus: "PENDING",
   },
   {
     id: 2,
@@ -32,6 +52,22 @@ const fallbackPools: Pool[] = [
     district: "마포구",
     websiteUrl: "https://www.mapo.go.kr",
     description: "월초 접수 알림 수요가 많은 구민 체육시설입니다.",
+    completionYear: 2004,
+    indoorOutdoorTypeName: "실내",
+    ownerAgencyName: "마포구",
+    managementAgencyName: "마포구시설관리공단",
+    operatingOrganizationName: "마포구시설관리공단",
+    contactNumber: "02-0000-0000",
+    standardPoolLengthMeters: 25,
+    standardPoolLaneCount: 6,
+    postalCode: "03926",
+    lotNumberAddress: "서울특별시 마포구 망원동 450-3",
+    roadNameAddress: "서울 마포구 월드컵로25길 190",
+    homepageUrl: "https://www.mapo.go.kr",
+    imageUrl: null,
+    latitude: null,
+    longitude: null,
+    geocodeStatus: "PENDING",
   },
   {
     id: 3,
@@ -40,6 +76,22 @@ const fallbackPools: Pool[] = [
     district: "성동구",
     websiteUrl: "https://www.sd.go.kr",
     description: "직장인반과 어린이반 모집 공지가 자주 갱신됩니다.",
+    completionYear: 2012,
+    indoorOutdoorTypeName: "실내",
+    ownerAgencyName: "성동구",
+    managementAgencyName: "성동구도시관리공단",
+    operatingOrganizationName: "성동구도시관리공단",
+    contactNumber: "02-0000-0000",
+    standardPoolLengthMeters: 25,
+    standardPoolLaneCount: 6,
+    postalCode: "04808",
+    lotNumberAddress: "서울특별시 성동구 용답동 182-4",
+    roadNameAddress: "서울 성동구 천호대로78길 15-48",
+    homepageUrl: "https://www.sd.go.kr",
+    imageUrl: null,
+    latitude: null,
+    longitude: null,
+    geocodeStatus: "PENDING",
   },
 ];
 
@@ -147,6 +199,56 @@ export async function logout(): Promise<void> {
 
 export async function getEvents(): Promise<RegistrationEvent[]> {
   return request<RegistrationEvent[]>("/api/events");
+}
+
+export async function getNearbyPools(latitude: number, longitude: number, limit = 10): Promise<NearbyPool[]> {
+  const params = new URLSearchParams({
+    latitude: latitude.toString(),
+    longitude: longitude.toString(),
+    limit: limit.toString(),
+  });
+  return request<NearbyPool[]>(`/api/pools/nearby?${params.toString()}`);
+}
+
+export async function searchLocations(
+  query: string,
+  display = 5,
+  location?: { latitude: number; longitude: number } | null,
+): Promise<LocationSearchCandidate[]> {
+  const params = new URLSearchParams({
+    query,
+    display: display.toString(),
+  });
+  if (location) {
+    params.set("latitude", location.latitude.toString());
+    params.set("longitude", location.longitude.toString());
+  }
+  return request<LocationSearchCandidate[]>(`/api/locations/search?${params.toString()}`);
+}
+
+export async function geocodeLocation(address: string): Promise<GeocodedLocation> {
+  const params = new URLSearchParams({ address });
+  return request<GeocodedLocation>(`/api/locations/geocode?${params.toString()}`);
+}
+
+export async function createPoolFromLocationCandidate(candidate: LocationSearchCandidate): Promise<Pool> {
+  return request<Pool>("/api/pools/from-location-candidate", {
+    method: "POST",
+    body: JSON.stringify({
+      title: candidate.title,
+      address: candidate.address,
+      roadAddress: candidate.roadAddress,
+      link: candidate.link,
+      latitude: candidate.latitude,
+      longitude: candidate.longitude,
+    }),
+  });
+}
+
+export async function scanPoolNotices(poolId: number): Promise<NoticeScanResponse> {
+  return request<NoticeScanResponse>(`/api/pools/${poolId}/notices/scan`, {
+    method: "POST",
+  });
 }
 
 export async function getSubscriptions(): Promise<Subscription[]> {

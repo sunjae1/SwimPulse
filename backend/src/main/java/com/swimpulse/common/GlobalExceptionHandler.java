@@ -5,9 +5,11 @@ import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -29,6 +31,22 @@ public class GlobalExceptionHandler {
 				.map(this::formatFieldError)
 				.collect(Collectors.joining(", "));
 		return build(HttpStatus.BAD_REQUEST, message, request);
+	}
+
+	@ExceptionHandler(MissingServletRequestParameterException.class)
+	public ResponseEntity<ApiError> handleMissingRequestParameter(
+			MissingServletRequestParameterException exception,
+			HttpServletRequest request
+	) {
+		return build(HttpStatus.BAD_REQUEST, exception.getParameterName() + " is required", request);
+	}
+
+	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
+	public ResponseEntity<ApiError> handleTypeMismatch(
+			MethodArgumentTypeMismatchException exception,
+			HttpServletRequest request
+	) {
+		return build(HttpStatus.BAD_REQUEST, exception.getName() + " has invalid value", request);
 	}
 
 	@ExceptionHandler(Exception.class)
