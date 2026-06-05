@@ -9,6 +9,13 @@ export function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+export function formatDate(value: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
 export function formatTimeLeft(value: string) {
   const diff = new Date(value).getTime() - Date.now();
   if (diff <= 0) {

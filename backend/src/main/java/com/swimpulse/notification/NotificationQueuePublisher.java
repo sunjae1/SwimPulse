@@ -1,11 +1,15 @@
 package com.swimpulse.notification;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 @Component
 public class NotificationQueuePublisher {
+	private static final Logger log = LoggerFactory.getLogger(NotificationQueuePublisher.class);
+
 	private final StringRedisTemplate redisTemplate;
 	private final String queueKey;
 
@@ -19,5 +23,6 @@ public class NotificationQueuePublisher {
 
 	public void publish(Long notificationId) {
 		redisTemplate.opsForList().rightPush(queueKey, notificationId.toString());
+		log.info("Notification queued. notificationId={} queueKey={}", notificationId, queueKey);
 	}
 }

@@ -5,6 +5,7 @@ public record HomepageEnrichmentResult(
 		String poolName,
 		HomepageEnrichmentStatus status,
 		String homepageUrl,
+		String previousHomepageUrl,
 		String candidateTitle,
 		String candidateAddress,
 		String candidateHomepageUrl,

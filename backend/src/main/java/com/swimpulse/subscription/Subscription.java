@@ -1,5 +1,6 @@
 package com.swimpulse.subscription;
 
+import com.swimpulse.event.RegistrationEvent;
 import com.swimpulse.pool.Pool;
 import com.swimpulse.user.AppUser;
 import jakarta.persistence.Entity;
@@ -16,7 +17,7 @@ import java.time.Instant;
 @Entity
 @Table(
 		name = "subscriptions",
-		uniqueConstraints = @UniqueConstraint(name = "uk_subscription_user_pool", columnNames = {"user_id", "pool_id"})
+		uniqueConstraints = @UniqueConstraint(name = "uk_subscription_user_event", columnNames = {"user_id", "event_id"})
 )
 public class Subscription {
 	@Id
@@ -31,14 +32,19 @@ public class Subscription {
 	@JoinColumn(name = "pool_id", nullable = false)
 	private Pool pool;
 
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "event_id")
+	private RegistrationEvent event;
+
 	private Instant createdAt;
 
 	protected Subscription() {
 	}
 
-	public Subscription(AppUser user, Pool pool) {
+	public Subscription(AppUser user, RegistrationEvent event) {
 		this.user = user;
-		this.pool = pool;
+		this.event = event;
+		this.pool = event.getPool();
 		this.createdAt = Instant.now();
 	}
 
@@ -52,6 +58,10 @@ public class Subscription {
 
 	public Pool getPool() {
 		return pool;
+	}
+
+	public RegistrationEvent getEvent() {
+		return event;
 	}
 
 	public Instant getCreatedAt() {

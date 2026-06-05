@@ -4,6 +4,8 @@ import com.swimpulse.common.BadRequestException;
 import java.net.URI;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
@@ -12,6 +14,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
 public class NaverLocalSearchClient {
+	private static final Logger log = LoggerFactory.getLogger(NaverLocalSearchClient.class);
 	private static final String NAVER_LOCAL_SEARCH_URL = "https://openapi.naver.com/v1/search/local.json";
 	private static final Pattern HTML_TAG = Pattern.compile("<[^>]*>");
 
@@ -33,6 +36,7 @@ public class NaverLocalSearchClient {
 		if (!isConfigured()) {
 			throw new BadRequestException("Naver Search API credentials are not configured.");
 		}
+		log.info("Naver local search requested. query={} display={}", query, display);
 
 		URI uri = UriComponentsBuilder.fromUriString(NAVER_LOCAL_SEARCH_URL)
 				.queryParam("query", query)
@@ -57,10 +61,11 @@ public class NaverLocalSearchClient {
 		}
 
 		if (response == null || response.items() == null) {
+			log.info("Naver local search returned no items. query={}", query);
 			return List.of();
 		}
 
-		return response.items()
+		List<LocationSearchCandidate> candidates = response.items()
 				.stream()
 				.map(item -> LocationSearchCandidate.basic(
 						stripHtml(item.title()),
@@ -70,6 +75,8 @@ public class NaverLocalSearchClient {
 						emptyToNull(item.link())
 				))
 				.toList();
+		log.info("Naver local search completed. query={} resultCount={}", query, candidates.size());
+		return candidates;
 	}
 
 	private boolean isConfigured() {

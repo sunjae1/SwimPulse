@@ -48,6 +48,10 @@ public class PoolNotice {
 
 	private Instant registrationEndsAt;
 
+	@Lob
+	@Column(columnDefinition = "LONGTEXT")
+	private String registrationPeriodsJson;
+
 	@Column(length = 500)
 	private String reason;
 
@@ -68,6 +72,21 @@ public class PoolNotice {
 			Instant registrationEndsAt,
 			String reason
 	) {
+		this(pool, title, url, rawText, extractionStatus, confidence, registrationStartsAt, registrationEndsAt, reason, null);
+	}
+
+	public PoolNotice(
+			Pool pool,
+			String title,
+			String url,
+			String rawText,
+			NoticeExtractionStatus extractionStatus,
+			Double confidence,
+			Instant registrationStartsAt,
+			Instant registrationEndsAt,
+			String reason,
+			String registrationPeriodsJson
+	) {
 		this.pool = pool;
 		this.title = title;
 		this.url = url;
@@ -77,7 +96,28 @@ public class PoolNotice {
 		this.registrationStartsAt = registrationStartsAt;
 		this.registrationEndsAt = registrationEndsAt;
 		this.reason = reason;
+		this.registrationPeriodsJson = registrationPeriodsJson;
 		this.createdAt = Instant.now();
+	}
+
+	public void updateExtraction(
+			String title,
+			String rawText,
+			NoticeExtractionStatus extractionStatus,
+			Double confidence,
+			Instant registrationStartsAt,
+			Instant registrationEndsAt,
+			String reason,
+			String registrationPeriodsJson
+	) {
+		this.title = title;
+		this.rawText = rawText;
+		this.extractionStatus = extractionStatus;
+		this.confidence = confidence;
+		this.registrationStartsAt = registrationStartsAt;
+		this.registrationEndsAt = registrationEndsAt;
+		this.reason = reason;
+		this.registrationPeriodsJson = registrationPeriodsJson;
 	}
 
 	public Long getId() {
@@ -114,6 +154,10 @@ public class PoolNotice {
 
 	public Instant getRegistrationEndsAt() {
 		return registrationEndsAt;
+	}
+
+	public String getRegistrationPeriodsJson() {
+		return registrationPeriodsJson;
 	}
 
 	public String getReason() {

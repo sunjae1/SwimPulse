@@ -37,6 +37,7 @@ public class NotificationWorker {
 			}
 			try {
 				Long notificationId = Long.valueOf(rawId);
+				log.info("Notification queue item received. notificationId={}", notificationId);
 				boolean shouldRetry = notificationService.deliver(notificationId);
 				if (shouldRetry) {
 					notificationService.requeue(notificationId);

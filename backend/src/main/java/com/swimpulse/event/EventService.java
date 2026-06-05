@@ -9,12 +9,16 @@ import com.swimpulse.pool.PoolRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class EventService {
+	private static final Logger log = LoggerFactory.getLogger(EventService.class);
+
 	private final RegistrationEventRepository eventRepository;
 	private final PoolRepository poolRepository;
 	private final NotificationService notificationService;
@@ -67,47 +71,73 @@ public class EventService {
 				request.registrationEndsAt(),
 				calculateStatus(request.registrationStartsAt(), request.registrationEndsAt(), Instant.now())
 		);
-		return EventResponse.from(eventRepository.save(event));
+		RegistrationEvent saved = eventRepository.save(event);
+		log.info("Registration event created. eventId={} poolId={} status={} startsAt={} endsAt={}",
+				saved.getId(), pool.getId(), saved.getStatus(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
+		return EventResponse.from(saved);
 	}
 
 	@Transactional
 	public EventResponse updateStatus(Long eventId, EventStatus status) {
 		RegistrationEvent event = getEvent(eventId);
 		event.changeStatus(status);
+		log.info("Registration event status updated. eventId={} status={}", eventId, status);
 		return EventResponse.from(event);
 	}
 
 	@Transactional
-	public void refreshStatuses() {
+	public EventStatusRefreshResult refreshStatuses() {
 		Instant now = Instant.now();
-		eventRepository.findAll().forEach(event -> event.changeStatus(calculateStatus(
-				event.getRegistrationStartsAt(),
-				event.getRegistrationEndsAt(),
-				now
-		)));
+		List<RegistrationEvent> events = eventRepository.findAll();
+		int changed = 0;
+		for (RegistrationEvent event : events) {
+			EventStatus before = event.getStatus();
+			event.changeStatus(calculateStatus(
+					event.getRegistrationStartsAt(),
+					event.getRegistrationEndsAt(),
+					now
+			));
+			if (before != event.getStatus()) {
+				changed++;
+			}
+		}
+		if (changed > 0) {
+			log.info("Registration event statuses refreshed. total={} changed={}", events.size(), changed);
+		} else {
+			log.debug("Registration event statuses checked. total={} changed=0", events.size());
+		}
+		return new EventStatusRefreshResult(events.size(), changed);
 	}
 
 	@Transactional
-	public void queueDueRegistrationNotifications() {
+	public DueNotificationQueueResult queueDueRegistrationNotifications() {
 		Instant now = Instant.now();
 		Instant reminderThreshold = now.plus(reminderMinutes, ChronoUnit.MINUTES);
 		List<RegistrationEvent> activeEvents = eventRepository.findByStatusInOrderByRegistrationStartsAtAsc(
 				List.of(EventStatus.UPCOMING, EventStatus.OPEN)
 		);
+		int reminderEvents = 0;
+		int openEvents = 0;
+		int notificationsCreated = 0;
 
 		for (RegistrationEvent event : activeEvents) {
 			if (!event.isReminderQueued()
 					&& event.getRegistrationStartsAt().isAfter(now)
 					&& !event.getRegistrationStartsAt().isAfter(reminderThreshold)) {
-				notificationService.createAndQueueForEvent(event, NotificationType.REGISTRATION_REMINDER);
+				notificationsCreated += notificationService.createAndQueueForEvent(event, NotificationType.REGISTRATION_REMINDER);
 				event.markReminderQueued();
+				reminderEvents++;
+				log.info("Reminder notifications queued. eventId={} poolId={}", event.getId(), event.getPool().getId());
 			}
 
 			if (!event.isStartQueued() && !event.getRegistrationStartsAt().isAfter(now)) {
-				notificationService.createAndQueueForEvent(event, NotificationType.REGISTRATION_OPEN);
+				notificationsCreated += notificationService.createAndQueueForEvent(event, NotificationType.REGISTRATION_OPEN);
 				event.markStartQueued();
+				openEvents++;
+				log.info("Registration-open notifications queued. eventId={} poolId={}", event.getId(), event.getPool().getId());
 			}
 		}
+		return new DueNotificationQueueResult(activeEvents.size(), reminderEvents, openEvents, notificationsCreated);
 	}
 
 	private RegistrationEvent getEvent(Long eventId) {
@@ -123,5 +153,16 @@ public class EventService {
 			return EventStatus.OPEN;
 		}
 		return EventStatus.CLOSED;
+	}
+
+	public record EventStatusRefreshResult(int checkedEvents, int changedEvents) {
+	}
+
+	public record DueNotificationQueueResult(
+			int activeEvents,
+			int reminderEvents,
+			int openEvents,
+			int notificationsCreated
+	) {
 	}
 }

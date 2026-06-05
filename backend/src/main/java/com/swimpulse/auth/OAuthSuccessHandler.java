@@ -5,6 +5,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
@@ -12,6 +14,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class OAuthSuccessHandler implements org.springframework.security.web.authentication.AuthenticationSuccessHandler {
+	private static final Logger log = LoggerFactory.getLogger(OAuthSuccessHandler.class);
+
 	private final OAuthLoginService oauthLoginService;
 	private final JwtService jwtService;
 	private final AuthCookieService authCookieService;
@@ -43,6 +47,7 @@ public class OAuthSuccessHandler implements org.springframework.security.web.aut
 		}
 		authCookieService.addAccessToken(response, jwtService.createToken(user));
 		authCookieService.clearSession(response);
+		log.info("OAuth login succeeded. provider={} userId={}", oauthToken.getAuthorizedClientRegistrationId(), user.getId());
 		response.sendRedirect(successRedirectUri);
 	}
 }

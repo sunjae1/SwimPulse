@@ -2,7 +2,6 @@ package com.swimpulse.notification;
 
 import com.swimpulse.common.BadRequestException;
 import com.swimpulse.common.NotFoundException;
-import com.swimpulse.event.RegistrationEventRepository;
 import com.swimpulse.event.RegistrationEvent;
 import com.swimpulse.subscription.Subscription;
 import com.swimpulse.subscription.SubscriptionRepository;
@@ -10,6 +9,8 @@ import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,9 +18,10 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class NotificationService {
+	private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
+
 	private final NotificationRepository notificationRepository;
 	private final SubscriptionRepository subscriptionRepository;
-	private final RegistrationEventRepository eventRepository;
 	private final AppUserRepository userRepository;
 	private final UserDeviceRepository userDeviceRepository;
 	private final NotificationQueuePublisher queuePublisher;
@@ -29,7 +31,6 @@ public class NotificationService {
 	public NotificationService(
 			NotificationRepository notificationRepository,
 			SubscriptionRepository subscriptionRepository,
-			RegistrationEventRepository eventRepository,
 			AppUserRepository userRepository,
 			UserDeviceRepository userDeviceRepository,
 			NotificationQueuePublisher queuePublisher,
@@ -38,7 +39,6 @@ public class NotificationService {
 	) {
 		this.notificationRepository = notificationRepository;
 		this.subscriptionRepository = subscriptionRepository;
-		this.eventRepository = eventRepository;
 		this.userRepository = userRepository;
 		this.userDeviceRepository = userDeviceRepository;
 		this.queuePublisher = queuePublisher;
@@ -48,11 +48,13 @@ public class NotificationService {
 
 	@Transactional
 	public int createAndQueueForEvent(RegistrationEvent event, NotificationType type) {
-		List<Subscription> subscriptions = subscriptionRepository.findByPool_Id(event.getPool().getId());
+		List<Subscription> subscriptions = subscriptionRepository.findByEvent_Id(event.getId());
 		for (Subscription subscription : subscriptions) {
 			Notification notification = notificationRepository.save(createNotification(subscription.getUser(), event, type));
 			queuePublisher.publish(notification.getId());
 		}
+		log.info("Notifications created for event subscriptions. eventId={} poolId={} type={} count={}",
+				event.getId(), event.getPool().getId(), type, subscriptions.size());
 		return subscriptions.size();
 	}
 
@@ -73,6 +75,7 @@ public class NotificationService {
 			throw new BadRequestException("Notification does not belong to user: " + userId);
 		}
 		notification.markRead();
+		log.info("Notification marked read. notificationId={} userId={}", notificationId, userId);
 		return NotificationResponse.from(notification);
 	}
 
@@ -84,6 +87,7 @@ public class NotificationService {
 				.orElseGet(() -> new UserDevice(user, request.deviceId(), request.fcmToken()));
 		device.updateToken(request.fcmToken());
 		userDeviceRepository.save(device);
+		log.info("User device registered. userId={} deviceId={}", userId, request.deviceId());
 	}
 
 	@Transactional(readOnly = true)
@@ -99,6 +103,7 @@ public class NotificationService {
 		UserDevice device = userDeviceRepository.findByUser_IdAndDeviceId(userId, deviceId)
 				.orElseThrow(() -> new NotFoundException("Device is not registered."));
 		device.disable();
+		log.info("User device disabled. userId={} deviceId={}", userId, deviceId);
 	}
 
 	@Transactional
@@ -110,12 +115,10 @@ public class NotificationService {
 		}
 		Subscription subscription = subscriptionRepository.findByUser_IdOrderByCreatedAtDesc(userId)
 				.stream()
+				.filter(candidate -> candidate.getEvent() != null)
 				.findFirst()
-				.orElseThrow(() -> new BadRequestException("Subscribe to a pool before sending a test notification."));
-		RegistrationEvent event = eventRepository.findByPool_IdOrderByRegistrationStartsAtAsc(subscription.getPool().getId())
-				.stream()
-				.findFirst()
-				.orElseThrow(() -> new BadRequestException("No registration event exists for subscribed pool."));
+				.orElseThrow(() -> new BadRequestException("Subscribe to a registration period before sending a test notification."));
+		RegistrationEvent event = subscription.getEvent();
 		Notification notification = notificationRepository.save(new Notification(
 				user,
 				subscription.getPool(),
@@ -125,6 +128,8 @@ public class NotificationService {
 				subscription.getPool().getName() + " 테스트 알림입니다. 실제 FCM 설정이 연결되어 있으면 브라우저 푸시로 도착합니다."
 		));
 		queuePublisher.publish(notification.getId());
+		log.info("Test notification queued. notificationId={} userId={} poolId={}",
+				notification.getId(), userId, subscription.getPool().getId());
 		return NotificationResponse.from(notification);
 	}
 
@@ -133,16 +138,21 @@ public class NotificationService {
 		Notification notification = notificationRepository.findById(notificationId)
 				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
 		if (notification.getStatus() == NotificationStatus.SENT) {
+			log.info("Notification delivery skipped because already sent. notificationId={}", notificationId);
 			return false;
 		}
 
 		notification.recordAttempt();
+		log.info("Notification delivery started. notificationId={} attempt={}",
+				notificationId, notification.getAttempts());
 		List<UserDevice> devices = userDeviceRepository.findByUser_IdAndEnabledTrue(notification.getUser().getId())
 				.stream()
 				.filter(device -> StringUtils.hasText(device.getFcmToken()))
 				.toList();
 		if (devices.isEmpty()) {
 			notification.markFailed("FCM token is not registered.");
+			log.warn("Notification delivery failed because no enabled FCM devices exist. notificationId={} userId={}",
+					notificationId, notification.getUser().getId());
 			return false;
 		}
 
@@ -163,15 +173,21 @@ public class NotificationService {
 				)));
 			} catch (RuntimeException exception) {
 				failures.add(exception.getMessage());
+				log.warn("Notification delivery failed for one device. notificationId={} message={}",
+						notificationId, exception.getMessage());
 			}
 		}
 
 		if (!messageIds.isEmpty()) {
 			notification.markSent(messageIds.size() + " device(s): " + messageIds.get(0));
+			log.info("Notification delivery succeeded. notificationId={} deliveredDevices={} failedDevices={}",
+					notificationId, messageIds.size(), failures.size());
 			return false;
 		}
 
 		notification.markFailed(String.join("; ", failures));
+		log.warn("Notification delivery failed for all devices. notificationId={} failedDevices={} shouldRetry={}",
+				notificationId, failures.size(), notification.getAttempts() < maxAttempts);
 		return notification.getAttempts() < maxAttempts;
 	}
 
@@ -181,6 +197,7 @@ public class NotificationService {
 				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
 		notification.markQueued();
 		queuePublisher.publish(notificationId);
+		log.info("Notification requeued. notificationId={} attempts={}", notificationId, notification.getAttempts());
 	}
 
 	private Notification createNotification(AppUser user, RegistrationEvent event, NotificationType type) {

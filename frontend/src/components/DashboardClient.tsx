@@ -40,12 +40,13 @@ import {
   logout,
   markNotificationRead,
   registerDeviceToken,
+  reverseGeocodeLocation,
   scanPoolNotices,
   searchLocations,
   sendTestNotification,
   unregisterCurrentDevice,
 } from "@/lib/api";
-import { eventStatusLabel, formatDateTime, formatTimeLeft, notificationStatusLabel } from "@/lib/format";
+import { eventStatusLabel, formatDate, formatDateTime, formatTimeLeft, notificationStatusLabel } from "@/lib/format";
 import { requestWebPushToken } from "@/lib/web-push";
 import type {
   AppUser,
@@ -54,7 +55,9 @@ import type {
   InAppNotification,
   LocationSearchCandidate,
   NearbyPool,
+  NoticeRegistrationPeriod,
   NoticeScanResponse,
+  PoolNotice,
   Pool,
   RegistrationEvent,
   Subscription,
@@ -93,7 +96,8 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [statusFilter, setStatusFilter] = useState<EventStatus | "ALL">("ALL");
-  const [pendingPoolId, setPendingPoolId] = useState<number | null>(null);
+  const [noticeSubscriptionMode, setNoticeSubscriptionMode] = useState(false);
+  const [pendingSubscriptionKey, setPendingSubscriptionKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pushGuideOpen, setPushGuideOpen] = useState(false);
@@ -108,7 +112,19 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     };
   });
 
-  const subscribedPoolIds = useMemo(() => new Set(subscriptions.map((item) => item.pool.id)), [subscriptions]);
+  const subscribedEventKeys = useMemo(
+    () =>
+      new Set(
+        subscriptions
+          .map((item) => (item.event ? subscriptionKeyFromEvent(item.event) : null))
+          .filter((key): key is string => Boolean(key)),
+      ),
+    [subscriptions],
+  );
+  const subscribedPeriodPoolIds = useMemo(
+    () => new Set(subscriptions.map((item) => item.event?.poolId).filter((poolId): poolId is number => poolId !== undefined)),
+    [subscriptions],
+  );
   const filteredEvents = useMemo(
     () => events.filter((event) => statusFilter === "ALL" || event.status === statusFilter),
     [events, statusFilter],
@@ -206,17 +222,22 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     setNotice(null);
     try {
       const position = await getCurrentPosition();
-      const nearby = await getNearbyPools(position.coords.latitude, position.coords.longitude, 10);
-      setPools(nearby.map((item) => item.pool));
-      setNearbyDistances(toDistanceMap(nearby));
-      setCurrentLocation({
+      const location = {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
-      });
-      setNearbyOriginLabel("현재 위치");
+      };
+      const [nearby, reverseGeocoded] = await Promise.all([
+        getNearbyPools(location.latitude, location.longitude, 10),
+        reverseGeocodeLocation(location.latitude, location.longitude).catch(() => null),
+      ]);
+      const originLabel = reverseGeocoded?.address ?? "현재 위치";
+      setPools(nearby.map((item) => item.pool));
+      setNearbyDistances(toDistanceMap(nearby));
+      setCurrentLocation(location);
+      setNearbyOriginLabel(originLabel);
       setNearbyMode(true);
       setApiReachable(true);
-      setNotice("현재 위치 기준 가까운 수영장 10개를 불러왔습니다.");
+      setNotice(`${originLabel} 기준 가까운 수영장 10개를 불러왔습니다.`);
     } catch (error) {
       setNotice(getGeolocationErrorMessage(error));
     } finally {
@@ -326,7 +347,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     }
   }
 
-  async function scanNotices(pool: Pool) {
+  async function scanNotices(pool: Pool, subscriptionMode = false) {
     if (!user) {
       setNotice("Google 로그인 후 공지를 확인할 수 있습니다.");
       return;
@@ -336,7 +357,8 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     try {
       const result = await scanPoolNotices(pool.id);
       setNoticeScanResult(result);
-      setNotice(`${pool.name} 공지를 확인했습니다.`);
+      setNoticeSubscriptionMode(subscriptionMode);
+      setNotice(subscriptionMode ? "구독할 모집 기간을 선택하세요." : `${pool.name} 공지를 확인했습니다.`);
     } catch (error) {
       setNotice(getErrorMessage(error, "공지 확인에 실패했습니다."));
     } finally {
@@ -365,26 +387,48 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     }
   }
 
-  async function toggleSubscription(poolId: number) {
+  async function subscribeToNoticePeriod(notice: PoolNotice, period: NoticeRegistrationPeriod) {
     if (!user) {
       setNotice("Google 로그인 후 구독할 수 있습니다.");
       return;
     }
-
-    setPendingPoolId(poolId);
+    const title = buildSubscriptionTitle(notice, period);
+    const key = subscriptionKey(notice.poolId, title, period.startsAt, period.endsAt);
+    setPendingSubscriptionKey(key);
     setNotice(null);
     try {
-      if (subscribedPoolIds.has(poolId)) {
-        await deleteSubscription(poolId);
-      } else {
-        await createSubscription(poolId);
-      }
-      setSubscriptions(await getSubscriptions());
-      setNotice("구독 상태가 반영됐습니다.");
-    } catch {
-      setNotice("구독 요청을 처리하지 못했습니다.");
+      await createSubscription({
+        poolId: notice.poolId,
+        title,
+        registrationStartsAt: period.startsAt,
+        registrationEndsAt: period.endsAt,
+      });
+      const [freshSubscriptions, freshEvents] = await Promise.all([getSubscriptions(), getEvents()]);
+      setSubscriptions(freshSubscriptions);
+      setEvents(freshEvents);
+      setNotice("선택한 모집 기간 알림을 구독했습니다.");
+    } catch (error) {
+      setNotice(getErrorMessage(error, "구독 요청을 처리하지 못했습니다."));
     } finally {
-      setPendingPoolId(null);
+      setPendingSubscriptionKey(null);
+    }
+  }
+
+  async function unsubscribeFromNoticePeriod(subscription: Subscription) {
+    if (!subscription.event) {
+      return;
+    }
+    const key = subscriptionKeyFromEvent(subscription.event);
+    setPendingSubscriptionKey(key);
+    setNotice(null);
+    try {
+      await deleteSubscription(subscription.event.id);
+      setSubscriptions(await getSubscriptions());
+      setNotice("선택한 모집 기간 구독을 해제했습니다.");
+    } catch (error) {
+      setNotice(getErrorMessage(error, "구독 해제를 처리하지 못했습니다."));
+    } finally {
+      setPendingSubscriptionKey(null);
     }
   }
 
@@ -604,7 +648,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                 <h2 className="text-lg font-semibold">수영장 목록</h2>
                 <p className="text-sm text-[#66746d]">
                   {nearbyMode && currentLocation
-                    ? `${nearbyOriginLabel ?? "선택 위치"} ${formatCoordinate(currentLocation.latitude)}, ${formatCoordinate(currentLocation.longitude)} 기준 가까운 10개`
+                    ? `${nearbyOriginLabel ?? "선택 위치"} 기준 가까운 10개`
                     : user
                       ? `${user.displayName} 기준`
                       : "로그인 후 구독할 수 있습니다"}
@@ -764,10 +808,10 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                         </span>
                       ) : null}
                     </div>
-                    {pool.roadNameAddress ?? pool.lotNumberAddress ?? pool.address ? (
+                    {pool.roadNameAddress ?? pool.lotNumberAddress ? (
                       <p className="flex items-center gap-1 text-sm text-[#66746d]">
                         <MapPin size={15} aria-hidden />
-                        {pool.roadNameAddress ?? pool.lotNumberAddress ?? pool.address}
+                        {pool.roadNameAddress ?? pool.lotNumberAddress}
                       </p>
                     ) : null}
                     <div className="flex flex-wrap gap-2 text-xs font-medium text-[#66746d]">
@@ -793,26 +837,36 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                         className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#d8ddd5] px-3 text-xs font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:opacity-50"
                         onClick={() => scanNotices(pool)}
                         disabled={busy || !user || !pool.homepageUrl}
+                        title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "공지 확인"}
                         type="button"
                       >
                         <FileSearch size={14} aria-hidden />
                         공지 확인
                       </button>
                     </div>
+                    {!pool.homepageUrl ? (
+                      <p className="flex items-center gap-1 text-xs font-medium text-[#bf4b3e]">
+                        <CircleAlert size={14} aria-hidden />
+                        홈페이지를 찾을 수 없습니다.
+                      </p>
+                    ) : null}
                   </div>
-                  <button
-                    className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:opacity-50 ${
-                      subscribedPoolIds.has(pool.id)
-                        ? "border border-[#0f766e] bg-white text-[#0f766e] hover:bg-[#edf7f5]"
-                        : "bg-[#0f766e] text-white hover:bg-[#0b5f59]"
-                    }`}
-                    onClick={() => toggleSubscription(pool.id)}
-                    disabled={pendingPoolId === pool.id || !user}
-                    type="button"
-                  >
-                    {subscribedPoolIds.has(pool.id) ? <CheckCircle2 size={17} aria-hidden /> : <Plus size={17} aria-hidden />}
-                    {subscribedPoolIds.has(pool.id) ? "구독 중" : "구독"}
-                  </button>
+                  <div className="flex items-start md:justify-end">
+                    <button
+                      className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:opacity-50 ${
+                        subscribedPeriodPoolIds.has(pool.id)
+                          ? "border border-[#0f766e] bg-white text-[#0f766e] hover:bg-[#edf7f5]"
+                          : "bg-[#0f766e] text-white hover:bg-[#0b5f59]"
+                      }`}
+                      onClick={() => scanNotices(pool, true)}
+                      disabled={busy || !user || !pool.homepageUrl}
+                      title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "알림 구독"}
+                      type="button"
+                    >
+                      {subscribedPeriodPoolIds.has(pool.id) ? <CheckCircle2 size={17} aria-hidden /> : <Plus size={17} aria-hidden />}
+                      {subscribedPeriodPoolIds.has(pool.id) ? "기간 구독 중" : "알림 구독"}
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>
@@ -847,7 +901,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
         <aside className="space-y-5">
           <AccountPanel
             user={user}
-            subscriptionsCount={subscriptions.length}
+            subscriptions={subscriptions}
             currentDeviceRegistered={currentDeviceRegistered}
             onLogin={loginWithGoogle}
             onLogout={logoutUser}
@@ -970,7 +1024,21 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
           busy={busy}
         />
       ) : null}
-      {noticeScanResult ? <NoticeResultModal result={noticeScanResult} onClose={() => setNoticeScanResult(null)} /> : null}
+      {noticeScanResult ? (
+        <NoticeResultModal
+          result={noticeScanResult}
+          onClose={() => {
+            setNoticeScanResult(null);
+            setNoticeSubscriptionMode(false);
+          }}
+          subscriptionMode={noticeSubscriptionMode}
+          subscriptions={subscriptions}
+          subscribedEventKeys={subscribedEventKeys}
+          pendingSubscriptionKey={pendingSubscriptionKey}
+          onSubscribe={subscribeToNoticePeriod}
+          onUnsubscribe={unsubscribeFromNoticePeriod}
+        />
+      ) : null}
     </main>
   );
 }
@@ -1016,7 +1084,7 @@ function PoolImage({ pool }: { pool: Pool }) {
 
 function AccountPanel({
   user,
-  subscriptionsCount,
+  subscriptions,
   currentDeviceRegistered,
   onLogin,
   onLogout,
@@ -1024,7 +1092,7 @@ function AccountPanel({
   busy,
 }: {
   user: AppUser | null;
-  subscriptionsCount: number;
+  subscriptions: Subscription[];
   currentDeviceRegistered: boolean;
   onLogin: () => void;
   onLogout: () => void;
@@ -1088,9 +1156,28 @@ function AccountPanel({
         <div className="space-y-3 text-sm">
           <AccountRow icon={Mail} label="이메일" value={user.email} />
           <AccountRow icon={UserCircle} label="사용자 ID" value={user.id.toString()} />
-          <AccountRow icon={CheckCircle2} label="구독" value={`${subscriptionsCount}개`} />
+          <AccountRow icon={CheckCircle2} label="구독" value={`${subscriptions.length}개`} />
           <AccountRow icon={Smartphone} label="현재 기기 PUSH" value={currentDeviceRegistered ? "등록됨" : "미등록"} />
           <AccountRow icon={CalendarClock} label="최근 로그인" value={user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "-"} />
+        </div>
+        <div className="space-y-3 border-t border-[#e3e7e1] pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-[#31413b]">내 구독</h3>
+            <span className="rounded-md bg-[#edf7f5] px-2 py-1 text-xs font-semibold text-[#0f766e]">
+              {subscriptions.length}
+            </span>
+          </div>
+          {subscriptions.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-[#cdd5cf] px-3 py-4 text-sm text-[#66746d]">
+              아직 구독한 모집 기간이 없습니다.
+            </p>
+          ) : (
+            <div className="max-h-[340px] divide-y divide-[#e3e7e1] overflow-auto rounded-lg border border-[#e3e7e1]">
+              {subscriptions.map((subscription) => (
+                <SubscriptionSummary key={subscription.id} subscription={subscription} />
+              ))}
+            </div>
+          )}
         </div>
         <button
           className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#bf4b3e] hover:text-[#bf4b3e] disabled:opacity-50"
@@ -1181,7 +1268,25 @@ function CandidateConfirmModal({
   );
 }
 
-function NoticeResultModal({ result, onClose }: { result: NoticeScanResponse; onClose: () => void }) {
+function NoticeResultModal({
+  result,
+  onClose,
+  subscriptionMode,
+  subscriptions,
+  subscribedEventKeys,
+  pendingSubscriptionKey,
+  onSubscribe,
+  onUnsubscribe,
+}: {
+  result: NoticeScanResponse;
+  onClose: () => void;
+  subscriptionMode: boolean;
+  subscriptions: Subscription[];
+  subscribedEventKeys: Set<string>;
+  pendingSubscriptionKey: string | null;
+  onSubscribe: (notice: PoolNotice, period: NoticeRegistrationPeriod) => void;
+  onUnsubscribe: (subscription: Subscription) => void;
+}) {
   const trace = result.trace ?? [];
 
   return (
@@ -1189,8 +1294,10 @@ function NoticeResultModal({ result, onClose }: { result: NoticeScanResponse; on
       <div className="max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-lg border border-[#d8ddd5] bg-white shadow-xl">
         <div className="flex items-center justify-between gap-3 border-b border-[#e3e7e1] px-5 py-4">
           <div>
-            <h2 className="text-lg font-semibold">공지 확인 결과</h2>
-            <p className="text-sm text-[#66746d]">{result.poolName}</p>
+            <h2 className="text-lg font-semibold">{subscriptionMode ? "모집 기간 선택" : "공지 확인 결과"}</h2>
+            <p className="text-sm text-[#66746d]">
+              {subscriptionMode ? "알림 받을 기간을 하나 선택하세요." : result.poolName}
+            </p>
           </div>
           <button
             className="inline-flex h-9 items-center justify-center rounded-lg border border-[#cdd5cf] px-3 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e]"
@@ -1207,33 +1314,67 @@ function NoticeResultModal({ result, onClose }: { result: NoticeScanResponse; on
               <p className="text-sm text-[#66746d]">{result.message}</p>
             </div>
           ) : (
-            result.notices.map((notice) => (
-              <article key={notice.id} className="space-y-2 px-5 py-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-md px-2 py-1 text-xs font-semibold ${noticeStatusClass(notice.extractionStatus)}`}>
-                    {noticeStatusLabel(notice.extractionStatus)}
-                  </span>
-                  <h3 className="font-semibold">{notice.title}</h3>
-                </div>
-                {notice.registrationStartsAt && notice.registrationEndsAt ? (
-                  <p className="text-sm text-[#31413b]">
-                    모집 기간 {formatDateTime(notice.registrationStartsAt)} - {formatDateTime(notice.registrationEndsAt)}
-                  </p>
-                ) : (
-                  <p className="text-sm text-[#66746d]">기간은 확정하지 못했습니다. 원문 링크를 확인하세요.</p>
-                )}
-                {notice.reason ? <p className="text-xs text-[#7c8982]">{notice.reason}</p> : null}
-                <a
-                  className="inline-flex items-center gap-1 break-all text-sm font-semibold text-[#0f766e]"
-                  href={notice.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ExternalLink size={14} aria-hidden />
-                  원문 보기
-                </a>
-              </article>
-            ))
+            result.notices.map((notice) => {
+              const registrationPeriods =
+                notice.registrationPeriods?.length || !notice.registrationStartsAt || !notice.registrationEndsAt
+                  ? notice.registrationPeriods ?? []
+                  : [
+                      {
+                        label: "대표 기간",
+                        startsAt: notice.registrationStartsAt,
+                        endsAt: notice.registrationEndsAt,
+                        periodText: null,
+                        source: "legacy",
+                      },
+                    ];
+
+              return (
+                <article key={notice.id} className="space-y-3 px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-md px-2 py-1 text-xs font-semibold ${noticeStatusClass(notice.extractionStatus)}`}>
+                      {noticeStatusLabel(notice.extractionStatus)}
+                    </span>
+                    <h3 className="font-semibold">{notice.title}</h3>
+                  </div>
+                  {registrationPeriods.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-[#31413b]">모집 기간</p>
+                      <div className="space-y-1.5">
+                        {registrationPeriods.map((period, index) => (
+                          <PeriodSelectionRow
+                            key={`${period.startsAt}-${period.endsAt}-${period.label ?? index}`}
+                            notice={notice}
+                            period={period}
+                            index={index}
+                            subscribedEventKeys={subscribedEventKeys}
+                            subscriptions={subscriptions}
+                            pendingSubscriptionKey={pendingSubscriptionKey}
+                            onSubscribe={onSubscribe}
+                            onUnsubscribe={onUnsubscribe}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#66746d]">
+                      {subscriptionMode
+                        ? "구독할 수 있는 구조화 기간이 없습니다. 원문 링크를 확인하세요."
+                        : "구독할 수 있는 구조화 기간이 없습니다. 원문 링크를 확인하세요."}
+                    </p>
+                  )}
+                  {notice.reason ? <p className="text-xs text-[#7c8982]">{notice.reason}</p> : null}
+                  <a
+                    className="inline-flex items-center gap-1 break-all text-sm font-semibold text-[#0f766e]"
+                    href={notice.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ExternalLink size={14} aria-hidden />
+                    원문 보기
+                  </a>
+                </article>
+              );
+            })
           )}
           {trace.length > 0 ? (
             <section className="space-y-3 bg-[#f7f8f4] px-5 py-4">
@@ -1250,6 +1391,90 @@ function NoticeResultModal({ result, onClose }: { result: NoticeScanResponse; on
         </div>
       </div>
     </div>
+  );
+}
+
+function PeriodSelectionRow({
+  notice,
+  period,
+  index,
+  subscriptions,
+  subscribedEventKeys,
+  pendingSubscriptionKey,
+  onSubscribe,
+  onUnsubscribe,
+}: {
+  notice: PoolNotice;
+  period: NoticeRegistrationPeriod;
+  index: number;
+  subscriptions: Subscription[];
+  subscribedEventKeys: Set<string>;
+  pendingSubscriptionKey: string | null;
+  onSubscribe: (notice: PoolNotice, period: NoticeRegistrationPeriod) => void;
+  onUnsubscribe: (subscription: Subscription) => void;
+}) {
+  const title = buildSubscriptionTitle(notice, period);
+  const key = subscriptionKey(notice.poolId, title, period.startsAt, period.endsAt);
+  const subscription = subscriptions.find((item) => item.event && subscriptionKeyFromEvent(item.event) === key);
+  const subscribed = subscribedEventKeys.has(key);
+  const pending = pendingSubscriptionKey === key;
+
+  return (
+    <div className="grid gap-3 rounded-md border border-[#e3e7e1] bg-[#fafbf8] px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#31413b]">
+          <span className="font-semibold">{period.label ?? `기간 ${index + 1}`}</span>
+          <span>
+            {formatDate(period.startsAt)} - {formatDate(period.endsAt)}
+          </span>
+        </div>
+        {period.periodText ? <p className="mt-1 text-xs text-[#7c8982]">원문 {period.periodText}</p> : null}
+      </div>
+      <button
+        className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition disabled:opacity-50 ${
+          subscribed
+            ? "border border-[#0f766e] bg-white text-[#0f766e] hover:bg-[#edf7f5]"
+            : "bg-[#0f766e] text-white hover:bg-[#0b5f59]"
+        }`}
+        onClick={() => {
+          if (subscription) {
+            onUnsubscribe(subscription);
+          } else {
+            onSubscribe(notice, period);
+          }
+        }}
+        disabled={pending}
+        type="button"
+      >
+        {subscribed ? <CheckCircle2 size={16} aria-hidden /> : <Plus size={16} aria-hidden />}
+        {subscribed ? "구독 해제" : "이 기간 구독"}
+      </button>
+    </div>
+  );
+}
+
+function SubscriptionSummary({ subscription }: { subscription: Subscription }) {
+  const event = subscription.event;
+  const poolName = event?.poolName ?? subscription.pool.name;
+
+  return (
+    <article className="space-y-2 bg-white px-3 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {event ? <StatusBadge status={event.status} /> : null}
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-[#17201d]">{poolName}</p>
+      </div>
+      <div className="space-y-1">
+        <p className="line-clamp-2 text-sm font-medium text-[#31413b]">{event?.title ?? "기간 정보 없음"}</p>
+        {event ? (
+          <p className="text-xs leading-5 text-[#66746d]">
+            {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
+          </p>
+        ) : (
+          <p className="text-xs leading-5 text-[#bf4b3e]">다시 공지 확인 후 기간을 선택하세요.</p>
+        )}
+        <p className="text-xs text-[#7c8982]">구독일 {formatDateTime(subscription.createdAt)}</p>
+      </div>
+    </article>
   );
 }
 
@@ -1353,15 +1578,25 @@ function upsertPool(items: Pool[], pool: Pool) {
   return [pool, ...items].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
+function buildSubscriptionTitle(notice: PoolNotice, period: NoticeRegistrationPeriod) {
+  const label = period.label?.trim() || "모집 기간";
+  const title = `${label} - ${notice.title}`.replace(/\s+/g, " ").trim();
+  return title.length <= 120 ? title : title.slice(0, 120);
+}
+
+function subscriptionKeyFromEvent(event: RegistrationEvent) {
+  return subscriptionKey(event.poolId, event.title, event.registrationStartsAt, event.registrationEndsAt);
+}
+
+function subscriptionKey(poolId: number, title: string, startsAt: string, endsAt: string) {
+  return `${poolId}|${title}|${startsAt}|${endsAt}`;
+}
+
 function formatDistance(distanceMeters: number) {
   if (distanceMeters < 1000) {
     return `${Math.round(distanceMeters)}m`;
   }
   return `${(distanceMeters / 1000).toFixed(1)}km`;
-}
-
-function formatCoordinate(value: number) {
-  return value.toFixed(5);
 }
 
 function buildFacilitySearchQuery(address: string) {

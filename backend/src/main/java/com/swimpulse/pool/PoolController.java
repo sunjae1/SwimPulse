@@ -4,6 +4,8 @@ import com.swimpulse.event.EventResponse;
 import com.swimpulse.event.EventService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.swimpulse.auth.AuthenticatedUser;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/pools")
 public class PoolController {
+	private static final Logger log = LoggerFactory.getLogger(PoolController.class);
+
 	private final PoolService poolService;
 	private final PoolGeocodingService poolGeocodingService;
 	private final EventService eventService;
@@ -35,11 +39,13 @@ public class PoolController {
 
 	@GetMapping
 	public List<PoolResponse> findPools() {
+		log.info("Pool list requested.");
 		return poolService.findPools();
 	}
 
 	@GetMapping("/{poolId}")
 	public PoolResponse findPool(@PathVariable Long poolId) {
+		log.info("Pool detail requested. poolId={}", poolId);
 		return poolService.findPool(poolId);
 	}
 
@@ -49,16 +55,19 @@ public class PoolController {
 			@RequestParam(required = false) Double longitude,
 			@RequestParam(required = false) Integer limit
 	) {
+		log.info("Nearby pools requested. latitude={} longitude={} limit={}", latitude, longitude, limit);
 		return poolService.findNearbyPools(latitude, longitude, limit);
 	}
 
 	@GetMapping("/{poolId}/events")
 	public List<EventResponse> findPoolEvents(@PathVariable Long poolId) {
+		log.info("Pool events requested. poolId={}", poolId);
 		return eventService.findEvents(null, poolId);
 	}
 
 	@PostMapping("/geocode")
 	public GeocodeBatchResponse geocodePendingPools() {
+		log.info("Pending pool geocode requested.");
 		return poolGeocodingService.geocodePendingPools();
 	}
 
@@ -68,11 +77,20 @@ public class PoolController {
 			@AuthenticationPrincipal AuthenticatedUser user,
 			@Valid @RequestBody CreatePoolFromLocationCandidateRequest request
 	) {
+		log.info("Pool creation from location candidate requested. userId={} title={}",
+				user.id(), request.title());
 		return poolService.createFromLocationCandidate(request);
 	}
 
 	@PostMapping("/homepages/enrich")
 	public HomepageEnrichmentResponse enrichHomepages(@RequestParam(required = false) Integer limit) {
+		log.info("Pool homepage enrichment requested. limit={}", limit);
 		return poolService.enrichHomepages(limit);
+	}
+
+	@PostMapping("/homepages/reverify")
+	public HomepageEnrichmentResponse reverifyHomepages(@RequestParam(required = false) Integer limit) {
+		log.info("Pool homepage reverification requested. limit={}", limit);
+		return poolService.reverifyHomepages(limit);
 	}
 }

@@ -1,13 +1,12 @@
 package com.swimpulse.pool;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 
 public record PoolResponse(
 		Long id,
 		String name,
-		String address,
 		String district,
-		String websiteUrl,
 		String description,
 		Integer completionYear,
 		String indoorOutdoorTypeName,
@@ -21,6 +20,12 @@ public record PoolResponse(
 		String lotNumberAddress,
 		String roadNameAddress,
 		String homepageUrl,
+		HomepageSource homepageSource,
+		HomepageVerificationStatus homepageStatus,
+		Instant homepageVerifiedAt,
+		String homepageCandidateTitle,
+		String homepageCandidateAddress,
+		String homepageCandidateLink,
 		String imageUrl,
 		Double latitude,
 		Double longitude,
@@ -30,9 +35,7 @@ public record PoolResponse(
 		return new PoolResponse(
 				pool.getId(),
 				pool.getName(),
-				pool.getAddress(),
 				pool.getDistrict(),
-				pool.getWebsiteUrl(),
 				pool.getDescription(),
 				pool.getCompletionYear(),
 				pool.getIndoorOutdoorTypeName(),
@@ -46,6 +49,12 @@ public record PoolResponse(
 				pool.getLotNumberAddress(),
 				pool.getRoadNameAddress(),
 				pool.getHomepageUrl(),
+				pool.getHomepageSource(),
+				pool.getHomepageStatus(),
+				pool.getHomepageVerifiedAt(),
+				pool.getHomepageCandidateTitle(),
+				pool.getHomepageCandidateAddress(),
+				pool.getHomepageCandidateLink(),
 				pool.getImageUrl(),
 				pool.getLatitude(),
 				pool.getLongitude(),

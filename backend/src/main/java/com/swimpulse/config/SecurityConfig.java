@@ -24,7 +24,7 @@ public class SecurityConfig {
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(HttpMethod.GET, "/api/pools", "/api/pools/nearby", "/api/events").permitAll()
-						.requestMatchers(HttpMethod.GET, "/api/locations/search", "/api/locations/geocode").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/locations/search", "/api/locations/geocode", "/api/locations/reverse-geocode").permitAll()
 						.requestMatchers("/api/**").authenticated()
 						.anyRequest().permitAll()
 				)

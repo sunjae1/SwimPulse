@@ -6,12 +6,14 @@ export type NotificationType = "REGISTRATION_REMINDER" | "REGISTRATION_OPEN";
 
 export type GeocodeStatus = "PENDING" | "SUCCESS" | "FAILED";
 
+export type HomepageSource = "NAVER_LOCAL_SEARCH" | "USER_LOCATION_CANDIDATE" | "MANUAL" | "PUBLIC_DATA" | "UNKNOWN";
+
+export type HomepageVerificationStatus = "UNVERIFIED" | "VERIFIED" | "AUTO_UPDATED" | "NEEDS_REVIEW" | "FAILED";
+
 export type Pool = {
   id: number;
   name: string;
-  address: string | null;
   district: string | null;
-  websiteUrl: string | null;
   description: string | null;
   completionYear: number | null;
   indoorOutdoorTypeName: string | null;
@@ -25,6 +27,12 @@ export type Pool = {
   lotNumberAddress: string | null;
   roadNameAddress: string | null;
   homepageUrl: string | null;
+  homepageSource: HomepageSource | null;
+  homepageStatus: HomepageVerificationStatus;
+  homepageVerifiedAt: string | null;
+  homepageCandidateTitle: string | null;
+  homepageCandidateAddress: string | null;
+  homepageCandidateLink: string | null;
   imageUrl: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -58,6 +66,14 @@ export type GeocodedLocation = {
 
 export type NoticeExtractionStatus = "EXTRACTED" | "LINK_ONLY" | "FAILED";
 
+export type NoticeRegistrationPeriod = {
+  label: string | null;
+  startsAt: string;
+  endsAt: string;
+  periodText: string | null;
+  source: string | null;
+};
+
 export type PoolNotice = {
   id: number;
   poolId: number;
@@ -69,6 +85,7 @@ export type PoolNotice = {
   confidence: number | null;
   registrationStartsAt: string | null;
   registrationEndsAt: string | null;
+  registrationPeriods?: NoticeRegistrationPeriod[];
   reason: string | null;
 };
 
@@ -109,6 +126,7 @@ export type Subscription = {
   id: number;
   userId: number;
   pool: Pool;
+  event: RegistrationEvent | null;
   createdAt: string;
 };
 

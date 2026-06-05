@@ -2,6 +2,8 @@ package com.swimpulse.auth;
 
 import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -9,6 +11,8 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class OAuthLoginService {
+	private static final Logger log = LoggerFactory.getLogger(OAuthLoginService.class);
+
 	private final AppUserRepository userRepository;
 	private final SocialAccountRepository socialAccountRepository;
 
@@ -29,6 +33,7 @@ public class OAuthLoginService {
 					AppUser user = account.getUser();
 					user.updateOAuthProfile(email, displayName, profileImageUrl);
 					account.updateProfile(email, displayName, profileImageUrl);
+					log.info("Updated OAuth profile. provider={} userId={}", SocialProvider.GOOGLE, user.getId());
 					return user;
 				})
 				.orElseGet(() -> {
@@ -43,6 +48,7 @@ public class OAuthLoginService {
 							displayName,
 							profileImageUrl
 					));
+					log.info("Linked OAuth account. provider={} userId={}", SocialProvider.GOOGLE, user.getId());
 					return user;
 				});
 	}

@@ -21,14 +21,8 @@ public class Pool {
 	@Column(nullable = false, length = 100)
 	private String name;
 
-	@Column(nullable = false, length = 255)
-	private String address;
-
 	@Column(nullable = false, length = 50)
 	private String district;
-
-	@Column(nullable = false, length = 255)
-	private String websiteUrl;
 
 	@Column(nullable = false, length = 500)
 	private String description;
@@ -67,6 +61,25 @@ public class Pool {
 	@Column(length = 255)
 	private String homepageUrl;
 
+	@Enumerated(EnumType.STRING)
+	@Column(length = 40)
+	private HomepageSource homepageSource;
+
+	@Enumerated(EnumType.STRING)
+	@Column(length = 40)
+	private HomepageVerificationStatus homepageStatus = HomepageVerificationStatus.UNVERIFIED;
+
+	private Instant homepageVerifiedAt;
+
+	@Column(length = 500)
+	private String homepageCandidateTitle;
+
+	@Column(length = 500)
+	private String homepageCandidateAddress;
+
+	@Column(length = 500)
+	private String homepageCandidateLink;
+
 	@Column(length = 500)
 	private String imageUrl;
 
@@ -84,20 +97,16 @@ public class Pool {
 	protected Pool() {
 	}
 
-	public Pool(String name, String address, String district, String websiteUrl, String description) {
+	public Pool(String name, String district, String description) {
 		this.name = name;
-		this.address = address;
 		this.district = district;
-		this.websiteUrl = websiteUrl;
 		this.description = description;
 		this.createdAt = Instant.now();
 	}
 
 	public Pool(
 			String name,
-			String address,
 			String district,
-			String websiteUrl,
 			String description,
 			Integer completionYear,
 			String indoorOutdoorTypeName,
@@ -112,7 +121,7 @@ public class Pool {
 			String roadNameAddress,
 			String homepageUrl
 	) {
-		this(name, address, district, websiteUrl, description);
+		this(name, district, description);
 		updateFacilityDetails(
 				completionYear,
 				indoorOutdoorTypeName,
@@ -159,9 +168,33 @@ public class Pool {
 
 	public void updateHomepageUrl(String homepageUrl) {
 		this.homepageUrl = homepageUrl;
-		if (hasText(homepageUrl) && !hasText(this.websiteUrl)) {
-			this.websiteUrl = homepageUrl;
-		}
+	}
+
+	public void updateHomepageUrl(
+			String homepageUrl,
+			HomepageSource source,
+			HomepageVerificationStatus status,
+			String candidateTitle,
+			String candidateAddress,
+			String candidateLink
+	) {
+		updateHomepageUrl(homepageUrl);
+		recordHomepageVerification(source, status, candidateTitle, candidateAddress, candidateLink);
+	}
+
+	public void recordHomepageVerification(
+			HomepageSource source,
+			HomepageVerificationStatus status,
+			String candidateTitle,
+			String candidateAddress,
+			String candidateLink
+	) {
+		this.homepageSource = source == null ? HomepageSource.UNKNOWN : source;
+		this.homepageStatus = status == null ? HomepageVerificationStatus.UNVERIFIED : status;
+		this.homepageVerifiedAt = Instant.now();
+		this.homepageCandidateTitle = truncate(candidateTitle, 500);
+		this.homepageCandidateAddress = truncate(candidateAddress, 500);
+		this.homepageCandidateLink = truncate(candidateLink, 500);
 	}
 
 	public Long getId() {
@@ -172,16 +205,8 @@ public class Pool {
 		return name;
 	}
 
-	public String getAddress() {
-		return address;
-	}
-
 	public String getDistrict() {
 		return district;
-	}
-
-	public String getWebsiteUrl() {
-		return websiteUrl;
 	}
 
 	public String getDescription() {
@@ -236,6 +261,30 @@ public class Pool {
 		return homepageUrl;
 	}
 
+	public HomepageSource getHomepageSource() {
+		return homepageSource;
+	}
+
+	public HomepageVerificationStatus getHomepageStatus() {
+		return homepageStatus == null ? HomepageVerificationStatus.UNVERIFIED : homepageStatus;
+	}
+
+	public Instant getHomepageVerifiedAt() {
+		return homepageVerifiedAt;
+	}
+
+	public String getHomepageCandidateTitle() {
+		return homepageCandidateTitle;
+	}
+
+	public String getHomepageCandidateAddress() {
+		return homepageCandidateAddress;
+	}
+
+	public String getHomepageCandidateLink() {
+		return homepageCandidateLink;
+	}
+
 	public String getImageUrl() {
 		return imageUrl;
 	}
@@ -259,7 +308,7 @@ public class Pool {
 		if (hasText(lotNumberAddress)) {
 			return lotNumberAddress;
 		}
-		return address;
+		return null;
 	}
 
 	public void markGeocodeSuccess(double latitude, double longitude) {
@@ -283,9 +332,7 @@ public class Pool {
 		}
 		Pool pool = new Pool(
 				name,
-				normalizedAddress,
 				resolveDistrict(normalizedAddress),
-				hasTextValue(homepageUrl) ? homepageUrl : "",
 				"네이버 지역 검색 후보를 사용자가 확인해 추가한 시설입니다."
 		);
 		pool.updateFacilityDetails(
@@ -302,6 +349,15 @@ public class Pool {
 				roadNameAddress,
 				homepageUrl
 		);
+		if (hasTextValue(homepageUrl)) {
+			pool.recordHomepageVerification(
+					HomepageSource.USER_LOCATION_CANDIDATE,
+					HomepageVerificationStatus.VERIFIED,
+					name,
+					normalizedAddress,
+					homepageUrl
+			);
+		}
 		pool.markGeocodeSuccess(latitude, longitude);
 		return pool;
 	}
@@ -321,6 +377,13 @@ public class Pool {
 
 	private static boolean hasTextValue(String value) {
 		return value != null && !value.isBlank();
+	}
+
+	private static String truncate(String value, int maxLength) {
+		if (value == null || value.length() <= maxLength) {
+			return value;
+		}
+		return value.substring(0, maxLength);
 	}
 
 	public void markGeocodeFailed() {

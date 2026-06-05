@@ -6,11 +6,14 @@ import com.swimpulse.pool.Pool;
 import com.swimpulse.pool.PoolRepository;
 import java.util.List;
 import java.util.Comparator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientResponseException;
 
 @Service
 public class LocationService {
+	private static final Logger log = LoggerFactory.getLogger(LocationService.class);
 	private static final int DEFAULT_DISPLAY = 5;
 	private static final int MAX_DISPLAY = 10;
 
@@ -31,12 +34,17 @@ public class LocationService {
 	public List<LocationSearchCandidate> search(String query, Integer display, Double latitude, Double longitude) {
 		String normalizedQuery = normalizeRequired(query, "query");
 		validateOptionalCoordinates(latitude, longitude);
+		int normalizedDisplay = normalizeDisplay(display);
+		log.info("Location search started. query={} display={} hasOrigin={}",
+				normalizedQuery, normalizedDisplay, latitude != null && longitude != null);
 		List<Pool> pools = poolRepository.findAll();
-		return naverLocalSearchClient.search(normalizedQuery, normalizeDisplay(display))
+		List<LocationSearchCandidate> candidates = naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
 				.stream()
 				.map(candidate -> enrich(candidate, pools, latitude, longitude))
 				.sorted(compareByDistanceWhenAvailable())
 				.toList();
+		log.info("Location search completed. query={} resultCount={}", normalizedQuery, candidates.size());
+		return candidates;
 	}
 
 	public GeocodedLocationResponse geocode(String address) {
@@ -46,15 +54,35 @@ public class LocationService {
 		}
 
 		try {
-			return naverMapsGeocodingClient.geocode(normalizedAddress)
+			GeocodedLocationResponse response = naverMapsGeocodingClient.geocode(normalizedAddress)
 					.map(coordinates -> new GeocodedLocationResponse(
 							normalizedAddress,
 							coordinates.latitude(),
 							coordinates.longitude()
 					))
 					.orElseThrow(() -> new BadRequestException("No coordinates found for address."));
+			log.info("Address geocoded. address={} latitude={} longitude={}",
+					normalizedAddress, response.latitude(), response.longitude());
+			return response;
 		} catch (RestClientResponseException exception) {
 			throw new BadRequestException("Naver Maps geocoding request failed: "
+					+ exception.getStatusCode().value() + " " + exception.getStatusText());
+		}
+	}
+
+	public GeocodedLocationResponse reverseGeocode(Double latitude, Double longitude) {
+		validateRequiredCoordinates(latitude, longitude);
+		if (!naverMapsGeocodingClient.isConfigured()) {
+			throw new BadRequestException("Naver Maps geocoding credentials are not configured.");
+		}
+
+		try {
+			String address = naverMapsGeocodingClient.reverseGeocode(latitude, longitude)
+					.orElseThrow(() -> new BadRequestException("No address found for coordinates."));
+			log.info("Coordinates reverse geocoded. latitude={} longitude={} address={}", latitude, longitude, address);
+			return new GeocodedLocationResponse(address, latitude, longitude);
+		} catch (RestClientResponseException exception) {
+			throw new BadRequestException("Naver Maps reverse geocoding request failed: "
 					+ exception.getStatusCode().value() + " " + exception.getStatusText());
 		}
 	}
@@ -92,7 +120,9 @@ public class LocationService {
 					latitude = coordinates.latitude();
 					longitude = coordinates.longitude();
 				}
-			} catch (RestClientResponseException ignored) {
+			} catch (RestClientResponseException exception) {
+				log.warn("Candidate geocode failed. title={} status={} {}",
+						candidate.title(), exception.getStatusCode().value(), exception.getStatusText());
 				latitude = null;
 				longitude = null;
 			}
@@ -156,6 +186,10 @@ public class LocationService {
 		if (latitude == null && longitude == null) {
 			return;
 		}
+		validateRequiredCoordinates(latitude, longitude);
+	}
+
+	private void validateRequiredCoordinates(Double latitude, Double longitude) {
 		if (latitude == null || Double.isNaN(latitude) || latitude < -90 || latitude > 90) {
 			throw new BadRequestException("latitude must be between -90 and 90");
 		}

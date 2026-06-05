@@ -4,8 +4,12 @@ import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
 import java.util.HashMap;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class FirebaseAdminFcmClient implements FcmClient {
+	private static final Logger log = LoggerFactory.getLogger(FirebaseAdminFcmClient.class);
+
 	private final FirebaseMessaging firebaseMessaging;
 
 	public FirebaseAdminFcmClient(FirebaseMessaging firebaseMessaging) {
@@ -23,8 +27,11 @@ public class FirebaseAdminFcmClient implements FcmClient {
 					.setToken(message.token())
 					.putAllData(data)
 					.build();
-			return firebaseMessaging.send(firebaseMessage);
+			String messageId = firebaseMessaging.send(firebaseMessage);
+			log.info("Firebase FCM sent. title={} messageId={}", message.title(), messageId);
+			return messageId;
 		} catch (Exception exception) {
+			log.warn("Firebase FCM send failed. title={} message={}", message.title(), exception.getMessage());
 			throw new FcmSendException(exception.getMessage(), exception);
 		}
 	}

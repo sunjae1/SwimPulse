@@ -7,9 +7,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface SubscriptionRepository extends JpaRepository<Subscription, Long> {
 	List<Subscription> findByUser_IdOrderByCreatedAtDesc(Long userId);
 
-	List<Subscription> findByPool_Id(Long poolId);
+	List<Subscription> findByUser_IdAndEventIsNotNullOrderByCreatedAtDesc(Long userId);
 
-	Optional<Subscription> findByUser_IdAndPool_Id(Long userId, Long poolId);
+	List<Subscription> findByEvent_Id(Long eventId);
 
-	boolean existsByUser_IdAndPool_Id(Long userId, Long poolId);
+	Optional<Subscription> findByUser_IdAndEvent_Id(Long userId, Long eventId);
 }

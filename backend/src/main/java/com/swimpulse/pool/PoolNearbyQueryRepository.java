@@ -1,12 +1,16 @@
 package com.swimpulse.pool;
 
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class PoolNearbyQueryRepository {
+	private static final Logger log = LoggerFactory.getLogger(PoolNearbyQueryRepository.class);
+
 	private final NamedParameterJdbcTemplate jdbcTemplate;
 
 	public PoolNearbyQueryRepository(NamedParameterJdbcTemplate jdbcTemplate) {
@@ -32,6 +36,8 @@ public class PoolNearbyQueryRepository {
 				.addValue("latitude", latitude)
 				.addValue("longitude", longitude)
 				.addValue("limit", limit);
+		log.info("Executing nearby pool SQL. latitude={} longitude={} limit={}\n{}",
+				latitude, longitude, limit, sql.strip());
 		return jdbcTemplate.query(sql, parameters, (rs, rowNum) -> new NearbyPoolRow(
 				rs.getLong("pool_id"),
 				rs.getDouble("distance_meters")

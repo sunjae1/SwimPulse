@@ -10,7 +10,7 @@ public class MockFcmClient implements FcmClient {
 	@Override
 	public String send(FcmMessage message) {
 		String messageId = "mock-" + UUID.randomUUID();
-		log.info("Mock FCM sent. token={}, title={}, messageId={}", message.token(), message.title(), messageId);
+		log.info("Mock FCM sent. title={} messageId={}", message.title(), messageId);
 		return messageId;
 	}
 }

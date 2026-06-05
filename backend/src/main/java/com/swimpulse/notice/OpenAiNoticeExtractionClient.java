@@ -7,6 +7,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -14,6 +16,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class OpenAiNoticeExtractionClient {
+	private static final Logger log = LoggerFactory.getLogger(OpenAiNoticeExtractionClient.class);
 	private static final String OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
 	private final RestClient restClient;
@@ -41,6 +44,8 @@ public class OpenAiNoticeExtractionClient {
 		if (!isConfigured()) {
 			throw new BadRequestException("OpenAI API key is not configured.");
 		}
+		log.info("OpenAI notice extraction requested. model={} title={} url={} textLength={} imageCount={}",
+				model, title, url, text == null ? 0 : text.length(), imageUrls == null ? 0 : imageUrls.size());
 
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("model", model);
@@ -65,10 +70,11 @@ public class OpenAiNoticeExtractionClient {
 					.body(JsonNode.class);
 			String outputText = findOutputText(root);
 			if (outputText == null || outputText.isBlank()) {
+				log.warn("OpenAI notice extraction returned no output text. title={} url={}", title, url);
 				return new NoticeExtractionResult(title, null, null, 0.0, "OpenAI response did not contain output text.", url);
 			}
 			JsonNode parsed = objectMapper.readTree(outputText);
-			return new NoticeExtractionResult(
+			NoticeExtractionResult result = new NoticeExtractionResult(
 					nullableText(parsed, "title", title),
 					nullableInstant(parsed, "registrationStartsAt"),
 					nullableInstant(parsed, "registrationEndsAt"),
@@ -76,10 +82,17 @@ public class OpenAiNoticeExtractionClient {
 					nullableText(parsed, "reason", "AI extraction completed."),
 					nullableText(parsed, "sourceUrl", url)
 			);
+			log.info("OpenAI notice extraction completed. title={} url={} hasPeriod={} confidence={}",
+					title, url, result.hasPeriod(), result.confidence());
+			return result;
 		} catch (RestClientResponseException exception) {
+			log.warn("OpenAI notice extraction request failed. title={} url={} status={} {}",
+					title, url, exception.getStatusCode().value(), exception.getStatusText());
 			return new NoticeExtractionResult(title, null, null, 0.0, "OpenAI request failed: "
 					+ exception.getStatusCode().value() + " " + exception.getStatusText(), url);
 		} catch (Exception exception) {
+			log.warn("OpenAI notice extraction processing failed. title={} url={} message={}",
+					title, url, exception.getMessage());
 			return new NoticeExtractionResult(title, null, null, 0.0, exception.getMessage(), url);
 		}
 	}

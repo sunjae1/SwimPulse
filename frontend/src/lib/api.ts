@@ -24,9 +24,7 @@ const fallbackPools: Pool[] = [
   {
     id: 1,
     name: "강남스포츠문화센터 수영장",
-    address: "서울 강남구 밤고개로1길 52",
     district: "강남구",
-    websiteUrl: "https://www.gangnam.go.kr",
     description: "새벽반과 저녁반 경쟁률이 높은 공공 수영장입니다.",
     completionYear: 2016,
     indoorOutdoorTypeName: "실내",
@@ -40,6 +38,12 @@ const fallbackPools: Pool[] = [
     lotNumberAddress: "서울특별시 강남구 수서동 718",
     roadNameAddress: "서울 강남구 밤고개로1길 52",
     homepageUrl: "https://www.gangnam.go.kr",
+    homepageSource: null,
+    homepageStatus: "UNVERIFIED",
+    homepageVerifiedAt: null,
+    homepageCandidateTitle: null,
+    homepageCandidateAddress: null,
+    homepageCandidateLink: null,
     imageUrl: null,
     latitude: null,
     longitude: null,
@@ -48,9 +52,7 @@ const fallbackPools: Pool[] = [
   {
     id: 2,
     name: "마포구민체육센터 수영장",
-    address: "서울 마포구 월드컵로25길 190",
     district: "마포구",
-    websiteUrl: "https://www.mapo.go.kr",
     description: "월초 접수 알림 수요가 많은 구민 체육시설입니다.",
     completionYear: 2004,
     indoorOutdoorTypeName: "실내",
@@ -64,6 +66,12 @@ const fallbackPools: Pool[] = [
     lotNumberAddress: "서울특별시 마포구 망원동 450-3",
     roadNameAddress: "서울 마포구 월드컵로25길 190",
     homepageUrl: "https://www.mapo.go.kr",
+    homepageSource: null,
+    homepageStatus: "UNVERIFIED",
+    homepageVerifiedAt: null,
+    homepageCandidateTitle: null,
+    homepageCandidateAddress: null,
+    homepageCandidateLink: null,
     imageUrl: null,
     latitude: null,
     longitude: null,
@@ -72,9 +80,7 @@ const fallbackPools: Pool[] = [
   {
     id: 3,
     name: "성동구립 용답체육센터",
-    address: "서울 성동구 천호대로78길 15-48",
     district: "성동구",
-    websiteUrl: "https://www.sd.go.kr",
     description: "직장인반과 어린이반 모집 공지가 자주 갱신됩니다.",
     completionYear: 2012,
     indoorOutdoorTypeName: "실내",
@@ -88,6 +94,12 @@ const fallbackPools: Pool[] = [
     lotNumberAddress: "서울특별시 성동구 용답동 182-4",
     roadNameAddress: "서울 성동구 천호대로78길 15-48",
     homepageUrl: "https://www.sd.go.kr",
+    homepageSource: null,
+    homepageStatus: "UNVERIFIED",
+    homepageVerifiedAt: null,
+    homepageCandidateTitle: null,
+    homepageCandidateAddress: null,
+    homepageCandidateLink: null,
     imageUrl: null,
     latitude: null,
     longitude: null,
@@ -231,6 +243,14 @@ export async function geocodeLocation(address: string): Promise<GeocodedLocation
   return request<GeocodedLocation>(`/api/locations/geocode?${params.toString()}`);
 }
 
+export async function reverseGeocodeLocation(latitude: number, longitude: number): Promise<GeocodedLocation> {
+  const params = new URLSearchParams({
+    latitude: latitude.toString(),
+    longitude: longitude.toString(),
+  });
+  return request<GeocodedLocation>(`/api/locations/reverse-geocode?${params.toString()}`);
+}
+
 export async function createPoolFromLocationCandidate(candidate: LocationSearchCandidate): Promise<Pool> {
   return request<Pool>("/api/pools/from-location-candidate", {
     method: "POST",
@@ -255,15 +275,20 @@ export async function getSubscriptions(): Promise<Subscription[]> {
   return request<Subscription[]>("/api/subscriptions");
 }
 
-export async function createSubscription(poolId: number): Promise<Subscription> {
+export async function createSubscription(input: {
+  poolId: number;
+  title: string;
+  registrationStartsAt: string;
+  registrationEndsAt: string;
+}): Promise<Subscription> {
   return request<Subscription>("/api/subscriptions", {
     method: "POST",
-    body: JSON.stringify({ poolId }),
+    body: JSON.stringify(input),
   });
 }
 
-export async function deleteSubscription(poolId: number): Promise<void> {
-  await request<void>(`/api/subscriptions?poolId=${poolId}`, {
+export async function deleteSubscription(eventId: number): Promise<void> {
+  await request<void>(`/api/subscriptions?eventId=${eventId}`, {
     method: "DELETE",
   });
 }

@@ -3,12 +3,16 @@ package com.swimpulse.pool;
 import com.swimpulse.common.BadRequestException;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientResponseException;
 
 @Service
 public class PoolGeocodingService {
+	private static final Logger log = LoggerFactory.getLogger(PoolGeocodingService.class);
+
 	private final PoolRepository poolRepository;
 	private final NaverMapsGeocodingClient naverMapsGeocodingClient;
 
@@ -24,12 +28,14 @@ public class PoolGeocodingService {
 		}
 
 		List<Pool> pools = poolRepository.findTop50ByGeocodeStatusOrderByIdAsc(GeocodeStatus.PENDING);
+		log.info("Pending pool geocode batch started. count={}", pools.size());
 		List<GeocodePoolResult> results = new ArrayList<>();
 
 		for (Pool pool : pools) {
 			results.add(geocode(pool));
 		}
 
+		log.info("Pending pool geocode batch completed. count={}", results.size());
 		return GeocodeBatchResponse.from(results);
 	}
 
@@ -37,17 +43,22 @@ public class PoolGeocodingService {
 		String address = pool.resolveGeocodeAddress();
 		if (address == null || address.isBlank()) {
 			pool.markGeocodeFailed();
+			log.warn("Pool geocode skipped because address is empty. poolId={}", pool.getId());
 			return GeocodePoolResult.failed(pool, "Address is empty.");
 		}
 
 		try {
+			log.info("Pool geocode started. poolId={} address={}", pool.getId(), address);
 			return naverMapsGeocodingClient.geocode(address)
 					.map(coordinates -> {
 						pool.markGeocodeSuccess(coordinates.latitude(), coordinates.longitude());
+						log.info("Pool geocode succeeded. poolId={} latitude={} longitude={}",
+								pool.getId(), coordinates.latitude(), coordinates.longitude());
 						return GeocodePoolResult.success(pool);
 					})
 					.orElseGet(() -> {
 						pool.markGeocodeFailed();
+						log.warn("Pool geocode returned no coordinates. poolId={} address={}", pool.getId(), address);
 						return GeocodePoolResult.failed(pool, "No coordinates found.");
 					});
 		}
