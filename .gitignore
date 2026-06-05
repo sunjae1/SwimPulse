@@ -14,6 +14,9 @@ frontend/.next/
 frontend/out/
 frontend/.env*.local
 
+#ngrok
+ngrok/
+
 # Logs
 *.log
 
