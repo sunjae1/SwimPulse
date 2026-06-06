@@ -46,6 +46,7 @@ import {
   sendTestNotification,
   unregisterCurrentDevice,
 } from "@/lib/api";
+import { AppNavigation } from "@/components/AppNavigation";
 import { eventStatusLabel, formatDate, formatDateTime, formatTimeLeft, notificationStatusLabel } from "@/lib/format";
 import { requestWebPushToken } from "@/lib/web-push";
 import type {
@@ -556,17 +557,20 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#17201d]">
       <div className="border-b border-[#d8ddd5] bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-lg bg-[#0f766e] text-white">
-              <Waves size={22} aria-hidden />
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-5">
+            <div className="flex items-center gap-3">
+              <div className="grid size-10 place-items-center rounded-lg bg-[#0f766e] text-white">
+                <Waves size={22} aria-hidden />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[#0f766e]">SwimPulse</p>
+                <h1 className="text-xl font-semibold">수영장 등록 타이밍 알림</h1>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-[#0f766e]">SwimPulse</p>
-              <h1 className="text-xl font-semibold">수영장 등록 타이밍 알림</h1>
-            </div>
+            <AppNavigation />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <StatusPill active={apiReachable} />
             {user ? (
               <span className="hidden max-w-44 truncate rounded-lg border border-[#d8ddd5] bg-white px-3 py-2 text-sm font-semibold text-[#31413b] md:inline-flex">

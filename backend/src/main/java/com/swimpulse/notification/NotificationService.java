@@ -74,8 +74,13 @@ public class NotificationService {
 		if (!notification.getUser().getId().equals(userId)) {
 			throw new BadRequestException("Notification does not belong to user: " + userId);
 		}
-		notification.markRead();
-		log.info("Notification marked read. notificationId={} userId={}", notificationId, userId);
+		if (notification.getReadAt() == null) {
+			notification.markRead();
+			log.info("Notification marked read. notificationId={} userId={}", notificationId, userId);
+		} else {
+			log.info("Notification read request ignored because already read. notificationId={} userId={} readAt={}",
+					notificationId, userId, notification.getReadAt());
+		}
 		return NotificationResponse.from(notification);
 	}
 

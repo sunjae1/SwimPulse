@@ -5,6 +5,7 @@ import type {
   GeocodedLocation,
   InAppNotification,
   LocationSearchCandidate,
+  MyPageData,
   NearbyPool,
   NoticeScanResponse,
   Pool,
@@ -203,6 +204,10 @@ export async function getMe(): Promise<AppUser> {
   return request<AppUser>("/api/me");
 }
 
+export async function getMyPage(): Promise<MyPageData> {
+  return request<MyPageData>("/api/my-page");
+}
+
 export async function logout(): Promise<void> {
   await request<void>("/api/auth/logout", {
     method: "POST",
@@ -283,6 +288,20 @@ export async function createSubscription(input: {
 }): Promise<Subscription> {
   return request<Subscription>("/api/subscriptions", {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateSubscriptionPeriod(
+  subscriptionId: number,
+  input: {
+    title: string;
+    registrationStartsAt: string;
+    registrationEndsAt: string;
+  },
+): Promise<Subscription> {
+  return request<Subscription>(`/api/subscriptions/${subscriptionId}`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }

@@ -62,8 +62,23 @@ public class EventService {
 		if (!request.registrationStartsAt().isBefore(request.registrationEndsAt())) {
 			throw new BadRequestException("registrationStartsAt must be before registrationEndsAt");
 		}
-		Pool pool = poolRepository.findById(request.poolId())
+		Pool pool = poolRepository.findByIdForUpdate(request.poolId())
 				.orElseThrow(() -> new NotFoundException("Pool not found: " + request.poolId()));
+		return eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
+						pool.getId(),
+						request.title(),
+						request.registrationStartsAt(),
+						request.registrationEndsAt()
+				)
+				.map(existing -> {
+					log.info("Registration event already exists. eventId={} poolId={} startsAt={} endsAt={}",
+							existing.getId(), pool.getId(), existing.getRegistrationStartsAt(), existing.getRegistrationEndsAt());
+					return EventResponse.from(existing);
+				})
+				.orElseGet(() -> createEvent(pool, request));
+	}
+
+	private EventResponse createEvent(Pool pool, CreateEventRequest request) {
 		RegistrationEvent event = new RegistrationEvent(
 				pool,
 				request.title(),

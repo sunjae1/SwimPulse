@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.swimpulse.common.BadRequestException;
 import com.swimpulse.common.NotFoundException;
+import com.swimpulse.common.RedisLockService;
 import com.swimpulse.pool.Pool;
 import com.swimpulse.pool.PoolRepository;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -36,6 +38,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -85,14 +88,42 @@ public class NoticeCrawlerService {
 	private final OpenAiNoticeExtractionClient openAiNoticeExtractionClient;
 	private final ObjectMapper objectMapper;
 	private final boolean insecureSslFallbackEnabled;
+	private final RedisLockService redisLockService;
+	private final String scanLockKeyPrefix;
+	private final Duration scanLockTtl;
 
+	NoticeCrawlerService(
+			PoolRepository poolRepository,
+			PoolNoticeRepository noticeRepository,
+			PoolNoticeSourceRepository sourceRepository,
+			OpenAiNoticeExtractionClient openAiNoticeExtractionClient,
+			ObjectMapper objectMapper,
+			boolean insecureSslFallbackEnabled
+	) {
+		this(
+				poolRepository,
+				noticeRepository,
+				sourceRepository,
+				openAiNoticeExtractionClient,
+				objectMapper,
+				insecureSslFallbackEnabled,
+				null,
+				"swimpulse:locks:notice-scan:",
+				300000
+		);
+	}
+
+	@Autowired
 	public NoticeCrawlerService(
 			PoolRepository poolRepository,
 			PoolNoticeRepository noticeRepository,
 			PoolNoticeSourceRepository sourceRepository,
 			OpenAiNoticeExtractionClient openAiNoticeExtractionClient,
 			ObjectMapper objectMapper,
-			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled
+			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled,
+			RedisLockService redisLockService,
+			@Value("${swimpulse.notice.scan-lock-key-prefix:swimpulse:locks:notice-scan:}") String scanLockKeyPrefix,
+			@Value("${swimpulse.notice.scan-lock-ttl-ms:300000}") long scanLockTtlMs
 	) {
 		this.poolRepository = poolRepository;
 		this.noticeRepository = noticeRepository;
@@ -100,10 +131,15 @@ public class NoticeCrawlerService {
 		this.openAiNoticeExtractionClient = openAiNoticeExtractionClient;
 		this.objectMapper = objectMapper;
 		this.insecureSslFallbackEnabled = insecureSslFallbackEnabled;
+		this.redisLockService = redisLockService;
+		this.scanLockKeyPrefix = scanLockKeyPrefix;
+		this.scanLockTtl = Duration.ofMillis(scanLockTtlMs);
 	}
 
 	@Transactional
 	public NoticeScanResponse scan(Long poolId) {
+		RedisLockService.LockToken lockToken = acquireScanLock(poolId);
+		try {
 		List<String> trace = new ArrayList<>();
 		Pool pool = poolRepository.findById(poolId)
 				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
@@ -172,6 +208,25 @@ public class NoticeCrawlerService {
 		log.info("Notice scan completed. poolId={} detailCandidates={} savedNotices={} message={}",
 				pool.getId(), detailCandidates.size(), notices.size(), message);
 		return new NoticeScanResponse(pool.getId(), pool.getName(), homepageUrl, detailCandidates.size(), notices, message, trace);
+		} finally {
+			releaseScanLock(lockToken);
+		}
+	}
+
+	private RedisLockService.LockToken acquireScanLock(Long poolId) {
+		if (redisLockService == null) {
+			return null;
+		}
+		String lockKey = scanLockKeyPrefix + poolId;
+		return redisLockService.acquire(lockKey, scanLockTtl)
+				.orElseThrow(() -> new BadRequestException("A notice scan is already running for this pool. Try again shortly."));
+	}
+
+	private void releaseScanLock(RedisLockService.LockToken lockToken) {
+		if (redisLockService == null) {
+			return;
+		}
+		redisLockService.release(lockToken);
 	}
 
 	private void collectDetailCandidates(

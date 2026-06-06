@@ -16,6 +16,14 @@ export function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+export function formatFullDate(value: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(value));
+}
+
 export function formatTimeLeft(value: string) {
   const diff = new Date(value).getTime() - Date.now();
   if (diff <= 0) {

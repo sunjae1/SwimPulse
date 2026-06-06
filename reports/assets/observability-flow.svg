@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640">
+  <rect width="1200" height="640" fill="#f6f7f2"/>
+  <text x="60" y="70" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#17201d">SwimPulse Observability Flow</text>
+  <text x="60" y="108" font-family="Arial, sans-serif" font-size="18" fill="#4d5b55">Actuator exposes metrics, Prometheus scrapes them, Grafana visualizes them.</text>
+
+  <rect x="60" y="170" width="220" height="130" rx="28" fill="#ffffff" stroke="#d8ddd5" stroke-width="3"/>
+  <text x="92" y="220" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#0f766e">Backend API</text>
+  <text x="92" y="255" font-family="Arial, sans-serif" font-size="18" fill="#31413b">Spring Boot + Actuator</text>
+  <text x="92" y="283" font-family="Arial, sans-serif" font-size="18" fill="#31413b">/actuator/prometheus</text>
+
+  <rect x="350" y="170" width="220" height="130" rx="28" fill="#ffffff" stroke="#d8ddd5" stroke-width="3"/>
+  <text x="384" y="220" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#946123">Prometheus</text>
+  <text x="384" y="255" font-family="Arial, sans-serif" font-size="18" fill="#31413b">15s scrape cycle</text>
+  <text x="384" y="283" font-family="Arial, sans-serif" font-size="18" fill="#31413b">Stores time-series</text>
+
+  <rect x="640" y="170" width="220" height="130" rx="28" fill="#ffffff" stroke="#d8ddd5" stroke-width="3"/>
+  <text x="688" y="220" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#bf4b3e">Grafana</text>
+  <text x="688" y="255" font-family="Arial, sans-serif" font-size="18" fill="#31413b">Queries Prometheus</text>
+  <text x="688" y="283" font-family="Arial, sans-serif" font-size="18" fill="#31413b">Visual dashboards</text>
+
+  <rect x="930" y="170" width="220" height="130" rx="28" fill="#ffffff" stroke="#d8ddd5" stroke-width="3"/>
+  <text x="967" y="220" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#17201d">You</text>
+  <text x="967" y="255" font-family="Arial, sans-serif" font-size="18" fill="#31413b">Check latency, errors,</text>
+  <text x="967" y="283" font-family="Arial, sans-serif" font-size="18" fill="#31413b">request volume, JVM</text>
+
+  <path d="M280 235 L350 235" stroke="#0f766e" stroke-width="8" stroke-linecap="round"/>
+  <polygon points="350,235 332,225 332,245" fill="#0f766e"/>
+  <text x="292" y="215" font-family="Arial, sans-serif" font-size="16" fill="#0f766e">scrape</text>
+
+  <path d="M570 235 L640 235" stroke="#946123" stroke-width="8" stroke-linecap="round"/>
+  <polygon points="640,235 622,225 622,245" fill="#946123"/>
+  <text x="588" y="215" font-family="Arial, sans-serif" font-size="16" fill="#946123">query</text>
+
+  <path d="M860 235 L930 235" stroke="#bf4b3e" stroke-width="8" stroke-linecap="round"/>
+  <polygon points="930,235 912,225 912,245" fill="#bf4b3e"/>
+  <text x="880" y="215" font-family="Arial, sans-serif" font-size="16" fill="#bf4b3e">view</text>
+
+  <rect x="60" y="370" width="1090" height="200" rx="32" fill="#ffffff" stroke="#d8ddd5" stroke-width="3"/>
+  <text x="92" y="418" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#17201d">What to watch first</text>
+
+  <circle cx="120" cy="468" r="13" fill="#0f766e"/>
+  <text x="150" y="475" font-family="Arial, sans-serif" font-size="20" fill="#31413b">`/api/pools/nearby` p95 latency</text>
+
+  <circle cx="120" cy="515" r="13" fill="#946123"/>
+  <text x="150" y="522" font-family="Arial, sans-serif" font-size="20" fill="#31413b">`/api/pools/{poolId}/notices/scan` p95 latency</text>
+
+  <circle cx="610" cy="468" r="13" fill="#bf4b3e"/>
+  <text x="640" y="475" font-family="Arial, sans-serif" font-size="20" fill="#31413b">HTTP request rate by endpoint</text>
+
+  <circle cx="610" cy="515" r="13" fill="#17201d"/>
+  <text x="640" y="522" font-family="Arial, sans-serif" font-size="20" fill="#31413b">JVM heap and process CPU</text>
+</svg>

@@ -56,8 +56,7 @@ public class SubscriptionService {
 		}
 		AppUser user = userRepository.findById(userId)
 				.orElseThrow(() -> new NotFoundException("User not found: " + userId));
-		Pool pool = poolRepository.findById(request.poolId())
-				.orElseThrow(() -> new NotFoundException("Pool not found: " + request.poolId()));
+		Pool pool = getPoolForEventCreation(request.poolId());
 		String title = normalizeTitle(request.title());
 		RegistrationEvent event = eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
 						pool.getId(),
@@ -91,6 +90,50 @@ public class SubscriptionService {
 	}
 
 	@Transactional
+	public SubscriptionResponse updatePeriod(Long userId, Long subscriptionId, UpdateSubscriptionPeriodRequest request) {
+		if (!request.registrationStartsAt().isBefore(request.registrationEndsAt())) {
+			throw new BadRequestException("registrationStartsAt must be before registrationEndsAt");
+		}
+		if (!request.registrationEndsAt().isAfter(Instant.now())) {
+			throw new BadRequestException("Cannot subscribe to an already closed registration period.");
+		}
+
+		Subscription subscription = subscriptionRepository.findByIdAndUser_Id(subscriptionId, userId)
+				.orElseThrow(() -> new NotFoundException("Subscription not found."));
+		String title = normalizeTitle(request.title());
+		Pool pool = getPoolForEventCreation(subscription.getPool().getId());
+		RegistrationEvent event = eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
+						pool.getId(),
+						title,
+						request.registrationStartsAt(),
+						request.registrationEndsAt()
+				)
+				.orElseGet(() -> {
+					RegistrationEvent saved = eventRepository.save(new RegistrationEvent(
+							pool,
+							title,
+							request.registrationStartsAt(),
+							request.registrationEndsAt(),
+							calculateStatus(request.registrationStartsAt(), request.registrationEndsAt(), Instant.now())
+					));
+					log.info("Registration event created from subscription update. eventId={} poolId={} startsAt={} endsAt={}",
+							saved.getId(), pool.getId(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
+					return saved;
+				});
+
+		subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
+				.filter(existing -> !existing.getId().equals(subscription.getId()))
+				.ifPresent(existing -> {
+					throw new BadRequestException("Already subscribed to the same registration period.");
+				});
+
+		subscription.reassignEvent(event);
+		log.info("Subscription period updated. userId={} subscriptionId={} eventId={} startsAt={} endsAt={}",
+				userId, subscriptionId, event.getId(), event.getRegistrationStartsAt(), event.getRegistrationEndsAt());
+		return SubscriptionResponse.from(subscription);
+	}
+
+	@Transactional
 	public void unsubscribe(Long userId, Long eventId) {
 		Subscription subscription = subscriptionRepository.findByUser_IdAndEvent_Id(userId, eventId)
 				.orElseThrow(() -> new NotFoundException("Subscription not found."));
@@ -102,6 +145,11 @@ public class SubscriptionService {
 		if (!userRepository.existsById(userId)) {
 			throw new NotFoundException("User not found: " + userId);
 		}
+	}
+
+	private Pool getPoolForEventCreation(Long poolId) {
+		return poolRepository.findByIdForUpdate(poolId)
+				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
 	}
 
 	private String normalizeTitle(String title) {

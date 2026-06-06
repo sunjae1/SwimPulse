@@ -154,6 +154,22 @@ export type DeviceRegistration = {
   lastSeenAt: string | null;
 };
 
+export type MyPageMetrics = {
+  subscriptionCount: number;
+  upcomingSubscriptionCount: number;
+  openSubscriptionCount: number;
+  notificationCount: number;
+  unreadNotificationCount: number;
+  activeDeviceCount: number;
+};
+
+export type MyPageData = {
+  user: AppUser;
+  metrics: MyPageMetrics;
+  subscriptions: Subscription[];
+  notifications: InAppNotification[];
+};
+
 export type DashboardInitialData = {
   pools: Pool[];
   events: RegistrationEvent[];

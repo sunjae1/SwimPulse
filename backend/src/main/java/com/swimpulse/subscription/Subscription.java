@@ -67,4 +67,9 @@ public class Subscription {
 	public Instant getCreatedAt() {
 		return createdAt;
 	}
+
+	public void reassignEvent(RegistrationEvent event) {
+		this.event = event;
+		this.pool = event.getPool();
+	}
 }

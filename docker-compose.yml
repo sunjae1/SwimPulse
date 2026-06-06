@@ -27,5 +27,33 @@ services:
       timeout: 5s
       retries: 10
 
+  prometheus:
+    image: prom/prometheus:v3.7.2
+    container_name: swimpulse-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - backend
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: swimpulse-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: swimpulse-admin
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   redis-data:
+  prometheus-data:
+  grafana-data:

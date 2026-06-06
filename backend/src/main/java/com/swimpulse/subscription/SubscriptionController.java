@@ -6,9 +6,11 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -36,6 +38,17 @@ public class SubscriptionController {
 		log.info("Subscription requested. userId={} poolId={} startsAt={} endsAt={}",
 				user.id(), request.poolId(), request.registrationStartsAt(), request.registrationEndsAt());
 		return subscriptionService.subscribe(user.id(), request);
+	}
+
+	@PatchMapping("/{subscriptionId}")
+	public SubscriptionResponse updateSubscriptionPeriod(
+			@AuthenticationPrincipal AuthenticatedUser user,
+			@PathVariable Long subscriptionId,
+			@Valid @RequestBody UpdateSubscriptionPeriodRequest request
+	) {
+		log.info("Subscription period update requested. userId={} subscriptionId={} startsAt={} endsAt={}",
+				user.id(), subscriptionId, request.registrationStartsAt(), request.registrationEndsAt());
+		return subscriptionService.updatePeriod(user.id(), subscriptionId, request);
 	}
 
 	@DeleteMapping
