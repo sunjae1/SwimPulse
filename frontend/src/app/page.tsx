@@ -1,8 +1,22 @@
 import { DashboardClient } from "@/components/DashboardClient";
 import { getInitialDashboardData } from "@/lib/api";
 
-export default async function Home() {
-  const initialData = await getInitialDashboardData();
+type HomeProps = {
+  searchParams?: Promise<{
+    login?: string;
+    notificationId?: string;
+  }>;
+};
 
-  return <DashboardClient initialData={initialData} />;
+export default async function Home({ searchParams }: HomeProps) {
+  const initialData = await getInitialDashboardData();
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+
+  return (
+    <DashboardClient
+      initialData={initialData}
+      initialLoginSuccess={resolvedSearchParams?.login === "success"}
+      initialNotificationId={resolvedSearchParams?.notificationId ?? null}
+    />
+  );
 }

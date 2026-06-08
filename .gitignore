@@ -30,3 +30,7 @@ frontend/.env
 firebase-service-account*.json
 backend/firebase-service-account*.json
 backend/*firebase-adminsdk*.json
+
+# k6 results
+ops/k6/results/*
+!ops/k6/results/.gitkeep

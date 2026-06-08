@@ -66,6 +66,8 @@ import type {
 
 type DashboardClientProps = {
   initialData: DashboardInitialData;
+  initialNotificationId?: string | null;
+  initialLoginSuccess?: boolean;
 };
 
 type EventForm = {
@@ -77,7 +79,11 @@ type EventForm = {
 
 const statusOptions: Array<EventStatus | "ALL"> = ["ALL", "UPCOMING", "OPEN", "CLOSED"];
 
-export function DashboardClient({ initialData }: DashboardClientProps) {
+export function DashboardClient({
+  initialData,
+  initialNotificationId = null,
+  initialLoginSuccess = false,
+}: DashboardClientProps) {
   const [apiReachable, setApiReachable] = useState(initialData.apiReachable);
   const [allPools, setAllPools] = useState<Pool[]>(initialData.pools);
   const [pools, setPools] = useState<Pool[]>(initialData.pools);
@@ -96,12 +102,17 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
   const [currentDeviceRegistered, setCurrentDeviceRegistered] = useState(false);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [notificationsLoaded, setNotificationsLoaded] = useState(false);
   const [statusFilter, setStatusFilter] = useState<EventStatus | "ALL">("ALL");
   const [noticeSubscriptionMode, setNoticeSubscriptionMode] = useState(false);
   const [pendingSubscriptionKey, setPendingSubscriptionKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pushGuideOpen, setPushGuideOpen] = useState(false);
+  const [pushNotificationModal, setPushNotificationModal] = useState<InAppNotification | null>(null);
+  const [pushNotificationClosing, setPushNotificationClosing] = useState(false);
+  const [pendingNotificationLaunchId, setPendingNotificationLaunchId] = useState<string | null>(initialNotificationId);
+  const [pendingLoginSuccessNotice, setPendingLoginSuccessNotice] = useState(initialLoginSuccess);
   const [form, setForm] = useState<EventForm>(() => {
     const start = new Date(Date.now() + 30 * 60 * 1000);
     const end = new Date(Date.now() + 90 * 60 * 1000);
@@ -134,6 +145,13 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
   const upcomingEvents = events.filter((event) => event.status === "UPCOMING").length;
   const unreadNotifications = notifications.filter((item) => !item.readAt).length;
 
+  function clearSearchParam(key: string) {
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.delete(key);
+    const nextQuery = nextParams.toString();
+    window.history.replaceState(null, "", nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -153,14 +171,10 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
         if (!cancelled) {
           setSubscriptions(freshSubscriptions);
           setNotifications(freshNotifications);
+          setNotificationsLoaded(true);
           setEvents(freshEvents);
           setCurrentDeviceRegistered(currentDevice.registered);
           setApiReachable(true);
-          const searchParams = new URLSearchParams(window.location.search);
-          if (searchParams.get("login") === "success") {
-            setNotice(`${currentUser.displayName} 계정으로 로그인됐습니다.`);
-            window.history.replaceState(null, "", window.location.pathname);
-          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -169,6 +183,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             setCurrentDeviceRegistered(false);
             setSubscriptions([]);
             setNotifications([]);
+            setNotificationsLoaded(true);
             setApiReachable(true);
             return;
           }
@@ -201,6 +216,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
       const currentDevice = await getCurrentDeviceRegistration(getOrCreateDeviceId());
       setSubscriptions(freshSubscriptions);
       setNotifications(freshNotifications);
+      setNotificationsLoaded(true);
       setEvents(freshEvents);
       setCurrentDeviceRegistered(currentDevice.registered);
       setApiReachable(true);
@@ -528,6 +544,69 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
       setNotice("알림 읽음 처리를 완료하지 못했습니다.");
     }
   }
+
+  async function closePushNotificationModal() {
+    const target = pushNotificationModal;
+    setPushNotificationClosing(true);
+
+    try {
+      if (target && !target.readAt && user) {
+        const updated = await markNotificationRead(target.id);
+        setNotifications((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      }
+    } catch {
+      setNotice("알림 읽음 처리를 완료하지 못했습니다.");
+    } finally {
+      setPushNotificationModal(null);
+      setPushNotificationClosing(false);
+      if (pendingNotificationLaunchId) {
+        clearSearchParam("notificationId");
+      }
+      setPendingNotificationLaunchId(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingLoginSuccessNotice || !user) {
+      return;
+    }
+    setNotice(`${user.displayName} 계정으로 로그인됐습니다.`);
+    clearSearchParam("login");
+    setPendingLoginSuccessNotice(false);
+  }, [pendingLoginSuccessNotice, user]);
+
+  useEffect(() => {
+    if (!pendingNotificationLaunchId) {
+      return;
+    }
+    if (!notificationsLoaded) {
+      return;
+    }
+
+    const notificationId = Number(pendingNotificationLaunchId);
+    if (!Number.isInteger(notificationId) || notificationId <= 0) {
+      clearSearchParam("notificationId");
+      setPendingNotificationLaunchId(null);
+      return;
+    }
+
+    if (!user) {
+      setNotice("로그인 후 알림 내용을 확인할 수 있습니다.");
+      clearSearchParam("notificationId");
+      setPendingNotificationLaunchId(null);
+      return;
+    }
+
+    const target = notifications.find((item) => item.id === notificationId);
+    if (!target) {
+      setNotice("해당 알림을 찾지 못했습니다.");
+      clearSearchParam("notificationId");
+      setPendingNotificationLaunchId(null);
+      return;
+    }
+
+    setPushNotificationModal(target);
+  }, [notifications, notificationsLoaded, pendingNotificationLaunchId, user]);
 
   async function submitEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1043,6 +1122,13 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
           onUnsubscribe={unsubscribeFromNoticePeriod}
         />
       ) : null}
+      {pushNotificationModal ? (
+        <PushNotificationModal
+          notification={pushNotificationModal}
+          busy={pushNotificationClosing}
+          onClose={closePushNotificationModal}
+        />
+      ) : null}
     </main>
   );
 }
@@ -1213,6 +1299,64 @@ function PushGuideModal({ onClose }: { onClose: () => void }) {
           >
             확인
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PushNotificationModal({
+  notification,
+  busy,
+  onClose,
+}: {
+  notification: InAppNotification;
+  busy: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/45 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="push-notification-title"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-[28px] border border-[#d8ddd5] bg-white p-0 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="space-y-5 px-6 py-6 sm:px-7 sm:py-7">
+          <div className="flex items-center justify-between gap-3">
+            <span className="rounded-full bg-[#edf7f5] px-3 py-1 text-xs font-semibold text-[#0f766e]">PUSH 알림</span>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                notification.readAt ? "bg-[#f0f1ef] text-[#66746d]" : "bg-[#fff0ed] text-[#bf4b3e]"
+              }`}
+            >
+              {notification.readAt ? "읽음" : "안 읽음"}
+            </span>
+          </div>
+          <div className="space-y-3">
+            <h2 id="push-notification-title" className="text-2xl font-semibold tracking-tight text-[#17201d]">
+              {notification.title}
+            </h2>
+            <p className="text-base leading-7 text-[#31413b]">{notification.message}</p>
+          </div>
+          <div className="rounded-2xl bg-[#f7f8f4] px-4 py-4 text-sm text-[#47564f]">
+            <p className="font-semibold text-[#17201d]">{notification.poolName}</p>
+            <p className="mt-1">{notification.eventTitle}</p>
+            <p className="mt-3 text-xs text-[#7c8982]">도착 {formatDateTime(notification.createdAt)}</p>
+          </div>
+          <button
+            className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+            onClick={onClose}
+            disabled={busy}
+            type="button"
+          >
+            {busy ? "읽음 처리 중..." : "확인"}
+          </button>
+          <p className="text-center text-xs text-[#7c8982]">바깥 영역을 눌러도 닫히며 읽음 처리됩니다.</p>
         </div>
       </div>
     </div>

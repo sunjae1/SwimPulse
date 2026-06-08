@@ -107,6 +107,14 @@ sum(rate(http_server_requests_seconds_count[5m]))
 
 값이 나온다면 HTTP 요청 메트릭이 정상적으로 수집 중입니다.
 
+`p95` 쿼리를 쓰려면 `http_server_requests_seconds_bucket`도 보여야 합니다.
+
+```promql
+http_server_requests_seconds_bucket
+```
+
+이 값이 안 보이면 HTTP 요청 히스토그램 bucket이 아직 비활성화된 상태일 수 있습니다. 현재 프로젝트는 `application.properties`에서 HTTP 서버 요청 히스토그램과 SLO bucket을 켜두었습니다.
+
 ## 5. 무엇을 기준으로 볼 것인가
 
 성능 비교는 평균보다 아래 지표를 우선 봅니다.
@@ -215,6 +223,12 @@ sum(rate(http_server_requests_seconds_count[5m]))
 sum(rate(http_server_requests_seconds_count[5m]))
 ```
 
+### actuator 제외 전체 요청량
+
+```promql
+sum(rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[1m]))
+```
+
 ### 근처 수영장 API p95
 
 ```promql
@@ -243,6 +257,87 @@ histogram_quantile(
 sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
 /
 sum(rate(http_server_requests_seconds_count[5m]))
+```
+
+### URI별 p95 지연
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (uri, le) (
+    rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[1m])
+  )
+)
+```
+
+이 쿼리는 "지금 시점 기준 최근 1분 동안 어떤 URI가 느렸는지"를 보는 데 좋습니다.
+
+### 느린 API 상위 5개
+
+```promql
+topk(
+  5,
+  histogram_quantile(
+    0.95,
+    sum by (uri, le) (
+      rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[5m])
+    )
+  )
+)
+```
+
+### URI별 평균 응답시간
+
+```promql
+sum by (uri) (
+  rate(http_server_requests_seconds_sum{uri!~"/actuator.*"}[5m])
+)
+/
+sum by (uri) (
+  rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[5m])
+)
+```
+
+### URI별 요청량
+
+```promql
+sum by (uri) (
+  rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[1m])
+)
+```
+
+### 4xx 에러 비율
+
+```promql
+sum(rate(http_server_requests_seconds_count{status=~"4..",uri!~"/actuator.*"}[5m]))
+/
+sum(rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[5m]))
+```
+
+### URI별 5xx 에러 수
+
+```promql
+sum by (uri) (
+  rate(http_server_requests_seconds_count{status=~"5..",uri!~"/actuator.*"}[5m])
+)
+```
+
+### Hikari 활성 커넥션
+
+```promql
+hikaricp_connections_active{application="SwimPulse"}
+```
+
+### Hikari 대기 커넥션
+
+```promql
+hikaricp_connections_pending{application="SwimPulse"}
+```
+
+### GC pause rate
+
+```promql
+sum(rate(jvm_gc_pause_seconds_count{application="SwimPulse"}[5m]))
 ```
 
 ## 10. 지금 프로젝트에 맞는 테스트 시나리오
@@ -294,7 +389,34 @@ sum(rate(http_server_requests_seconds_count[5m]))
 - 처리량 증가폭
 - CPU 감소폭
 
-## 11. 결과 기록 템플릿
+## 11. 처음 쓸 때 보통 어떻게 진행하나
+
+처음에는 아래 순서로 많이 봅니다.
+
+1. Grafana에서 전체 요청량, URI별 요청량, URI별 p95 패널을 먼저 만듭니다.
+2. 아무것도 안 할 때 기준선을 2~3분 봅니다.
+3. 프론트에서 실제로 기능을 눌러봅니다.
+4. 어느 URI가 튀는지 확인합니다.
+5. 그다음 `k6`로 같은 API를 반복 호출합니다.
+6. `요청량은 높은데 p95도 같이 뛰는지`, `에러율이 오르는지`, `DB 커넥션이 막히는지`를 같이 봅니다.
+
+쉽게 말하면:
+
+- `count/rate`: 얼마나 많이 호출됐는지
+- `bucket + histogram_quantile`: 얼마나 느렸는지
+- `status`: 실패했는지
+- `cpu/heap/hikari`: 병목이 어디 쪽인지
+
+예를 들어:
+
+- `/api/pools/nearby`만 p95가 높고 CPU도 같이 튄다
+  위치 계산/후보 필터 쪽 의심
+- `/api/pools/{poolId}/notices/scan`만 느리고 외부 호출 때만 튄다
+  크롤링/파싱/외부 사이트 응답 의심
+- 전체 API가 느리고 `hikaricp_connections_pending`이 오른다
+  DB 커넥션 부족이나 느린 쿼리 의심
+
+## 12. 결과 기록 템플릿
 
 테스트할 때는 아래 형식으로 남기면 비교가 편합니다.
 
@@ -325,7 +447,7 @@ sum(rate(http_server_requests_seconds_count[5m]))
 - 아직 병목이 남았는지:
 ```
 
-## 12. 자주 헷갈리는 포인트
+## 13. 자주 헷갈리는 포인트
 
 ### `k6`는 무엇인가
 
@@ -356,7 +478,21 @@ sum(rate(http_server_requests_seconds_count[5m]))
 
 이 네 가지가 달라지면 수치 비교가 흐려집니다.
 
-## 13. 다음 추천 작업
+### bucket을 켜면 시간별로 뭐가 느린지 보이나
+
+네, "최근 1분", "최근 5분" 같은 시간 구간 기준으로 어떤 URI가 느렸는지 볼 수 있습니다.
+
+다만 bucket이 알려주는 것은:
+
+- 어느 API가 느렸는지
+- 얼마나 느렸는지
+- 언제 느려졌는지
+
+까지입니다.
+
+bucket만으로는 "정확히 코드 내부 어느 함수가 느린지"까지는 안 보입니다. 그건 필요하면 커스텀 Micrometer 타이머를 추가해서 더 쪼개야 합니다.
+
+## 14. 다음 추천 작업
 
 이 문서를 실제로 더 잘 쓰려면 다음이 있으면 좋습니다.
 
