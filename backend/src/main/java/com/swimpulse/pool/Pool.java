@@ -7,6 +7,8 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -20,6 +22,9 @@ public class Pool {
 
 	@Column(nullable = false, length = 100)
 	private String name;
+
+	@Column(nullable = false, length = 100)
+	private String normalizedName = "";
 
 	@Column(nullable = false, length = 50)
 	private String district;
@@ -55,8 +60,14 @@ public class Pool {
 	@Column(length = 255)
 	private String lotNumberAddress;
 
+	@Column(nullable = false, length = 255)
+	private String normalizedLotNumberAddress = "";
+
 	@Column(length = 255)
 	private String roadNameAddress;
+
+	@Column(nullable = false, length = 255)
+	private String normalizedRoadNameAddress = "";
 
 	@Column(length = 255)
 	private String homepageUrl;
@@ -205,6 +216,10 @@ public class Pool {
 		return name;
 	}
 
+	public String getNormalizedName() {
+		return normalizedName;
+	}
+
 	public String getDistrict() {
 		return district;
 	}
@@ -253,8 +268,16 @@ public class Pool {
 		return lotNumberAddress;
 	}
 
+	public String getNormalizedLotNumberAddress() {
+		return normalizedLotNumberAddress;
+	}
+
 	public String getRoadNameAddress() {
 		return roadNameAddress;
+	}
+
+	public String getNormalizedRoadNameAddress() {
+		return normalizedRoadNameAddress;
 	}
 
 	public String getHomepageUrl() {
@@ -392,6 +415,14 @@ public class Pool {
 
 	public void markGeocodePending() {
 		this.geocodeStatus = GeocodeStatus.PENDING;
+	}
+
+	@PrePersist
+	@PreUpdate
+	private void refreshNormalizedSearchFields() {
+		this.normalizedName = PoolSearchNormalizer.normalize(name);
+		this.normalizedLotNumberAddress = PoolSearchNormalizer.normalize(lotNumberAddress);
+		this.normalizedRoadNameAddress = PoolSearchNormalizer.normalize(roadNameAddress);
 	}
 
 	private boolean hasText(String value) {

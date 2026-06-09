@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.never;
@@ -53,8 +52,7 @@ class PoolServiceTests {
 
 	@Test
 	void createFromLocationCandidateStoresCandidateLinkAsHomepage() {
-		when(poolRepository.findAll()).thenReturn(List.of());
-		when(locationService.findMatchingPool(anyString(), nullable(String.class), nullable(String.class), any(), any(), anyList()))
+		when(locationService.findMatchingPool(anyString(), nullable(String.class), nullable(String.class), any(), any()))
 				.thenReturn(null);
 		when(poolRepository.save(any(Pool.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -75,8 +73,7 @@ class PoolServiceTests {
 
 	@Test
 	void createFromLocationCandidateDoesNotSearchAgainWhenCandidateLinkIsMissing() {
-		when(poolRepository.findAll()).thenReturn(List.of());
-		when(locationService.findMatchingPool(anyString(), nullable(String.class), nullable(String.class), any(), any(), anyList()))
+		when(locationService.findMatchingPool(anyString(), nullable(String.class), nullable(String.class), any(), any()))
 				.thenReturn(null);
 		when(poolRepository.save(any(Pool.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -105,8 +102,7 @@ class PoolServiceTests {
 				37.5,
 				126.8
 		);
-		when(poolRepository.findAll()).thenReturn(List.of(existing));
-		when(locationService.findMatchingPool(anyString(), nullable(String.class), nullable(String.class), any(), any(), anyList()))
+		when(locationService.findMatchingPool(anyString(), nullable(String.class), nullable(String.class), any(), any()))
 				.thenReturn(existing);
 
 		PoolResponse response = poolService.createFromLocationCandidate(new CreatePoolFromLocationCandidateRequest(

@@ -101,7 +101,7 @@ public class PoolService {
 		}
 		validateCoordinates(latitude, longitude);
 
-		Pool existing = locationService.findMatchingPool(title, roadAddress, address, latitude, longitude, poolRepository.findAll());
+		Pool existing = locationService.findMatchingPool(title, roadAddress, address, latitude, longitude);
 		if (existing != null) {
 			log.info("Location candidate matched existing pool. poolId={} title={}", existing.getId(), title);
 			return PoolResponse.from(existing);

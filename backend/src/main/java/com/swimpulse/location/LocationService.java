@@ -2,10 +2,20 @@ package com.swimpulse.location;
 
 import com.swimpulse.common.BadRequestException;
 import com.swimpulse.pool.NaverMapsGeocodingClient;
+import com.swimpulse.pool.NearbyPoolMatchRow;
+import com.swimpulse.pool.NearbySearchOrigin;
 import com.swimpulse.pool.Pool;
+import com.swimpulse.pool.PoolNearbyQueryRepository;
 import com.swimpulse.pool.PoolRepository;
-import java.util.List;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.IntStream;
+import java.util.stream.Collectors;
+import com.swimpulse.pool.PoolSearchNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,19 +26,24 @@ public class LocationService {
 	private static final Logger log = LoggerFactory.getLogger(LocationService.class);
 	private static final int DEFAULT_DISPLAY = 5;
 	private static final int MAX_DISPLAY = 10;
+	private static final double DUPLICATE_DISTANCE_METERS = 80;
+	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
 
 	private final NaverLocalSearchClient naverLocalSearchClient;
 	private final NaverMapsGeocodingClient naverMapsGeocodingClient;
 	private final PoolRepository poolRepository;
+	private final PoolNearbyQueryRepository poolNearbyQueryRepository;
 
 	public LocationService(
 			NaverLocalSearchClient naverLocalSearchClient,
 			NaverMapsGeocodingClient naverMapsGeocodingClient,
-			PoolRepository poolRepository
+			PoolRepository poolRepository,
+			PoolNearbyQueryRepository poolNearbyQueryRepository
 	) {
 		this.naverLocalSearchClient = naverLocalSearchClient;
 		this.naverMapsGeocodingClient = naverMapsGeocodingClient;
 		this.poolRepository = poolRepository;
+		this.poolNearbyQueryRepository = poolNearbyQueryRepository;
 	}
 
 	public List<LocationSearchCandidate> search(String query, Integer display, Double latitude, Double longitude) {
@@ -37,13 +52,21 @@ public class LocationService {
 		int normalizedDisplay = normalizeDisplay(display);
 		log.info("Location search started. query={} display={} hasOrigin={}",
 				normalizedQuery, normalizedDisplay, latitude != null && longitude != null);
-		List<Pool> pools = poolRepository.findAll();
-		List<LocationSearchCandidate> candidates = naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
+		List<NormalizedCandidate> normalizedCandidates = naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
 				.stream()
-				.map(candidate -> enrich(candidate, pools, latitude, longitude))
+				.map(this::normalizeCandidate)
+				.toList();
+		PoolMatchLookup matchLookup = loadExactMatches(normalizedCandidates);
+		List<PreparedCandidate> preparedCandidates = normalizedCandidates.stream()
+				.map(candidate -> prepareCandidate(candidate, matchLookup))
+				.toList();
+		Map<Integer, Pool> coordinateMatches = loadCoordinateMatches(preparedCandidates);
+		List<LocationSearchCandidate> candidates = IntStream.range(0, preparedCandidates.size())
+				.mapToObj(index -> enrich(preparedCandidates.get(index), coordinateMatches.get(index), latitude, longitude))
 				.sorted(compareByDistanceWhenAvailable())
 				.toList();
-		log.info("Location search completed. query={} resultCount={}", normalizedQuery, candidates.size());
+		log.info("Location search completed. query={} resultCount={} exactMatchPoolCount={}",
+				normalizedQuery, candidates.size(), matchLookup.poolCount());
 		return candidates;
 	}
 
@@ -105,15 +128,29 @@ public class LocationService {
 	}
 
 	private LocationSearchCandidate enrich(
-			LocationSearchCandidate candidate,
-			List<Pool> pools,
+			PreparedCandidate preparedCandidate,
+			Pool coordinateMatch,
 			Double originLatitude,
 			Double originLongitude
 	) {
+		LocationSearchCandidate candidate = preparedCandidate.normalizedCandidate().candidate();
+		Pool matchedPool = preparedCandidate.exactMatch() == null ? coordinateMatch : preparedCandidate.exactMatch();
+		Double latitude = preparedCandidate.latitude();
+		Double longitude = preparedCandidate.longitude();
+		Double distance = null;
+		if (originLatitude != null && originLongitude != null && latitude != null && longitude != null) {
+			distance = distanceMeters(originLatitude, originLongitude, latitude, longitude);
+		}
+		return candidate.withEnrichment(latitude, longitude, matchedPool != null, matchedPool == null ? null : matchedPool.getId(), distance);
+	}
+
+	private PreparedCandidate prepareCandidate(NormalizedCandidate normalizedCandidate, PoolMatchLookup matchLookup) {
+		LocationSearchCandidate candidate = normalizedCandidate.candidate();
+		Pool exactMatch = matchLookup.find(normalizedCandidate);
+		Double latitude = exactMatch == null ? null : exactMatch.getLatitude();
+		Double longitude = exactMatch == null ? null : exactMatch.getLongitude();
 		String address = resolveAddress(candidate);
-		Double latitude = null;
-		Double longitude = null;
-		if (hasText(address) && naverMapsGeocodingClient.isConfigured()) {
+		if ((latitude == null || longitude == null) && hasText(address) && naverMapsGeocodingClient.isConfigured()) {
 			try {
 				NaverMapsGeocodingClient.Coordinates coordinates = naverMapsGeocodingClient.geocode(address).orElse(null);
 				if (coordinates != null) {
@@ -127,13 +164,7 @@ public class LocationService {
 				longitude = null;
 			}
 		}
-
-		Pool matchedPool = findMatchingPool(candidate.title(), candidate.roadAddress(), candidate.address(), latitude, longitude, pools);
-		Double distance = null;
-		if (originLatitude != null && originLongitude != null && latitude != null && longitude != null) {
-			distance = distanceMeters(originLatitude, originLongitude, latitude, longitude);
-		}
-		return candidate.withEnrichment(latitude, longitude, matchedPool != null, matchedPool == null ? null : matchedPool.getId(), distance);
+		return new PreparedCandidate(normalizedCandidate, exactMatch, latitude, longitude);
 	}
 
 	public Pool findMatchingPool(
@@ -141,28 +172,19 @@ public class LocationService {
 			String roadAddress,
 			String address,
 			Double latitude,
-			Double longitude,
-			List<Pool> pools
+			Double longitude
 	) {
-		String normalizedTitle = normalizeComparable(title);
-		String normalizedRoadAddress = normalizeComparable(roadAddress);
-		String normalizedAddress = normalizeComparable(address);
-		for (Pool pool : pools) {
-			if (hasText(normalizedTitle) && normalizeComparable(pool.getName()).equals(normalizedTitle)) {
-				return pool;
-			}
-			if (hasText(normalizedRoadAddress) && normalizeComparable(pool.getRoadNameAddress()).equals(normalizedRoadAddress)) {
-				return pool;
-			}
-			if (hasText(normalizedAddress) && normalizeComparable(pool.getLotNumberAddress()).equals(normalizedAddress)) {
-				return pool;
-			}
-			if (latitude != null && longitude != null && pool.getLatitude() != null && pool.getLongitude() != null
-					&& distanceMeters(latitude, longitude, pool.getLatitude(), pool.getLongitude()) <= 80) {
-				return pool;
-			}
+		NormalizedCandidate candidate = new NormalizedCandidate(
+				null,
+				normalizeComparable(title),
+				normalizeComparable(roadAddress),
+				normalizeComparable(address)
+		);
+		Pool exactMatch = loadExactMatches(List.of(candidate)).find(candidate);
+		if (exactMatch != null) {
+			return exactMatch;
 		}
-		return null;
+		return latitude == null || longitude == null ? null : findCoordinateMatch(latitude, longitude);
 	}
 
 	public double distanceMeters(double latitude1, double longitude1, double latitude2, double longitude2) {
@@ -210,12 +232,144 @@ public class LocationService {
 	}
 
 	public String normalizeComparable(String value) {
-		if (value == null) {
-			return "";
+		return PoolSearchNormalizer.normalize(value);
+	}
+
+	private NormalizedCandidate normalizeCandidate(LocationSearchCandidate candidate) {
+		return new NormalizedCandidate(
+				candidate,
+				normalizeComparable(candidate.title()),
+				normalizeComparable(candidate.roadAddress()),
+				normalizeComparable(candidate.address())
+		);
+	}
+
+	private PoolMatchLookup loadExactMatches(List<NormalizedCandidate> candidates) {
+		if (candidates.isEmpty()) {
+			return PoolMatchLookup.empty();
 		}
-		return value.replaceAll("<[^>]*>", "")
-				.replaceAll("\\s+", "")
-				.replace("수영장", "")
-				.toLowerCase();
+		Set<String> normalizedNames = normalizedValues(candidates, NormalizedCandidate::normalizedName);
+		Set<String> normalizedRoadAddresses = normalizedValues(candidates, NormalizedCandidate::normalizedRoadAddress);
+		Set<String> normalizedLotAddresses = normalizedValues(candidates, NormalizedCandidate::normalizedLotAddress);
+		List<Pool> matchedPools = poolRepository.findMatchingCandidates(
+				nonEmptyQueryValues(normalizedNames),
+				nonEmptyQueryValues(normalizedRoadAddresses),
+				nonEmptyQueryValues(normalizedLotAddresses)
+		);
+		return PoolMatchLookup.from(matchedPools);
+	}
+
+	private Set<String> normalizedValues(
+			List<NormalizedCandidate> candidates,
+			Function<NormalizedCandidate, String> extractor
+	) {
+		return candidates.stream()
+				.map(extractor)
+				.filter(this::hasText)
+				.collect(Collectors.toSet());
+	}
+
+	private Set<String> nonEmptyQueryValues(Set<String> values) {
+		return values.isEmpty() ? Set.of(IMPOSSIBLE_NORMALIZED_VALUE) : values;
+	}
+
+	private Pool findCoordinateMatch(double latitude, double longitude) {
+		return poolRepository.findNearestWithinDistance(latitude, longitude, DUPLICATE_DISTANCE_METERS)
+				.orElse(null);
+	}
+
+	private Map<Integer, Pool> loadCoordinateMatches(List<PreparedCandidate> candidates) {
+		List<NearbySearchOrigin> origins = IntStream.range(0, candidates.size())
+				.filter(index -> candidates.get(index).exactMatch() == null)
+				.filter(index -> candidates.get(index).latitude() != null && candidates.get(index).longitude() != null)
+				.mapToObj(index -> new NearbySearchOrigin(
+						index,
+						candidates.get(index).latitude(),
+						candidates.get(index).longitude()
+				))
+				.toList();
+		if (origins.isEmpty()) {
+			return Map.of();
+		}
+		List<NearbyPoolMatchRow> matchRows = poolNearbyQueryRepository.findNearestMatches(
+				origins,
+				DUPLICATE_DISTANCE_METERS
+		);
+		if (matchRows.isEmpty()) {
+			return Map.of();
+		}
+		Map<Long, Pool> poolsById = poolRepository.findAllById(
+						matchRows.stream().map(NearbyPoolMatchRow::poolId).collect(Collectors.toSet())
+				).stream()
+				.collect(Collectors.toMap(Pool::getId, pool -> pool));
+		return matchRows.stream()
+				.filter(row -> poolsById.containsKey(row.poolId()))
+				.collect(Collectors.toMap(
+						NearbyPoolMatchRow::candidateIndex,
+						row -> poolsById.get(row.poolId())
+				));
+	}
+
+	private record NormalizedCandidate(
+			LocationSearchCandidate candidate,
+			String normalizedName,
+			String normalizedRoadAddress,
+			String normalizedLotAddress
+	) {
+	}
+
+	private record PreparedCandidate(
+			NormalizedCandidate normalizedCandidate,
+			Pool exactMatch,
+			Double latitude,
+			Double longitude
+	) {
+	}
+
+	private record PoolMatchLookup(
+			Map<String, Pool> byName,
+			Map<String, Pool> byRoadAddress,
+			Map<String, Pool> byLotAddress,
+			int poolCount
+	) {
+		private static PoolMatchLookup empty() {
+			return new PoolMatchLookup(Map.of(), Map.of(), Map.of(), 0);
+		}
+
+		private static PoolMatchLookup from(List<Pool> pools) {
+			return new PoolMatchLookup(
+					indexBy(pools, Pool::getNormalizedName),
+					indexBy(pools, Pool::getNormalizedRoadNameAddress),
+					indexBy(pools, Pool::getNormalizedLotNumberAddress),
+					pools.size()
+			);
+		}
+
+		private Pool find(NormalizedCandidate candidate) {
+			Pool match = find(byName, candidate.normalizedName());
+			if (match != null) {
+				return match;
+			}
+			match = find(byRoadAddress, candidate.normalizedRoadAddress());
+			if (match != null) {
+				return match;
+			}
+			return find(byLotAddress, candidate.normalizedLotAddress());
+		}
+
+		private static Pool find(Map<String, Pool> pools, String key) {
+			return key == null || key.isBlank() ? null : pools.get(key);
+		}
+
+		private static Map<String, Pool> indexBy(List<Pool> pools, Function<Pool, String> keyExtractor) {
+			return pools.stream()
+					.filter(pool -> keyExtractor.apply(pool) != null && !keyExtractor.apply(pool).isBlank())
+					.collect(Collectors.toMap(
+							keyExtractor,
+							pool -> pool,
+							(existing, duplicate) -> existing,
+							LinkedHashMap::new
+					));
+		}
 	}
 }
