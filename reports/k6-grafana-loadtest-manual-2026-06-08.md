@@ -45,6 +45,7 @@
 - [nearby-load.js](../ops/k6/scripts/nearby-load.js)
 - [location-search-load.js](../ops/k6/scripts/location-search-load.js)
 - [notice-scan-load.js](../ops/k6/scripts/notice-scan-load.js)
+- [notice-scan-multi-pool-load.js](../ops/k6/scripts/notice-scan-multi-pool-load.js)
 
 ### 결과 저장 위치
 
@@ -143,6 +144,31 @@ docker compose --profile loadtest run --rm `
 - 공지 스캔은 같은 `poolId`에 대해 Redis 락이 걸려 있으므로 동시 요청 시 일부 요청은 `already running` 성격의 응답을 받을 수 있습니다.
 - 이 API는 외부 사이트 응답 속도 영향을 많이 받습니다.
 
+### 실전형 다중 pool 공지 스캔
+
+위 단일 `POOL_ID` 테스트는 "한 곳 공지를 눌렀을 때 얼마나 걸리는가"를 보기 좋습니다.
+
+반면 실제 처리량이나 외부 사이트 의존도를 보려면 여러 `poolId`를 섞어서 돌리는 편이 더 낫습니다.
+
+```powershell
+docker compose --profile loadtest run --rm `
+  -e VUS=5 `
+  -e DURATION=1m `
+  -e SLEEP_SECONDS=0.5 `
+  -e POOL_IDS="1,2,3,4,5,6,7,8,9,10" `
+  -e ACCESS_TOKEN="여기에_쿠키값" `
+  k6 run /scripts/notice-scan-multi-pool-load.js `
+  --summary-export /results/notice-scan-multi-summary.json `
+  --out json=/results/notice-scan-multi-raw.json
+```
+
+해석 기준:
+
+- 단일 `POOL_ID` + 높은 `VUS`
+  락 충돌, 중복 스캔 차단 동작 확인용
+- 여러 `POOL_ID` + 중간 `VUS`
+  실제 공지 스캔 처리량, 외부 사이트 지연 영향 확인용
+
 ## 6. 결과 파일이 무엇을 뜻하나
 
 ### `--summary-export`
@@ -212,6 +238,10 @@ docker compose --profile loadtest run --rm `
 - `All API Request Rate`
 - `HTTP 5xx Error Rate`
 - `Process CPU`
+- `Location Search >1s Ratio`
+- `Location Search Internal Step Avg Latency`
+- `Location Search Candidate Resolution Rate`
+- `Location Search Candidate Geocode Avg Latency`
 
 ### `/api/pools/{poolId}/notices/scan` 테스트 시
 
@@ -284,6 +314,33 @@ docker compose --profile loadtest run --rm `
   계산/파싱/크롤링 로직 병목 의심
 - `5xx`가 오름
   단순 느림이 아니라 오류 상황
+
+### `/api/locations/search`가 느릴 때 원인 분리
+
+이번에 대시보드에 아래 패널을 추가했습니다.
+
+- `Location Search >1s Ratio`
+  최근 5분 요청 중 1초를 넘긴 비율
+- `Location Search Internal Step Avg Latency`
+  내부 단계별 평균 시간
+  `naver_local_search`, `exact_match_lookup`, `prepare_candidates`, `coordinate_match_lookup`, `enrich_sort`
+- `Location Search Candidate Resolution Rate`
+  후보가 `exact_match`, `candidate_geocode`, `unresolved` 중 어디로 처리됐는지 비율
+- `Location Search Candidate Geocode Avg Latency`
+  geocode 호출이 실제로 느린지 확인
+
+이렇게 보면 원인을 대략 나눌 수 있습니다.
+
+- `naver_local_search`가 높음
+  네이버 지역 검색 API 응답 지연 가능성 큼
+- `prepare_candidates`와 `candidate_geocode`가 높음
+  후보별 geocode 호출이 느린 것
+- `exact_match_lookup`가 높음
+  DB 정규화 매칭 쿼리 쪽 확인 필요
+- `coordinate_match_lookup`가 높음
+  좌표 기반 근접 매칭 쿼리 쪽 확인 필요
+- `candidate_geocode` 비율이 갑자기 높아짐
+  exact match가 잘 안 걸려 외부 geocode 호출이 많아진 것
 
 ## 12. 다음 확장 아이디어
 

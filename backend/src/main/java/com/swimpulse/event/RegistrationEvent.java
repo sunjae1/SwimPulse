@@ -13,10 +13,17 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
 
 @Entity
-@Table(name = "registration_events")
+@Table(
+		name = "registration_events",
+		uniqueConstraints = @UniqueConstraint(
+				name = "uk_registration_event_pool_title_period",
+				columnNames = {"pool_id", "title", "registration_starts_at", "registration_ends_at"}
+		)
+)
 public class RegistrationEvent {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)

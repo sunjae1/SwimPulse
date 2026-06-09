@@ -828,6 +828,247 @@
       ],
       "title": "GC Pause Rate",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 50
+      },
+      "id": 15,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "(sum(rate(http_server_requests_seconds_count{application=\"SwimPulse\",uri=\"/api/locations/search\"}[5m])) - sum(rate(http_server_requests_seconds_bucket{application=\"SwimPulse\",uri=\"/api/locations/search\",le=\"1.0\"}[5m]))) / clamp_min(sum(rate(http_server_requests_seconds_count{application=\"SwimPulse\",uri=\"/api/locations/search\"}[5m])), 0.000001)",
+          "legendFormat": "",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Location Search >1s Ratio",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 50
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(swimpulse_location_search_step_seconds_sum{application=\"SwimPulse\",step=\"naver_local_search\"}[5m])) / sum(rate(swimpulse_location_search_step_seconds_count{application=\"SwimPulse\",step=\"naver_local_search\"}[5m]))",
+          "legendFormat": "naver_local_search",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(swimpulse_location_search_step_seconds_sum{application=\"SwimPulse\",step=\"exact_match_lookup\"}[5m])) / sum(rate(swimpulse_location_search_step_seconds_count{application=\"SwimPulse\",step=\"exact_match_lookup\"}[5m]))",
+          "legendFormat": "exact_match_lookup",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(swimpulse_location_search_step_seconds_sum{application=\"SwimPulse\",step=\"prepare_candidates\"}[5m])) / sum(rate(swimpulse_location_search_step_seconds_count{application=\"SwimPulse\",step=\"prepare_candidates\"}[5m]))",
+          "legendFormat": "prepare_candidates",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(swimpulse_location_search_step_seconds_sum{application=\"SwimPulse\",step=\"coordinate_match_lookup\"}[5m])) / sum(rate(swimpulse_location_search_step_seconds_count{application=\"SwimPulse\",step=\"coordinate_match_lookup\"}[5m]))",
+          "legendFormat": "coordinate_match_lookup",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(swimpulse_location_search_step_seconds_sum{application=\"SwimPulse\",step=\"enrich_sort\"}[5m])) / sum(rate(swimpulse_location_search_step_seconds_count{application=\"SwimPulse\",step=\"enrich_sort\"}[5m]))",
+          "legendFormat": "enrich_sort",
+          "range": true,
+          "refId": "E"
+        }
+      ],
+      "title": "Location Search Internal Step Avg Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 58
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (source) (rate(swimpulse_location_search_candidate_resolution_total{application=\"SwimPulse\"}[5m]))",
+          "legendFormat": "{{source}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Location Search Candidate Resolution Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 58
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (result) (rate(swimpulse_location_search_candidate_geocode_seconds_sum{application=\"SwimPulse\"}[5m])) / sum by (result) (rate(swimpulse_location_search_candidate_geocode_seconds_count{application=\"SwimPulse\"}[5m]))",
+          "legendFormat": "{{result}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Location Search Candidate Geocode Avg Latency",
+      "type": "timeseries"
     }
   ],
   "preload": false,
@@ -849,5 +1090,5 @@
   "timezone": "browser",
   "title": "SwimPulse Overview",
   "uid": "swimpulse-overview",
-  "version": 2
+  "version": 3
 }

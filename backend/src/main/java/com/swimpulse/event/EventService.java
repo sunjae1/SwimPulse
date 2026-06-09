@@ -4,8 +4,6 @@ import com.swimpulse.common.BadRequestException;
 import com.swimpulse.common.NotFoundException;
 import com.swimpulse.notification.NotificationService;
 import com.swimpulse.notification.NotificationType;
-import com.swimpulse.pool.Pool;
-import com.swimpulse.pool.PoolRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -20,18 +18,18 @@ public class EventService {
 	private static final Logger log = LoggerFactory.getLogger(EventService.class);
 
 	private final RegistrationEventRepository eventRepository;
-	private final PoolRepository poolRepository;
+	private final RegistrationEventResolver eventResolver;
 	private final NotificationService notificationService;
 	private final long reminderMinutes;
 
 	public EventService(
 			RegistrationEventRepository eventRepository,
-			PoolRepository poolRepository,
+			RegistrationEventResolver eventResolver,
 			NotificationService notificationService,
 			@Value("${swimpulse.notification.reminder-minutes:10}") long reminderMinutes
 	) {
 		this.eventRepository = eventRepository;
-		this.poolRepository = poolRepository;
+		this.eventResolver = eventResolver;
 		this.notificationService = notificationService;
 		this.reminderMinutes = reminderMinutes;
 	}
@@ -62,34 +60,16 @@ public class EventService {
 		if (!request.registrationStartsAt().isBefore(request.registrationEndsAt())) {
 			throw new BadRequestException("registrationStartsAt must be before registrationEndsAt");
 		}
-		Pool pool = poolRepository.findByIdForUpdate(request.poolId())
-				.orElseThrow(() -> new NotFoundException("Pool not found: " + request.poolId()));
-		return eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
-						pool.getId(),
-						request.title(),
-						request.registrationStartsAt(),
-						request.registrationEndsAt()
-				)
-				.map(existing -> {
-					log.info("Registration event already exists. eventId={} poolId={} startsAt={} endsAt={}",
-							existing.getId(), pool.getId(), existing.getRegistrationStartsAt(), existing.getRegistrationEndsAt());
-					return EventResponse.from(existing);
-				})
-				.orElseGet(() -> createEvent(pool, request));
-	}
-
-	private EventResponse createEvent(Pool pool, CreateEventRequest request) {
-		RegistrationEvent event = new RegistrationEvent(
-				pool,
-				request.title(),
+		String title = normalizeTitle(request.title());
+		RegistrationEvent event = eventResolver.getOrCreate(
+				request.poolId(),
+				title,
 				request.registrationStartsAt(),
-				request.registrationEndsAt(),
-				calculateStatus(request.registrationStartsAt(), request.registrationEndsAt(), Instant.now())
+				request.registrationEndsAt()
 		);
-		RegistrationEvent saved = eventRepository.save(event);
-		log.info("Registration event created. eventId={} poolId={} status={} startsAt={} endsAt={}",
-				saved.getId(), pool.getId(), saved.getStatus(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
-		return EventResponse.from(saved);
+		log.info("Registration event resolved. eventId={} poolId={} startsAt={} endsAt={}",
+				event.getId(), request.poolId(), event.getRegistrationStartsAt(), event.getRegistrationEndsAt());
+		return EventResponse.from(event);
 	}
 
 	@Transactional
@@ -168,6 +148,14 @@ public class EventService {
 			return EventStatus.OPEN;
 		}
 		return EventStatus.CLOSED;
+	}
+
+	private String normalizeTitle(String title) {
+		String trimmed = title == null ? "" : title.replaceAll("\\s+", " ").trim();
+		if (trimmed.isBlank()) {
+			throw new BadRequestException("Event title is required.");
+		}
+		return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 120);
 	}
 
 	public record EventStatusRefreshResult(int checkedEvents, int changedEvents) {

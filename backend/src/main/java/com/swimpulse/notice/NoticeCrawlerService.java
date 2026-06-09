@@ -39,6 +39,7 @@ import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -89,8 +90,13 @@ public class NoticeCrawlerService {
 	private final ObjectMapper objectMapper;
 	private final boolean insecureSslFallbackEnabled;
 	private final RedisLockService redisLockService;
+	private final StringRedisTemplate redisTemplate;
 	private final String scanLockKeyPrefix;
 	private final Duration scanLockTtl;
+	private final String scanResultKeyPrefix;
+	private final Duration scanResultTtl;
+	private final Duration scanWaitTimeout;
+	private final Duration scanWaitPollInterval;
 
 	NoticeCrawlerService(
 			PoolRepository poolRepository,
@@ -108,8 +114,13 @@ public class NoticeCrawlerService {
 				objectMapper,
 				insecureSslFallbackEnabled,
 				null,
+				null,
 				"swimpulse:locks:notice-scan:",
-				300000
+				300000,
+				"swimpulse:notice-scan:result:",
+				60000,
+				15000,
+				250
 		);
 	}
 
@@ -122,8 +133,13 @@ public class NoticeCrawlerService {
 			ObjectMapper objectMapper,
 			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled,
 			RedisLockService redisLockService,
+			StringRedisTemplate redisTemplate,
 			@Value("${swimpulse.notice.scan-lock-key-prefix:swimpulse:locks:notice-scan:}") String scanLockKeyPrefix,
-			@Value("${swimpulse.notice.scan-lock-ttl-ms:300000}") long scanLockTtlMs
+			@Value("${swimpulse.notice.scan-lock-ttl-ms:300000}") long scanLockTtlMs,
+			@Value("${swimpulse.notice.scan-result-key-prefix:swimpulse:notice-scan:result:}") String scanResultKeyPrefix,
+			@Value("${swimpulse.notice.scan-result-ttl-ms:60000}") long scanResultTtlMs,
+			@Value("${swimpulse.notice.scan-wait-timeout-ms:15000}") long scanWaitTimeoutMs,
+			@Value("${swimpulse.notice.scan-wait-poll-ms:250}") long scanWaitPollMs
 	) {
 		this.poolRepository = poolRepository;
 		this.noticeRepository = noticeRepository;
@@ -132,13 +148,28 @@ public class NoticeCrawlerService {
 		this.objectMapper = objectMapper;
 		this.insecureSslFallbackEnabled = insecureSslFallbackEnabled;
 		this.redisLockService = redisLockService;
+		this.redisTemplate = redisTemplate;
 		this.scanLockKeyPrefix = scanLockKeyPrefix;
 		this.scanLockTtl = Duration.ofMillis(scanLockTtlMs);
+		this.scanResultKeyPrefix = scanResultKeyPrefix;
+		this.scanResultTtl = Duration.ofMillis(scanResultTtlMs);
+		this.scanWaitTimeout = Duration.ofMillis(scanWaitTimeoutMs);
+		this.scanWaitPollInterval = Duration.ofMillis(scanWaitPollMs);
 	}
 
 	@Transactional
 	public NoticeScanResponse scan(Long poolId) {
-		RedisLockService.LockToken lockToken = acquireScanLock(poolId);
+		if (redisLockService == null || redisTemplate == null) {
+			return runScan(poolId, null);
+		}
+		Optional<RedisLockService.LockToken> lockToken = tryAcquireScanLock(poolId);
+		if (lockToken.isPresent()) {
+			return runScan(poolId, lockToken.get());
+		}
+		return waitForSharedScanResult(poolId);
+	}
+
+	private NoticeScanResponse runScan(Long poolId, RedisLockService.LockToken lockToken) {
 		try {
 		List<String> trace = new ArrayList<>();
 		Pool pool = poolRepository.findById(poolId)
@@ -207,19 +238,30 @@ public class NoticeCrawlerService {
 		String message = notices.isEmpty() ? "No detail notice candidates found." : "Notice scan completed.";
 		log.info("Notice scan completed. poolId={} detailCandidates={} savedNotices={} message={}",
 				pool.getId(), detailCandidates.size(), notices.size(), message);
-		return new NoticeScanResponse(pool.getId(), pool.getName(), homepageUrl, detailCandidates.size(), notices, message, trace);
+		NoticeScanResponse response = new NoticeScanResponse(
+				pool.getId(),
+				pool.getName(),
+				homepageUrl,
+				detailCandidates.size(),
+				notices,
+				message,
+				trace,
+				false,
+				false
+		);
+		cacheSharedScanResult(poolId, lockToken, response);
+		return response;
 		} finally {
 			releaseScanLock(lockToken);
 		}
 	}
 
-	private RedisLockService.LockToken acquireScanLock(Long poolId) {
+	private Optional<RedisLockService.LockToken> tryAcquireScanLock(Long poolId) {
 		if (redisLockService == null) {
-			return null;
+			return Optional.empty();
 		}
 		String lockKey = scanLockKeyPrefix + poolId;
-		return redisLockService.acquire(lockKey, scanLockTtl)
-				.orElseThrow(() -> new BadRequestException("A notice scan is already running for this pool. Try again shortly."));
+		return redisLockService.acquire(lockKey, scanLockTtl);
 	}
 
 	private void releaseScanLock(RedisLockService.LockToken lockToken) {
@@ -227,6 +269,97 @@ public class NoticeCrawlerService {
 			return;
 		}
 		redisLockService.release(lockToken);
+	}
+
+	private NoticeScanResponse waitForSharedScanResult(Long poolId) {
+		String lockKey = scanLockKeyPrefix + poolId;
+		String activeScanToken = redisTemplate.opsForValue().get(lockKey);
+		if (!hasText(activeScanToken)) {
+			Optional<RedisLockService.LockToken> retry = tryAcquireScanLock(poolId);
+			if (retry.isPresent()) {
+				return runScan(poolId, retry.get());
+			}
+			throw new BadRequestException("Notice scan is already running for this pool. Try again shortly.");
+		}
+
+		Instant deadline = Instant.now().plus(scanWaitTimeout);
+		while (Instant.now().isBefore(deadline)) {
+			SharedNoticeScanResult cached = readSharedScanResult(poolId);
+			if (cached != null && activeScanToken.equals(cached.scanToken())) {
+				return sharedResponse(cached.response());
+			}
+			if (!hasText(redisTemplate.opsForValue().get(lockKey))) {
+				break;
+			}
+			sleepQuietly(scanWaitPollInterval);
+		}
+
+		SharedNoticeScanResult cached = readSharedScanResult(poolId);
+		if (cached != null && activeScanToken.equals(cached.scanToken())) {
+			return sharedResponse(cached.response());
+		}
+
+		Optional<RedisLockService.LockToken> retry = tryAcquireScanLock(poolId);
+		if (retry.isPresent()) {
+			return runScan(poolId, retry.get());
+		}
+		throw new BadRequestException("Notice scan is taking longer than usual. Please try again shortly.");
+	}
+
+	private NoticeScanResponse sharedResponse(NoticeScanResponse response) {
+		List<String> trace = new ArrayList<>();
+		trace.add("다른 사용자가 먼저 시작한 동일 pool 스캔이 완료될 때까지 잠시 대기한 뒤 결과를 공유했습니다.");
+		if (response.trace() != null) {
+			trace.addAll(response.trace());
+		}
+		return new NoticeScanResponse(
+				response.poolId(),
+				response.poolName(),
+				response.homepageUrl(),
+				response.scannedLinks(),
+				response.notices(),
+				"Another user already started this scan. The completed result was shared with your request.",
+				trace,
+				true,
+				true
+		);
+	}
+
+	private void cacheSharedScanResult(Long poolId, RedisLockService.LockToken lockToken, NoticeScanResponse response) {
+		if (redisTemplate == null || lockToken == null) {
+			return;
+		}
+		try {
+			String payload = objectMapper.writeValueAsString(new SharedNoticeScanResult(lockToken.token(), response));
+			redisTemplate.opsForValue().set(scanResultKeyPrefix + poolId, payload, scanResultTtl);
+		} catch (JsonProcessingException exception) {
+			log.warn("Notice scan result cache write failed. poolId={} message={}", poolId, exception.getMessage());
+		}
+	}
+
+	private SharedNoticeScanResult readSharedScanResult(Long poolId) {
+		if (redisTemplate == null) {
+			return null;
+		}
+		String payload = redisTemplate.opsForValue().get(scanResultKeyPrefix + poolId);
+		if (!hasText(payload)) {
+			return null;
+		}
+		try {
+			return objectMapper.readValue(payload, SharedNoticeScanResult.class);
+		} catch (JsonProcessingException exception) {
+			log.warn("Notice scan result cache read failed. poolId={} message={}", poolId, exception.getMessage());
+			return null;
+		}
+	}
+
+	private void sleepQuietly(Duration duration) {
+		try {
+			Thread.sleep(duration.toMillis());
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			throw new BadRequestException("Notice scan wait was interrupted.");
+		}
 	}
 
 	private void collectDetailCandidates(
@@ -1345,6 +1478,9 @@ public class NoticeCrawlerService {
 	}
 
 	private record NoticeDetailCandidate(String url, String title, String source) {
+	}
+
+	private record SharedNoticeScanResult(String scanToken, NoticeScanResponse response) {
 	}
 
 	private record PeriodLabel(String normalized, String displayName) {

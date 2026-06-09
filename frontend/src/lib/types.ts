@@ -97,6 +97,8 @@ export type NoticeScanResponse = {
   notices: PoolNotice[];
   message: string;
   trace: string[];
+  sharedResult?: boolean;
+  waitedForActiveScan?: boolean;
 };
 
 export type RegistrationEvent = {

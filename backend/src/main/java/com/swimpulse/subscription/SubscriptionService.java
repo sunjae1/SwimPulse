@@ -2,11 +2,8 @@ package com.swimpulse.subscription;
 
 import com.swimpulse.common.NotFoundException;
 import com.swimpulse.common.BadRequestException;
-import com.swimpulse.event.EventStatus;
 import com.swimpulse.event.RegistrationEvent;
-import com.swimpulse.event.RegistrationEventRepository;
-import com.swimpulse.pool.Pool;
-import com.swimpulse.pool.PoolRepository;
+import com.swimpulse.event.RegistrationEventResolver;
 import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
 import java.time.Instant;
@@ -22,19 +19,16 @@ public class SubscriptionService {
 
 	private final SubscriptionRepository subscriptionRepository;
 	private final AppUserRepository userRepository;
-	private final PoolRepository poolRepository;
-	private final RegistrationEventRepository eventRepository;
+	private final RegistrationEventResolver eventResolver;
 
 	public SubscriptionService(
 			SubscriptionRepository subscriptionRepository,
 			AppUserRepository userRepository,
-			PoolRepository poolRepository,
-			RegistrationEventRepository eventRepository
+			RegistrationEventResolver eventResolver
 	) {
 		this.subscriptionRepository = subscriptionRepository;
 		this.userRepository = userRepository;
-		this.poolRepository = poolRepository;
-		this.eventRepository = eventRepository;
+		this.eventResolver = eventResolver;
 	}
 
 	@Transactional(readOnly = true)
@@ -56,35 +50,22 @@ public class SubscriptionService {
 		}
 		AppUser user = userRepository.findById(userId)
 				.orElseThrow(() -> new NotFoundException("User not found: " + userId));
-		Pool pool = getPoolForEventCreation(request.poolId());
 		String title = normalizeTitle(request.title());
-		RegistrationEvent event = eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
-						pool.getId(),
-						title,
-						request.registrationStartsAt(),
-						request.registrationEndsAt()
-				)
-				.orElseGet(() -> {
-					RegistrationEvent saved = eventRepository.save(new RegistrationEvent(
-							pool,
-							title,
-							request.registrationStartsAt(),
-							request.registrationEndsAt(),
-							calculateStatus(request.registrationStartsAt(), request.registrationEndsAt(), Instant.now())
-					));
-					log.info("Registration event created from subscription. eventId={} poolId={} status={} startsAt={} endsAt={}",
-							saved.getId(), pool.getId(), saved.getStatus(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
-					return saved;
-				});
+		RegistrationEvent event = eventResolver.getOrCreate(
+				request.poolId(),
+				title,
+				request.registrationStartsAt(),
+				request.registrationEndsAt()
+		);
 		return subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
 				.map(subscription -> {
-					log.info("Subscription already exists. userId={} eventId={} poolId={}", userId, event.getId(), pool.getId());
+					log.info("Subscription already exists. userId={} eventId={} poolId={}", userId, event.getId(), request.poolId());
 					return SubscriptionResponse.from(subscription);
 				})
 				.orElseGet(() -> {
 					Subscription saved = subscriptionRepository.save(new Subscription(user, event));
 					log.info("Subscription created. userId={} poolId={} eventId={} subscriptionId={}",
-							userId, pool.getId(), event.getId(), saved.getId());
+							userId, request.poolId(), event.getId(), saved.getId());
 					return SubscriptionResponse.from(saved);
 				});
 	}
@@ -101,25 +82,12 @@ public class SubscriptionService {
 		Subscription subscription = subscriptionRepository.findByIdAndUser_Id(subscriptionId, userId)
 				.orElseThrow(() -> new NotFoundException("Subscription not found."));
 		String title = normalizeTitle(request.title());
-		Pool pool = getPoolForEventCreation(subscription.getPool().getId());
-		RegistrationEvent event = eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
-						pool.getId(),
-						title,
-						request.registrationStartsAt(),
-						request.registrationEndsAt()
-				)
-				.orElseGet(() -> {
-					RegistrationEvent saved = eventRepository.save(new RegistrationEvent(
-							pool,
-							title,
-							request.registrationStartsAt(),
-							request.registrationEndsAt(),
-							calculateStatus(request.registrationStartsAt(), request.registrationEndsAt(), Instant.now())
-					));
-					log.info("Registration event created from subscription update. eventId={} poolId={} startsAt={} endsAt={}",
-							saved.getId(), pool.getId(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
-					return saved;
-				});
+		RegistrationEvent event = eventResolver.getOrCreate(
+				subscription.getPool().getId(),
+				title,
+				request.registrationStartsAt(),
+				request.registrationEndsAt()
+		);
 
 		subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
 				.filter(existing -> !existing.getId().equals(subscription.getId()))
@@ -147,26 +115,11 @@ public class SubscriptionService {
 		}
 	}
 
-	private Pool getPoolForEventCreation(Long poolId) {
-		return poolRepository.findByIdForUpdate(poolId)
-				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
-	}
-
 	private String normalizeTitle(String title) {
 		String trimmed = title == null ? "" : title.replaceAll("\\s+", " ").trim();
 		if (trimmed.isBlank()) {
 			throw new BadRequestException("Subscription title is required.");
 		}
 		return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 120);
-	}
-
-	private EventStatus calculateStatus(Instant startsAt, Instant endsAt, Instant now) {
-		if (now.isBefore(startsAt)) {
-			return EventStatus.UPCOMING;
-		}
-		if (now.isBefore(endsAt)) {
-			return EventStatus.OPEN;
-		}
-		return EventStatus.CLOSED;
 	}
 }

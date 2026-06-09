@@ -3,7 +3,6 @@ package com.swimpulse.subscription;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -11,9 +10,8 @@ import static org.mockito.Mockito.when;
 import com.swimpulse.common.BadRequestException;
 import com.swimpulse.event.EventStatus;
 import com.swimpulse.event.RegistrationEvent;
-import com.swimpulse.event.RegistrationEventRepository;
+import com.swimpulse.event.RegistrationEventResolver;
 import com.swimpulse.pool.Pool;
-import com.swimpulse.pool.PoolRepository;
 import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
 import java.lang.reflect.Field;
@@ -35,10 +33,7 @@ class SubscriptionServiceTests {
 	private AppUserRepository userRepository;
 
 	@Mock
-	private PoolRepository poolRepository;
-
-	@Mock
-	private RegistrationEventRepository eventRepository;
+	private RegistrationEventResolver eventResolver;
 
 	private SubscriptionService subscriptionService;
 
@@ -47,8 +42,7 @@ class SubscriptionServiceTests {
 		subscriptionService = new SubscriptionService(
 				subscriptionRepository,
 				userRepository,
-				poolRepository,
-				eventRepository
+				eventResolver
 		);
 	}
 
@@ -73,20 +67,22 @@ class SubscriptionServiceTests {
 
 		Instant newStartsAt = Instant.now().plus(2, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
 		Instant newEndsAt = newStartsAt.plus(3, ChronoUnit.HOURS);
+		RegistrationEvent newEvent = new RegistrationEvent(
+				pool,
+				"오후반 모집",
+				newStartsAt,
+				newEndsAt,
+				EventStatus.UPCOMING
+		);
+		setField(newEvent, "id", 31L);
 
 		when(subscriptionRepository.findByIdAndUser_Id(21L, 7L)).thenReturn(Optional.of(subscription));
-		when(poolRepository.findByIdForUpdate(101L)).thenReturn(Optional.of(pool));
-		when(eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
+		when(eventResolver.getOrCreate(
 				101L,
 				"오후반 모집",
 				newStartsAt,
 				newEndsAt
-		)).thenReturn(Optional.empty());
-		when(eventRepository.save(any(RegistrationEvent.class))).thenAnswer(invocation -> {
-			RegistrationEvent saved = invocation.getArgument(0);
-			setField(saved, "id", 31L);
-			return saved;
-		});
+		)).thenReturn(newEvent);
 		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 31L)).thenReturn(Optional.empty());
 
 		SubscriptionResponse response = subscriptionService.updatePeriod(
@@ -134,13 +130,12 @@ class SubscriptionServiceTests {
 		setField(existing, "id", 22L);
 
 		when(subscriptionRepository.findByIdAndUser_Id(21L, 7L)).thenReturn(Optional.of(subscription));
-		when(poolRepository.findByIdForUpdate(101L)).thenReturn(Optional.of(pool));
-		when(eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
+		when(eventResolver.getOrCreate(
 				101L,
 				"오후반 모집",
 				targetEvent.getRegistrationStartsAt(),
 				targetEvent.getRegistrationEndsAt()
-		)).thenReturn(Optional.of(targetEvent));
+		)).thenReturn(targetEvent);
 		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 41L)).thenReturn(Optional.of(existing));
 
 		assertThrows(BadRequestException.class, () -> subscriptionService.updatePeriod(
@@ -153,7 +148,7 @@ class SubscriptionServiceTests {
 				)
 		));
 
-		verify(eventRepository, never()).save(any(RegistrationEvent.class));
+		verify(subscriptionRepository, never()).save(org.mockito.ArgumentMatchers.any(Subscription.class));
 	}
 
 	private static void setField(Object target, String fieldName, Object value) {

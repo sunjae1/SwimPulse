@@ -1,6 +1,9 @@
 package com.swimpulse.location;
 
 import com.swimpulse.common.BadRequestException;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import com.swimpulse.pool.NaverMapsGeocodingClient;
 import com.swimpulse.pool.NearbyPoolMatchRow;
 import com.swimpulse.pool.NearbySearchOrigin;
@@ -13,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import java.util.stream.Collectors;
 import com.swimpulse.pool.PoolSearchNormalizer;
@@ -33,17 +37,20 @@ public class LocationService {
 	private final NaverMapsGeocodingClient naverMapsGeocodingClient;
 	private final PoolRepository poolRepository;
 	private final PoolNearbyQueryRepository poolNearbyQueryRepository;
+	private final MeterRegistry meterRegistry;
 
 	public LocationService(
 			NaverLocalSearchClient naverLocalSearchClient,
 			NaverMapsGeocodingClient naverMapsGeocodingClient,
 			PoolRepository poolRepository,
-			PoolNearbyQueryRepository poolNearbyQueryRepository
+			PoolNearbyQueryRepository poolNearbyQueryRepository,
+			MeterRegistry meterRegistry
 	) {
 		this.naverLocalSearchClient = naverLocalSearchClient;
 		this.naverMapsGeocodingClient = naverMapsGeocodingClient;
 		this.poolRepository = poolRepository;
 		this.poolNearbyQueryRepository = poolNearbyQueryRepository;
+		this.meterRegistry = meterRegistry;
 	}
 
 	public List<LocationSearchCandidate> search(String query, Integer display, Double latitude, Double longitude) {
@@ -52,19 +59,27 @@ public class LocationService {
 		int normalizedDisplay = normalizeDisplay(display);
 		log.info("Location search started. query={} display={} hasOrigin={}",
 				normalizedQuery, normalizedDisplay, latitude != null && longitude != null);
-		List<NormalizedCandidate> normalizedCandidates = naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
-				.stream()
-				.map(this::normalizeCandidate)
-				.toList();
-		PoolMatchLookup matchLookup = loadExactMatches(normalizedCandidates);
-		List<PreparedCandidate> preparedCandidates = normalizedCandidates.stream()
-				.map(candidate -> prepareCandidate(candidate, matchLookup))
-				.toList();
-		Map<Integer, Pool> coordinateMatches = loadCoordinateMatches(preparedCandidates);
-		List<LocationSearchCandidate> candidates = IntStream.range(0, preparedCandidates.size())
-				.mapToObj(index -> enrich(preparedCandidates.get(index), coordinateMatches.get(index), latitude, longitude))
-				.sorted(compareByDistanceWhenAvailable())
-				.toList();
+		List<NormalizedCandidate> normalizedCandidates = recordStep("naver_local_search", () ->
+				naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
+						.stream()
+						.map(this::normalizeCandidate)
+						.toList()
+		);
+		PoolMatchLookup matchLookup = recordStep("exact_match_lookup", () -> loadExactMatches(normalizedCandidates));
+		List<PreparedCandidate> preparedCandidates = recordStep("prepare_candidates", () ->
+				normalizedCandidates.stream()
+						.map(candidate -> prepareCandidate(candidate, matchLookup))
+						.toList()
+		);
+		Map<Integer, Pool> coordinateMatches = recordStep("coordinate_match_lookup", () -> loadCoordinateMatches(preparedCandidates));
+		List<LocationSearchCandidate> candidates = recordStep("enrich_sort", () ->
+				IntStream.range(0, preparedCandidates.size())
+						.mapToObj(index -> enrich(preparedCandidates.get(index), coordinateMatches.get(index), latitude, longitude))
+						.sorted(compareByDistanceWhenAvailable())
+						.toList()
+		);
+		meterRegistry.summary("swimpulse.location.search.result_count").record(candidates.size());
+		meterRegistry.summary("swimpulse.location.search.candidate_count").record(normalizedCandidates.size());
 		log.info("Location search completed. query={} resultCount={} exactMatchPoolCount={}",
 				normalizedQuery, candidates.size(), matchLookup.poolCount());
 		return candidates;
@@ -149,22 +164,43 @@ public class LocationService {
 		Pool exactMatch = matchLookup.find(normalizedCandidate);
 		Double latitude = exactMatch == null ? null : exactMatch.getLatitude();
 		Double longitude = exactMatch == null ? null : exactMatch.getLongitude();
+		String resolutionSource = exactMatch == null ? "unresolved" : "exact_match";
 		String address = resolveAddress(candidate);
 		if ((latitude == null || longitude == null) && hasText(address) && naverMapsGeocodingClient.isConfigured()) {
 			try {
-				NaverMapsGeocodingClient.Coordinates coordinates = naverMapsGeocodingClient.geocode(address).orElse(null);
+				NaverMapsGeocodingClient.Coordinates coordinates = geocodeCandidateAddress(address).orElse(null);
 				if (coordinates != null) {
 					latitude = coordinates.latitude();
 					longitude = coordinates.longitude();
+					resolutionSource = "candidate_geocode";
+				} else if (exactMatch != null) {
+					resolutionSource = "exact_match";
 				}
 			} catch (RestClientResponseException exception) {
 				log.warn("Candidate geocode failed. title={} status={} {}",
 						candidate.title(), exception.getStatusCode().value(), exception.getStatusText());
 				latitude = null;
 				longitude = null;
+				resolutionSource = exactMatch != null ? "exact_match" : "unresolved";
 			}
 		}
+		recordCandidateResolution(resolutionSource);
 		return new PreparedCandidate(normalizedCandidate, exactMatch, latitude, longitude);
+	}
+
+	private java.util.Optional<NaverMapsGeocodingClient.Coordinates> geocodeCandidateAddress(String address) {
+		Timer.Sample sample = Timer.start(meterRegistry);
+		String result = "error";
+		try {
+			java.util.Optional<NaverMapsGeocodingClient.Coordinates> coordinates = naverMapsGeocodingClient.geocode(address);
+			result = coordinates.isPresent() ? "hit" : "miss";
+			return coordinates;
+		} finally {
+			sample.stop(Timer.builder("swimpulse.location.search.candidate_geocode")
+					.description("Location search candidate geocode latency")
+					.tag("result", result)
+					.register(meterRegistry));
+		}
 	}
 
 	public Pool findMatchingPool(
@@ -371,5 +407,25 @@ public class LocationService {
 							LinkedHashMap::new
 					));
 		}
+	}
+
+	private <T> T recordStep(String step, Supplier<T> supplier) {
+		Timer.Sample sample = Timer.start(meterRegistry);
+		try {
+			return supplier.get();
+		} finally {
+			sample.stop(Timer.builder("swimpulse.location.search.step")
+					.description("Location search internal step latency")
+					.tag("step", step)
+					.register(meterRegistry));
+		}
+	}
+
+	private void recordCandidateResolution(String source) {
+		Counter.builder("swimpulse.location.search.candidate_resolution")
+				.description("Location search candidate resolution source")
+				.tag("source", source)
+				.register(meterRegistry)
+				.increment();
 	}
 }

@@ -11,6 +11,7 @@ import com.swimpulse.pool.NaverMapsGeocodingClient;
 import com.swimpulse.pool.Pool;
 import com.swimpulse.pool.PoolNearbyQueryRepository;
 import com.swimpulse.pool.PoolRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +42,8 @@ class LocationServiceTests {
 				naverLocalSearchClient,
 				naverMapsGeocodingClient,
 				poolRepository,
-				poolNearbyQueryRepository
+				poolNearbyQueryRepository,
+				new SimpleMeterRegistry()
 		);
 	}
 

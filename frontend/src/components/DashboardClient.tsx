@@ -78,6 +78,7 @@ type EventForm = {
 };
 
 const statusOptions: Array<EventStatus | "ALL"> = ["ALL", "UPCOMING", "OPEN", "CLOSED"];
+const NOTICE_AUTO_DISMISS_MS = 5000;
 
 export function DashboardClient({
   initialData,
@@ -108,6 +109,7 @@ export function DashboardClient({
   const [pendingSubscriptionKey, setPendingSubscriptionKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingNoticeScanPoolIds, setPendingNoticeScanPoolIds] = useState<number[]>([]);
   const [pushGuideOpen, setPushGuideOpen] = useState(false);
   const [pushNotificationModal, setPushNotificationModal] = useState<InAppNotification | null>(null);
   const [pushNotificationClosing, setPushNotificationClosing] = useState(false);
@@ -369,17 +371,42 @@ export function DashboardClient({
       setNotice("Google 로그인 후 공지를 확인할 수 있습니다.");
       return;
     }
-    setBusy(true);
-    setNotice(null);
+    if (pendingNoticeScanPoolIds.includes(pool.id)) {
+      setNotice(
+        subscriptionMode
+          ? `${pool.name} 모집 기간을 이미 확인 중입니다. 완료되면 같은 결과를 바로 보여드립니다.`
+          : `${pool.name} 공지를 이미 확인 중입니다. 완료되면 같은 결과를 바로 보여드립니다.`,
+      );
+      return;
+    }
+
+    setPendingNoticeScanPoolIds((items) => [...items, pool.id]);
+    setNotice(
+      subscriptionMode
+        ? `${pool.name} 모집 기간을 확인 중입니다. 다른 사용자가 먼저 같은 수영장을 확인 중이면 완료 후 결과를 함께 보여드립니다.`
+        : `${pool.name} 공지를 확인 중입니다. 다른 사용자가 먼저 같은 수영장을 확인 중이면 완료 후 결과를 함께 보여드립니다.`,
+    );
     try {
       const result = await scanPoolNotices(pool.id);
       setNoticeScanResult(result);
       setNoticeSubscriptionMode(subscriptionMode);
-      setNotice(subscriptionMode ? "구독할 모집 기간을 선택하세요." : `${pool.name} 공지를 확인했습니다.`);
+      if (subscriptionMode) {
+        setNotice(
+          result.sharedResult
+            ? "다른 사용자가 먼저 확인한 최신 공지 결과를 함께 불러왔습니다. 구독할 모집 기간을 선택하세요."
+            : "구독할 모집 기간을 선택하세요.",
+        );
+      } else {
+        setNotice(
+          result.sharedResult
+            ? `${pool.name} 공지를 다른 사용자 요청 결과와 함께 바로 불러왔습니다.`
+            : `${pool.name} 공지를 확인했습니다.`,
+        );
+      }
     } catch (error) {
       setNotice(getErrorMessage(error, "공지 확인에 실패했습니다."));
     } finally {
-      setBusy(false);
+      setPendingNoticeScanPoolIds((items) => items.filter((item) => item !== pool.id));
     }
   }
 
@@ -574,6 +601,20 @@ export function DashboardClient({
     clearSearchParam("login");
     setPendingLoginSuccessNotice(false);
   }, [pendingLoginSuccessNotice, user]);
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setNotice((current) => (current === notice ? null : current));
+    }, NOTICE_AUTO_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [notice]);
 
   useEffect(() => {
     if (!pendingNotificationLaunchId) {
@@ -919,12 +960,12 @@ export function DashboardClient({
                       <button
                         className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#d8ddd5] px-3 text-xs font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:opacity-50"
                         onClick={() => scanNotices(pool)}
-                        disabled={busy || !user || !pool.homepageUrl}
+                        disabled={!user || !pool.homepageUrl}
                         title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "공지 확인"}
                         type="button"
                       >
                         <FileSearch size={14} aria-hidden />
-                        공지 확인
+                        {pendingNoticeScanPoolIds.includes(pool.id) ? "공지 확인 중..." : "공지 확인"}
                       </button>
                     </div>
                     {!pool.homepageUrl ? (
@@ -942,12 +983,16 @@ export function DashboardClient({
                           : "bg-[#0f766e] text-white hover:bg-[#0b5f59]"
                       }`}
                       onClick={() => scanNotices(pool, true)}
-                      disabled={busy || !user || !pool.homepageUrl}
+                      disabled={!user || !pool.homepageUrl}
                       title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "알림 구독"}
                       type="button"
                     >
                       {subscribedPeriodPoolIds.has(pool.id) ? <CheckCircle2 size={17} aria-hidden /> : <Plus size={17} aria-hidden />}
-                      {subscribedPeriodPoolIds.has(pool.id) ? "기간 구독 중" : "알림 구독"}
+                      {pendingNoticeScanPoolIds.includes(pool.id)
+                        ? "결과 기다리는 중..."
+                        : subscribedPeriodPoolIds.has(pool.id)
+                          ? "기간 구독 중"
+                          : "알림 구독"}
                     </button>
                   </div>
                 </article>

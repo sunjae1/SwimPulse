@@ -9,6 +9,8 @@ public record NoticeScanResponse(
 		int scannedLinks,
 		List<PoolNoticeResponse> notices,
 		String message,
-		List<String> trace
+		List<String> trace,
+		boolean sharedResult,
+		boolean waitedForActiveScan
 ) {
 }
