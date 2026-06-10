@@ -68,6 +68,7 @@ class MyPageServiceTests {
 						null,
 						new EventResponse(
 								10L,
+								null,
 								101L,
 								"강남스포츠센터 수영장",
 								"새벽반 모집",
@@ -85,6 +86,7 @@ class MyPageServiceTests {
 						null,
 						new EventResponse(
 								11L,
+								null,
 								102L,
 								"마포구민체육센터 수영장",
 								"주말반 모집",

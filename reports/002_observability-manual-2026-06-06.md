@@ -2,7 +2,7 @@
 
 작성일: 2026-06-06
 
-성능 측정 방법만 빠르게 보고 싶다면 [performance-measurement-manual-2026-06-06.md](./performance-measurement-manual-2026-06-06.md)를 보면 됩니다.
+성능 측정 방법만 빠르게 보고 싶다면 [003_performance-measurement-manual-2026-06-06.md](./003_performance-measurement-manual-2026-06-06.md)를 보면 됩니다.
 
 ![관측 흐름](./assets/observability-flow.svg)
 

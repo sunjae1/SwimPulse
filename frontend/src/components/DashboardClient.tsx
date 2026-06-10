@@ -390,7 +390,9 @@ export function DashboardClient({
       const result = await scanPoolNotices(pool.id);
       setNoticeScanResult(result);
       setNoticeSubscriptionMode(subscriptionMode);
-      if (subscriptionMode) {
+      if (result.latestCheckFailed) {
+        setNotice(result.message);
+      } else if (subscriptionMode) {
         setNotice(
           result.sharedResult
             ? "다른 사용자가 먼저 확인한 최신 공지 결과를 함께 불러왔습니다. 구독할 모집 기간을 선택하세요."
@@ -446,6 +448,7 @@ export function DashboardClient({
         title,
         registrationStartsAt: period.startsAt,
         registrationEndsAt: period.endsAt,
+        noticeRegistrationPeriodId: period.id,
       });
       const [freshSubscriptions, freshEvents] = await Promise.all([getSubscriptions(), getEvents()]);
       setSubscriptions(freshSubscriptions);
@@ -1501,6 +1504,11 @@ function NoticeResultModal({
           </button>
         </div>
         <div className="max-h-[64vh] divide-y divide-[#e3e7e1] overflow-auto">
+          {result.latestCheckFailed ? (
+            <div className="border-l-4 border-[#c2410c] bg-[#fff7ed] px-5 py-3 text-sm font-medium text-[#9a3412]">
+              {result.message}
+            </div>
+          ) : null}
           {result.notices.length === 0 ? (
             <div className="space-y-2 px-5 py-8">
               <p className="text-sm font-semibold text-[#31413b]">확인된 공지 후보가 없습니다.</p>
@@ -1513,6 +1521,7 @@ function NoticeResultModal({
                   ? notice.registrationPeriods ?? []
                   : [
                       {
+                        id: null,
                         label: "대표 기간",
                         startsAt: notice.registrationStartsAt,
                         endsAt: notice.registrationEndsAt,

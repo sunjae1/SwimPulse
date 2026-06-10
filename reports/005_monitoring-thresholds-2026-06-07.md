@@ -12,8 +12,8 @@
 
 관련 문서:
 
-- [performance-measurement-manual-2026-06-06.md](./performance-measurement-manual-2026-06-06.md)
-- [observability-manual-2026-06-06.md](./observability-manual-2026-06-06.md)
+- [003_performance-measurement-manual-2026-06-06.md](./003_performance-measurement-manual-2026-06-06.md)
+- [002_observability-manual-2026-06-06.md](./002_observability-manual-2026-06-06.md)
 
 ## 1. 패널별 기준표
 

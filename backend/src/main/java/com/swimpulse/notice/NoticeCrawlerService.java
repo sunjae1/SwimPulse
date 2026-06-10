@@ -39,6 +39,7 @@ import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -48,6 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class NoticeCrawlerService {
 	private static final Logger log = LoggerFactory.getLogger(NoticeCrawlerService.class);
 	private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+	static final int CURRENT_PARSER_VERSION = 1;
 	private static final Pattern PERIOD = Pattern.compile("(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?");
 	private static final Pattern DAY_ONLY_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*\\.\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*\\.\\s*(?:\\([^)]*\\))?(?!\\s*\\d)");
 	private static final Pattern MONTHLY_DAY_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
@@ -57,6 +59,17 @@ public class NoticeCrawlerService {
 	private static final Pattern QUARTERLY_DAY_PERIOD = Pattern.compile("분기별\\s*\\[([^]]+)]\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
 	private static final List<String> NOTICE_LIST_KEYWORDS = List.of("공지", "회원모집", "회원모집안내", "모집안내", "수강", "수강신청안내", "접수", "프로그램", "교육", "강좌");
 	private static final List<String> DETAIL_KEYWORDS = List.of("수강", "회원", "접수", "모집", "등록", "수영", "강습");
+	private static final List<String> VERIFIED_SOURCE_KEYWORDS = List.of(
+			"공지사항",
+			"알림마당",
+			"회원모집",
+			"수강신청",
+			"접수안내",
+			"접수기간",
+			"신규접수",
+			"notice",
+			"board"
+	);
 	private static final List<String> RENTAL_PAGE_KEYWORDS = List.of("대관", "대관예약", "대관신청", "대관이용");
 	private static final List<String> NON_REGISTRATION_PERIOD_KEYWORDS = List.of("환불", "환불금액", "수강료", "개강", "종강", "월단위강습제", "첫수업일", "이용일수", "공제");
 	private static final List<PeriodLabel> PERIOD_LABELS = List.of(
@@ -88,6 +101,7 @@ public class NoticeCrawlerService {
 	private final PoolNoticeSourceRepository sourceRepository;
 	private final OpenAiNoticeExtractionClient openAiNoticeExtractionClient;
 	private final ObjectMapper objectMapper;
+	private final NoticeRegistrationPeriodService registrationPeriodService;
 	private final boolean insecureSslFallbackEnabled;
 	private final RedisLockService redisLockService;
 	private final StringRedisTemplate redisTemplate;
@@ -97,6 +111,9 @@ public class NoticeCrawlerService {
 	private final Duration scanResultTtl;
 	private final Duration scanWaitTimeout;
 	private final Duration scanWaitPollInterval;
+	private final Duration sourceDiscoveryInterval;
+	private final Duration failedSourceRetryInterval;
+	private final int sourceFailureThreshold;
 
 	NoticeCrawlerService(
 			PoolRepository poolRepository,
@@ -112,6 +129,7 @@ public class NoticeCrawlerService {
 				sourceRepository,
 				openAiNoticeExtractionClient,
 				objectMapper,
+				null,
 				insecureSslFallbackEnabled,
 				null,
 				null,
@@ -120,7 +138,10 @@ public class NoticeCrawlerService {
 				"swimpulse:notice-scan:result:",
 				60000,
 				15000,
-				250
+				250,
+				86400000,
+				604800000,
+				3
 		);
 	}
 
@@ -131,6 +152,7 @@ public class NoticeCrawlerService {
 			PoolNoticeSourceRepository sourceRepository,
 			OpenAiNoticeExtractionClient openAiNoticeExtractionClient,
 			ObjectMapper objectMapper,
+			NoticeRegistrationPeriodService registrationPeriodService,
 			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled,
 			RedisLockService redisLockService,
 			StringRedisTemplate redisTemplate,
@@ -139,13 +161,17 @@ public class NoticeCrawlerService {
 			@Value("${swimpulse.notice.scan-result-key-prefix:swimpulse:notice-scan:result:}") String scanResultKeyPrefix,
 			@Value("${swimpulse.notice.scan-result-ttl-ms:60000}") long scanResultTtlMs,
 			@Value("${swimpulse.notice.scan-wait-timeout-ms:15000}") long scanWaitTimeoutMs,
-			@Value("${swimpulse.notice.scan-wait-poll-ms:250}") long scanWaitPollMs
+			@Value("${swimpulse.notice.scan-wait-poll-ms:250}") long scanWaitPollMs,
+			@Value("${swimpulse.notice.source-discovery-interval-ms:86400000}") long sourceDiscoveryIntervalMs,
+			@Value("${swimpulse.notice.failed-source-retry-interval-ms:604800000}") long failedSourceRetryIntervalMs,
+			@Value("${swimpulse.notice.source-failure-threshold:3}") int sourceFailureThreshold
 	) {
 		this.poolRepository = poolRepository;
 		this.noticeRepository = noticeRepository;
 		this.sourceRepository = sourceRepository;
 		this.openAiNoticeExtractionClient = openAiNoticeExtractionClient;
 		this.objectMapper = objectMapper;
+		this.registrationPeriodService = registrationPeriodService;
 		this.insecureSslFallbackEnabled = insecureSslFallbackEnabled;
 		this.redisLockService = redisLockService;
 		this.redisTemplate = redisTemplate;
@@ -155,6 +181,9 @@ public class NoticeCrawlerService {
 		this.scanResultTtl = Duration.ofMillis(scanResultTtlMs);
 		this.scanWaitTimeout = Duration.ofMillis(scanWaitTimeoutMs);
 		this.scanWaitPollInterval = Duration.ofMillis(scanWaitPollMs);
+		this.sourceDiscoveryInterval = Duration.ofMillis(sourceDiscoveryIntervalMs);
+		this.failedSourceRetryInterval = Duration.ofMillis(failedSourceRetryIntervalMs);
+		this.sourceFailureThreshold = sourceFailureThreshold;
 	}
 
 	@Transactional
@@ -169,6 +198,96 @@ public class NoticeCrawlerService {
 		return waitForSharedScanResult(poolId);
 	}
 
+	@Transactional
+	public NoticeSourceReverificationResponse reverifySources(Integer requestedLimit) {
+		int limit = requestedLimit == null ? 20 : Math.max(1, Math.min(requestedLimit, 20));
+		Instant now = Instant.now();
+		List<Pool> pools = poolRepository.findPoolsNeedingNoticeSourceVerification(
+				NoticeSourceStatus.CANDIDATE,
+				NoticeSourceStatus.FAILED,
+				NoticeSourceStatus.VERIFIED,
+				now.minus(failedSourceRetryInterval),
+				now.minus(sourceDiscoveryInterval),
+				PageRequest.of(0, limit)
+		);
+		log.info("Notice source batch reverification started. requestedLimit={} selectedPools={}",
+				requestedLimit, pools.size());
+
+		List<NoticeSourceReverificationResult> results = new ArrayList<>();
+		for (Pool pool : pools) {
+			results.add(reverifyPoolSources(pool, now));
+		}
+		NoticeSourceReverificationResponse response = NoticeSourceReverificationResponse.from(results);
+		log.info("Notice source batch reverification completed. processedPools={} checkedSources={} verified={} inactive={} failed={}",
+				response.processedPools(),
+				response.checkedSources(),
+				response.verifiedSources(),
+				response.inactiveSources(),
+				response.failedSources());
+		return response;
+	}
+
+	private NoticeSourceReverificationResult reverifyPoolSources(Pool pool, Instant now) {
+		List<String> trace = new ArrayList<>();
+		List<NoticeDetailCandidate> ignoredCandidates = new ArrayList<>();
+		Set<String> attemptedSourceUrls = new LinkedHashSet<>();
+		List<PoolNoticeSource> sources = new ArrayList<>(
+				sourceRepository.findByPoolAndStatusOrderByIdAsc(pool, NoticeSourceStatus.CANDIDATE)
+		);
+		sources.addAll(sourceRepository.findByPoolAndStatusAndLastScannedAtBeforeOrderByIdAsc(
+				pool,
+				NoticeSourceStatus.FAILED,
+				now.minus(failedSourceRetryInterval)
+		));
+
+		int accessFailures = 0;
+		for (PoolNoticeSource source : sources) {
+			attemptedSourceUrls.add(source.getSourceUrl());
+			SourceInspection inspection = inspectSource(
+					pool,
+					pool.getHomepageUrl(),
+					source,
+					ignoredCandidates,
+					trace,
+					"배치 재검증"
+			);
+			if (inspection.accessFailed()) {
+				accessFailures++;
+			}
+		}
+
+		boolean discoveryRan = false;
+		boolean hasVerified = sourceRepository.existsByPoolAndStatus(pool, NoticeSourceStatus.VERIFIED);
+		if (!hasVerified && accessFailures == 0 && isNoticeDiscoveryDue(pool)) {
+			discoveryRan = true;
+			discoverNoticeSources(pool, ignoredCandidates, trace, attemptedSourceUrls);
+		}
+
+		List<PoolNoticeSource> currentSources = sourceRepository.findByPoolOrderByIdAsc(pool);
+		int verified = countSources(currentSources, NoticeSourceStatus.VERIFIED);
+		int inactive = countSources(currentSources, NoticeSourceStatus.INACTIVE);
+		int failed = countSources(currentSources, NoticeSourceStatus.FAILED);
+		String message = verified > 0
+				? "재사용 가능한 공지 경로를 확인했습니다."
+				: accessFailures > 0
+						? "접근 실패를 누적했습니다. 임계치 도달 시 FAILED로 전환됩니다."
+						: "검증 가능한 공지 경로를 찾지 못했습니다.";
+		return new NoticeSourceReverificationResult(
+				pool.getId(),
+				pool.getName(),
+				attemptedSourceUrls.size(),
+				verified,
+				inactive,
+				failed,
+				discoveryRan,
+				message
+		);
+	}
+
+	private int countSources(List<PoolNoticeSource> sources, NoticeSourceStatus status) {
+		return (int) sources.stream().filter(source -> source.getStatus() == status).count();
+	}
+
 	private NoticeScanResponse runScan(Long poolId, RedisLockService.LockToken lockToken) {
 		try {
 		List<String> trace = new ArrayList<>();
@@ -180,42 +299,30 @@ public class NoticeCrawlerService {
 		}
 		log.info("Notice scan started. poolId={} poolName={} homepageUrl={}", pool.getId(), pool.getName(), homepageUrl);
 
-		trace.add("홈페이지에서 시설명 메뉴 영역을 먼저 탐색합니다: " + homepageUrl);
-		List<String> noticeListUrls = discoverFacilityScopedNoticeListUrls(homepageUrl, pool.getName(), trace);
-		boolean directHomepageCandidates = false;
-		if (noticeListUrls.isEmpty()) {
-			trace.add("시설명 메뉴 영역에서 공지 목록을 못 찾아 홈페이지 전체 링크를 탐색합니다.");
-			noticeListUrls = discoverNoticeListUrls(homepageUrl, trace, "홈페이지");
-			directHomepageCandidates = true;
-		}
 		List<NoticeDetailCandidate> detailCandidates = new ArrayList<>();
-		if (directHomepageCandidates) {
-			collectDirectDetailCandidates(pool, noticeListUrls, detailCandidates, trace, "홈페이지 전체 링크");
-		} else {
-			collectDetailCandidates(pool, homepageUrl, noticeListUrls, detailCandidates, trace);
-		}
-
-		if (detailCandidates.isEmpty()) {
-			trace.add("상세 공지 후보가 없어 시설명 링크를 루트로 바꾸는 fallback을 실행합니다.");
-			List<String> facilityPageUrls = discoverFacilityPageUrls(homepageUrl, pool.getName(), trace);
-			for (String facilityPageUrl : facilityPageUrls) {
-				trace.add("fallback 루트 탐색: " + facilityPageUrl);
-				List<String> fallbackNoticeListUrls = discoverFacilityScopedNoticeListUrls(facilityPageUrl, pool.getName(), trace);
-				boolean directFallbackCandidates = false;
-				if (fallbackNoticeListUrls.isEmpty()) {
-					fallbackNoticeListUrls = discoverNoticeListUrls(facilityPageUrl, trace, "fallback 시설 페이지");
-					directFallbackCandidates = true;
-				}
-				if (directFallbackCandidates) {
-					collectDirectDetailCandidates(pool, fallbackNoticeListUrls, detailCandidates, trace, "fallback 시설 페이지 전체 링크");
-				} else {
-					collectDetailCandidates(pool, facilityPageUrl, fallbackNoticeListUrls, detailCandidates, trace);
-				}
-				if (!detailCandidates.isEmpty()) {
-					break;
-				}
+		Set<String> attemptedSourceUrls = new LinkedHashSet<>();
+		StoredSourceScanResult storedSourceResult = collectStoredSourceCandidates(
+				pool,
+				homepageUrl,
+				detailCandidates,
+				trace,
+				attemptedSourceUrls
+		);
+		boolean pathAvailable = storedSourceResult.pathAvailable();
+		if (!pathAvailable) {
+			if (isNoticeDiscoveryDue(pool)) {
+				DiscoveryResult discoveryResult = discoverNoticeSources(
+						pool,
+						detailCandidates,
+						trace,
+						attemptedSourceUrls
+				);
+				pathAvailable = discoveryResult.pathAvailable();
+			} else {
+				trace.add("최근 24시간 안에 전체 공지 경로를 탐색했으므로 이번 요청에서는 홈페이지 재탐색을 생략합니다.");
 			}
 		}
+		detailCandidates = deduplicateDetailCandidates(detailCandidates);
 
 		List<PoolNoticeResponse> notices = new ArrayList<>();
 		for (NoticeDetailCandidate candidate : detailCandidates) {
@@ -235,7 +342,25 @@ public class NoticeCrawlerService {
 					}
 			);
 		}
-		String message = notices.isEmpty() ? "No detail notice candidates found." : "Notice scan completed.";
+		boolean latestCheckFailed = !pathAvailable;
+		String message;
+		if (notices.isEmpty() && latestCheckFailed) {
+			List<PoolNoticeResponse> previousNotices = noticeRepository.findTop20ByPoolIdOrderByIdDesc(poolId)
+					.stream()
+					.map(this::toResponse)
+					.toList();
+			if (previousNotices.isEmpty()) {
+				message = "현재 공지 경로를 찾지 못했습니다.";
+			} else {
+				notices.addAll(previousNotices);
+				message = "최신 공지 경로 확인에 실패해 이전에 저장된 공지 결과를 표시합니다.";
+				trace.add("최신 경로 확인 실패로 기존 저장 공지 " + previousNotices.size() + "개를 반환합니다.");
+			}
+		} else if (notices.isEmpty()) {
+			message = "현재 확인된 모집 공지가 없습니다.";
+		} else {
+			message = "공지 확인이 완료되었습니다.";
+		}
 		log.info("Notice scan completed. poolId={} detailCandidates={} savedNotices={} message={}",
 				pool.getId(), detailCandidates.size(), notices.size(), message);
 		NoticeScanResponse response = new NoticeScanResponse(
@@ -247,7 +372,8 @@ public class NoticeCrawlerService {
 				message,
 				trace,
 				false,
-				false
+				false,
+				latestCheckFailed
 		);
 		cacheSharedScanResult(poolId, lockToken, response);
 		return response;
@@ -321,7 +447,8 @@ public class NoticeCrawlerService {
 				"Another user already started this scan. The completed result was shared with your request.",
 				trace,
 				true,
-				true
+				true,
+				response.latestCheckFailed()
 		);
 	}
 
@@ -362,73 +489,187 @@ public class NoticeCrawlerService {
 		}
 	}
 
-	private void collectDetailCandidates(
+	private StoredSourceScanResult collectStoredSourceCandidates(
 			Pool pool,
-			String rootUrl,
-			List<String> noticeListUrls,
+			String homepageUrl,
 			List<NoticeDetailCandidate> detailCandidates,
-			List<String> trace
+			List<String> trace,
+			Set<String> attemptedSourceUrls
 	) {
-		if (noticeListUrls.isEmpty()) {
-			trace.add("공지 목록 후보 URL이 없습니다: " + rootUrl);
-			return;
+		List<PoolNoticeSource> sources = sourceRepository.findByPoolAndStatusOrderByIdAsc(
+				pool,
+				NoticeSourceStatus.VERIFIED
+		);
+		String sourceLabel = "검증된 공지 경로";
+		if (sources.isEmpty()) {
+			sources = sourceRepository.findByPoolAndStatusOrderByIdAsc(pool, NoticeSourceStatus.CANDIDATE);
+			sourceLabel = "검증 대기 공지 경로";
 		}
-		for (String noticeListUrl : noticeListUrls) {
-			PoolNoticeSource source = sourceRepository.findByPoolAndSourceUrl(pool, noticeListUrl)
-					.orElseGet(() -> sourceRepository.save(new PoolNoticeSource(pool, noticeListUrl, NoticeSourceType.NOTICE_PAGE)));
-			try {
-				List<NoticeDetailCandidate> found = discoverDetailNoticeUrls(rootUrl, noticeListUrl);
-				detailCandidates.addAll(found);
-				trace.add("공지 목록 페이지 분석 완료: " + noticeListUrl + " / 상세 후보 " + found.size() + "개");
-				for (NoticeDetailCandidate candidate : found) {
-					trace.add("상세 후보 출처: " + candidate.source() + " - "
-							+ firstText(candidate.title(), "(제목 없음)") + " -> " + candidate.url());
-				}
-				log.info("Notice list analyzed. poolId={} sourceUrl={} detailCandidates={}",
-						pool.getId(), noticeListUrl, found.size());
-				source.markScanned(NoticeSourceStatus.ACTIVE);
-			} catch (RuntimeException exception) {
-				source.markScanned(NoticeSourceStatus.FAILED);
-				trace.add("공지 목록 페이지 분석 실패: " + noticeListUrl + " / " + exception.getMessage());
-				log.warn("Notice list analysis failed. poolId={} sourceUrl={} message={}",
-						pool.getId(), noticeListUrl, exception.getMessage());
+		if (sources.isEmpty()) {
+			trace.add("저장된 VERIFIED 또는 CANDIDATE 공지 경로가 없습니다.");
+			return new StoredSourceScanResult(0, 0, 0, false);
+		}
+
+		trace.add(sourceLabel + " " + sources.size() + "개를 먼저 확인합니다.");
+		int successfulFetches = 0;
+		int failedFetches = 0;
+		boolean pathAvailable = false;
+		for (PoolNoticeSource source : sources) {
+			attemptedSourceUrls.add(source.getSourceUrl());
+			SourceInspection inspection = inspectSource(
+					pool,
+					homepageUrl,
+					source,
+					detailCandidates,
+					trace,
+					sourceLabel
+			);
+			if (inspection.accessFailed()) {
+				failedFetches++;
+			} else {
+				successfulFetches++;
 			}
+			pathAvailable = pathAvailable || inspection.verified();
 		}
+		return new StoredSourceScanResult(sources.size(), successfulFetches, failedFetches, pathAvailable);
 	}
 
-	private void collectDirectDetailCandidates(
+	private DiscoveryResult discoverNoticeSources(
 			Pool pool,
-			List<String> candidateUrls,
+			List<NoticeDetailCandidate> detailCandidates,
+			List<String> trace,
+			Set<String> attemptedSourceUrls
+	) {
+		String homepageUrl = pool.getHomepageUrl();
+		pool.markNoticeDiscoveryAttempt();
+		trace.add("홈페이지에서 시설명 메뉴 영역을 새로 탐색합니다: " + homepageUrl);
+		List<String> noticeListUrls = discoverFacilityScopedNoticeListUrls(homepageUrl, pool.getName(), trace);
+		if (noticeListUrls.isEmpty()) {
+			trace.add("시설명 메뉴 영역에서 공지 목록을 못 찾아 홈페이지 전체 링크를 탐색합니다.");
+			noticeListUrls = discoverNoticeListUrls(homepageUrl, trace, "홈페이지");
+		}
+
+		boolean pathAvailable = collectDiscoveredSources(
+				pool,
+				homepageUrl,
+				noticeListUrls,
+				detailCandidates,
+				trace,
+				"홈페이지 탐색",
+				attemptedSourceUrls
+		);
+		if (!pathAvailable) {
+			trace.add("검증 가능한 공지 경로가 없어 시설명 링크를 루트로 바꾸는 fallback을 실행합니다.");
+			List<String> facilityPageUrls = discoverFacilityPageUrls(homepageUrl, pool.getName(), trace);
+			for (String facilityPageUrl : facilityPageUrls) {
+				trace.add("fallback 루트 탐색: " + facilityPageUrl);
+				List<String> fallbackUrls = discoverFacilityScopedNoticeListUrls(
+						facilityPageUrl,
+						pool.getName(),
+						trace
+				);
+				if (fallbackUrls.isEmpty()) {
+					fallbackUrls = discoverNoticeListUrls(facilityPageUrl, trace, "fallback 시설 페이지");
+				}
+				pathAvailable = collectDiscoveredSources(
+						pool,
+						facilityPageUrl,
+						fallbackUrls,
+						detailCandidates,
+						trace,
+						"fallback 시설 페이지",
+						attemptedSourceUrls
+				);
+				if (pathAvailable) {
+					break;
+				}
+			}
+		}
+		return new DiscoveryResult(pathAvailable);
+	}
+
+	private boolean collectDiscoveredSources(
+			Pool pool,
+			String rootUrl,
+			List<String> sourceUrls,
+			List<NoticeDetailCandidate> detailCandidates,
+			List<String> trace,
+			String contextLabel,
+			Set<String> attemptedSourceUrls
+	) {
+		if (sourceUrls.isEmpty()) {
+			trace.add(contextLabel + "에서 공지 경로 후보를 찾지 못했습니다.");
+			return false;
+		}
+		boolean pathAvailable = false;
+		for (String sourceUrl : sourceUrls) {
+			PoolNoticeSource source = getOrCreateSource(pool, sourceUrl);
+			if (source.getStatus() == NoticeSourceStatus.FAILED && !isFailedSourceRetryDue(source)) {
+				trace.add(contextLabel + " FAILED 경로 재시도 유예: " + source.getSourceUrl());
+				continue;
+			}
+			if (!attemptedSourceUrls.add(source.getSourceUrl())) {
+				trace.add(contextLabel + " 중복 경로 재요청 생략: " + source.getSourceUrl());
+				continue;
+			}
+			SourceInspection inspection = inspectSource(
+					pool,
+					rootUrl,
+					source,
+					detailCandidates,
+					trace,
+					contextLabel
+			);
+			pathAvailable = pathAvailable || inspection.verified();
+		}
+		return pathAvailable;
+	}
+
+	private PoolNoticeSource getOrCreateSource(Pool pool, String sourceUrl) {
+		String normalizedUrl = NoticeSourceUrlNormalizer.normalize(sourceUrl);
+		return sourceRepository.findByPoolAndSourceUrl(pool, normalizedUrl)
+				.orElseGet(() -> sourceRepository.save(
+						new PoolNoticeSource(pool, normalizedUrl, NoticeSourceType.NOTICE_PAGE)
+				));
+	}
+
+	private SourceInspection inspectSource(
+			Pool pool,
+			String rootUrl,
+			PoolNoticeSource source,
 			List<NoticeDetailCandidate> detailCandidates,
 			List<String> trace,
 			String contextLabel
 	) {
-		if (candidateUrls.isEmpty()) {
-			trace.add(contextLabel + " 직접 분석 후보 URL이 없습니다.");
-			return;
-		}
-		int before = detailCandidates.size();
-		for (String candidateUrl : candidateUrls) {
-			PoolNoticeSource source = sourceRepository.findByPoolAndSourceUrl(pool, candidateUrl)
-					.orElseGet(() -> sourceRepository.save(new PoolNoticeSource(pool, candidateUrl, NoticeSourceType.NOTICE_PAGE)));
-			try {
-				Optional<NoticeDetailCandidate> candidate = discoverInlineDetailCandidate(candidateUrl);
-				if (candidate.isPresent()) {
-					detailCandidates.add(candidate.get());
-					trace.add(contextLabel + " 직접 상세 후보 추가(" + candidate.get().source() + "): "
-							+ firstText(candidate.get().title(), "(제목 없음)") + " -> " + candidateUrl);
-				} else {
-					trace.add(contextLabel + " 직접 분석 제외: 기간 패턴 없음 -> " + candidateUrl);
+		String sourceUrl = source.getSourceUrl();
+		try {
+			Document document = fetch(sourceUrl);
+			List<NoticeDetailCandidate> found = discoverDetailNoticeUrls(rootUrl, sourceUrl, document);
+			boolean verified = !found.isEmpty() || isLikelyNoticeSource(document, sourceUrl);
+			if (verified) {
+				source.markVerified();
+				detailCandidates.addAll(found);
+				trace.add(contextLabel + " 검증 성공: " + sourceUrl + " / 상세 후보 " + found.size() + "개");
+				for (NoticeDetailCandidate candidate : found) {
+					trace.add("상세 후보 출처: " + candidate.source() + " - "
+							+ firstText(candidate.title(), "(제목 없음)") + " -> " + candidate.url());
 				}
-				source.markScanned(NoticeSourceStatus.ACTIVE);
-			} catch (RuntimeException exception) {
-				source.markScanned(NoticeSourceStatus.FAILED);
-				trace.add(contextLabel + " 직접 분석 후보 확인 실패: " + candidateUrl + " / " + exception.getMessage());
-				log.warn("Direct notice candidate analysis failed. poolId={} url={} message={}",
-						pool.getId(), candidateUrl, exception.getMessage());
+				log.info("Notice source verified. poolId={} sourceUrl={} detailCandidates={}",
+						pool.getId(), sourceUrl, found.size());
+				return new SourceInspection(true, false);
 			}
+			source.markInactive();
+			trace.add(contextLabel + " 관련 없음 처리: " + sourceUrl);
+			log.info("Notice source marked inactive. poolId={} sourceUrl={}", pool.getId(), sourceUrl);
+			return new SourceInspection(false, false);
+		} catch (RuntimeException exception) {
+			source.markFailure(exception.getMessage(), sourceFailureThreshold);
+			trace.add(contextLabel + " 접근 실패(" + source.getFailureCount() + "/" + sourceFailureThreshold + "): "
+					+ sourceUrl + " / " + exception.getMessage());
+			log.warn("Notice source access failed. poolId={} sourceUrl={} failureCount={} status={} message={}",
+					pool.getId(), sourceUrl, source.getFailureCount(), source.getStatus(), exception.getMessage());
+			return new SourceInspection(false, true);
 		}
-		trace.add(contextLabel + " 직접 상세 후보 " + (detailCandidates.size() - before) + "개 발견");
 	}
 
 	private List<String> discoverFacilityScopedNoticeListUrls(String homepageUrl, String poolName, List<String> trace) {
@@ -443,7 +684,7 @@ public class NoticeCrawlerService {
 			Set<String> urls = new LinkedHashSet<>();
 			Set<String> seenFacilityUrls = new LinkedHashSet<>();
 			for (Element facilityLink : facilityLinks) {
-				String facilityUrl = facilityLink.absUrl("href");
+				String facilityUrl = NoticeSourceUrlNormalizer.normalize(facilityLink.absUrl("href"));
 				if (hasText(facilityUrl) && !seenFacilityUrls.add(facilityUrl)) {
 					log.debug("Duplicate facility menu link skipped. poolName={} url={}", poolName, facilityUrl);
 					continue;
@@ -484,7 +725,7 @@ public class NoticeCrawlerService {
 			Document document = fetch(homepageUrl);
 			Set<String> urls = new LinkedHashSet<>();
 			for (Element link : findFacilityLinks(document, poolName)) {
-				String absoluteUrl = link.absUrl("href");
+				String absoluteUrl = NoticeSourceUrlNormalizer.normalize(link.absUrl("href"));
 				if (hasText(absoluteUrl) && sameHost(homepageUrl, absoluteUrl)) {
 					urls.add(absoluteUrl);
 				}
@@ -532,7 +773,7 @@ public class NoticeCrawlerService {
 				continue;
 			}
 			if (isNoticeListCandidate(link)) {
-				String absoluteUrl = link.absUrl("href");
+				String absoluteUrl = NoticeSourceUrlNormalizer.normalize(link.absUrl("href"));
 				if (hasText(absoluteUrl) && sameHost(rootUrl, absoluteUrl)) {
 					urls.add(absoluteUrl);
 				}
@@ -565,12 +806,15 @@ public class NoticeCrawlerService {
 		}
 	}
 
-	private List<NoticeDetailCandidate> discoverDetailNoticeUrls(String homepageUrl, String noticeListUrl) {
-		Document document = fetch(noticeListUrl);
+	private List<NoticeDetailCandidate> discoverDetailNoticeUrls(
+			String homepageUrl,
+			String noticeListUrl,
+			Document document
+	) {
 		Set<NoticeDetailCandidate> candidates = new LinkedHashSet<>();
 		for (Element link : document.select("a[href]")) {
 			String title = firstText(link.text(), link.attr("title"));
-			String absoluteUrl = link.absUrl("href");
+			String absoluteUrl = NoticeSourceUrlNormalizer.normalize(link.absUrl("href"));
 			if (!hasText(title) || !hasText(absoluteUrl) || !sameHost(homepageUrl, absoluteUrl)) {
 				continue;
 			}
@@ -583,18 +827,32 @@ public class NoticeCrawlerService {
 		}
 		if (candidates.isEmpty() && isInlineNoticePage(document)) {
 			String title = firstText(document.title(), "접수 안내");
-			candidates.add(new NoticeDetailCandidate(noticeListUrl, title, "inline page"));
+			candidates.add(new NoticeDetailCandidate(
+					NoticeSourceUrlNormalizer.normalize(noticeListUrl),
+					title,
+					"inline page"
+			));
 			log.info("Notice list page itself will be analyzed as detail. url={} title={}", noticeListUrl, title);
 		}
 		return candidates.stream().toList();
 	}
 
-	private Optional<NoticeDetailCandidate> discoverInlineDetailCandidate(String url) {
-		Document document = fetch(url);
-		if (!isInlineNoticePage(document)) {
-			return Optional.empty();
+	private boolean isLikelyNoticeSource(Document document, String sourceUrl) {
+		if (isInlineNoticePage(document)) {
+			return true;
 		}
-		return Optional.of(new NoticeDetailCandidate(url, firstText(document.title(), "접수 안내"), "inline page"));
+		String headingText = document.select("h1, h2, h3, h4, caption, .title, .subject, .board-title")
+				.text();
+		String signal = normalizeForSearch(document.title() + " " + headingText + " " + sourceUrl);
+		if (containsAny(signal, RENTAL_PAGE_KEYWORDS)) {
+			return false;
+		}
+		boolean strongKeyword = containsAny(signal, VERIFIED_SOURCE_KEYWORDS);
+		boolean boardStructure = !document.select(
+				"table tbody tr, [class*=board] a[href], [id*=board] a[href], "
+						+ "[class*=notice] a[href], [id*=notice] a[href]"
+		).isEmpty();
+		return strongKeyword && boardStructure;
 	}
 
 	private boolean isDetailNoticeCandidate(String anchorText, String href) {
@@ -629,7 +887,7 @@ public class NoticeCrawlerService {
 	private PoolNotice scanNoticeDetail(Pool pool, NoticeDetailCandidate candidate) {
 		try {
 			ScannedNoticeDetail detail = analyzeNoticeDetail(pool, candidate);
-			PoolNotice saved = noticeRepository.save(new PoolNotice(
+			PoolNotice notice = new PoolNotice(
 					pool,
 					detail.title(),
 					candidate.url(),
@@ -640,12 +898,15 @@ public class NoticeCrawlerService {
 					detail.registrationEndsAt(),
 					detail.reason(),
 					detail.registrationPeriodsJson()
-			));
+			);
+			notice.markAnalyzed(CURRENT_PARSER_VERSION);
+			PoolNotice saved = noticeRepository.save(notice);
+			synchronizeRegistrationPeriods(saved, detail.registrationPeriods());
 			log.info("Notice detail saved. poolId={} noticeId={} status={} confidence={} url={}",
 					pool.getId(), saved.getId(), saved.getExtractionStatus(), saved.getConfidence(), candidate.url());
 			return saved;
 		} catch (RuntimeException exception) {
-			PoolNotice saved = noticeRepository.save(new PoolNotice(
+			PoolNotice notice = new PoolNotice(
 					pool,
 					firstText(candidate.title(), pool.getName() + " 공지 확인 필요"),
 					candidate.url(),
@@ -655,7 +916,9 @@ public class NoticeCrawlerService {
 					null,
 					null,
 					truncate(exception.getMessage(), 500)
-			));
+			);
+			notice.markAnalyzed(CURRENT_PARSER_VERSION);
+			PoolNotice saved = noticeRepository.save(notice);
 			log.warn("Notice detail scan failed. poolId={} noticeId={} url={} message={}",
 					pool.getId(), saved.getId(), candidate.url(), exception.getMessage());
 			return saved;
@@ -675,6 +938,8 @@ public class NoticeCrawlerService {
 					detail.reason(),
 					detail.registrationPeriodsJson()
 			);
+			existing.markAnalyzed(CURRENT_PARSER_VERSION);
+			synchronizeRegistrationPeriods(existing, detail.registrationPeriods());
 			log.info("Notice detail refreshed. poolId={} noticeId={} status={} confidence={} url={}",
 					pool.getId(), existing.getId(), existing.getExtractionStatus(), existing.getConfidence(), candidate.url());
 			return existing;
@@ -689,6 +954,7 @@ public class NoticeCrawlerService {
 					truncate(exception.getMessage(), 500),
 					null
 			);
+			existing.markAnalyzed(CURRENT_PARSER_VERSION);
 			log.warn("Notice detail refresh failed. poolId={} noticeId={} url={} message={}",
 					pool.getId(), existing.getId(), candidate.url(), exception.getMessage());
 			return existing;
@@ -722,7 +988,8 @@ public class NoticeCrawlerService {
 				result.registrationStartsAt(),
 				result.registrationEndsAt(),
 				truncate(result.reason(), 500),
-				serializeRegistrationPeriods(result.registrationPeriods())
+				serializeRegistrationPeriods(result.registrationPeriods()),
+				result.registrationPeriods()
 		);
 	}
 
@@ -1286,14 +1553,24 @@ public class NoticeCrawlerService {
 	}
 
 	private boolean shouldRefreshExistingNotice(PoolNotice notice) {
-		if (!hasText(notice.getRegistrationPeriodsJson())) {
-			return true;
-		}
-		return parseRegistrationPeriods(notice).size() < 2;
+		return notice.getParserVersion() < CURRENT_PARSER_VERSION
+				|| notice.getExtractionStatus() == NoticeExtractionStatus.FAILED;
 	}
 
 	private PoolNoticeResponse toResponse(PoolNotice notice) {
-		return PoolNoticeResponse.from(notice, parseRegistrationPeriods(notice));
+		List<NoticeRegistrationPeriod> periods = registrationPeriodService == null
+				? parseRegistrationPeriods(notice)
+				: registrationPeriodService.findForResponse(notice);
+		return PoolNoticeResponse.from(notice, periods);
+	}
+
+	private void synchronizeRegistrationPeriods(
+			PoolNotice notice,
+			List<NoticeRegistrationPeriod> registrationPeriods
+	) {
+		if (registrationPeriodService != null) {
+			registrationPeriodService.synchronize(notice, registrationPeriods);
+		}
 	}
 
 	private String serializeRegistrationPeriods(List<NoticeRegistrationPeriod> registrationPeriods) {
@@ -1410,6 +1687,28 @@ public class NoticeCrawlerService {
 		}
 	}
 
+	private boolean isNoticeDiscoveryDue(Pool pool) {
+		Instant lastDiscoveryAt = pool.getLastNoticeDiscoveryAt();
+		return lastDiscoveryAt == null || lastDiscoveryAt.isBefore(Instant.now().minus(sourceDiscoveryInterval));
+	}
+
+	private boolean isFailedSourceRetryDue(PoolNoticeSource source) {
+		Instant lastScannedAt = source.getLastScannedAt();
+		return lastScannedAt == null || lastScannedAt.isBefore(Instant.now().minus(failedSourceRetryInterval));
+	}
+
+	private List<NoticeDetailCandidate> deduplicateDetailCandidates(List<NoticeDetailCandidate> candidates) {
+		Set<String> seenUrls = new LinkedHashSet<>();
+		List<NoticeDetailCandidate> unique = new ArrayList<>();
+		for (NoticeDetailCandidate candidate : candidates) {
+			String normalizedUrl = NoticeSourceUrlNormalizer.normalize(candidate.url());
+			if (hasText(normalizedUrl) && seenUrls.add(normalizedUrl)) {
+				unique.add(new NoticeDetailCandidate(normalizedUrl, candidate.title(), candidate.source()));
+			}
+		}
+		return unique;
+	}
+
 	private boolean containsAny(String value, List<String> keywords) {
 		if (!hasText(value)) {
 			return false;
@@ -1480,6 +1779,20 @@ public class NoticeCrawlerService {
 	private record NoticeDetailCandidate(String url, String title, String source) {
 	}
 
+	private record SourceInspection(boolean verified, boolean accessFailed) {
+	}
+
+	private record StoredSourceScanResult(
+			int attemptedSources,
+			int successfulFetches,
+			int failedFetches,
+			boolean pathAvailable
+	) {
+	}
+
+	private record DiscoveryResult(boolean pathAvailable) {
+	}
+
 	private record SharedNoticeScanResult(String scanToken, NoticeScanResponse response) {
 	}
 
@@ -1497,7 +1810,8 @@ public class NoticeCrawlerService {
 			Instant registrationStartsAt,
 			Instant registrationEndsAt,
 			String reason,
-			String registrationPeriodsJson
+			String registrationPeriodsJson,
+			List<NoticeRegistrationPeriod> registrationPeriods
 	) {
 	}
 }

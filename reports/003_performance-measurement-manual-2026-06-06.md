@@ -4,7 +4,7 @@
 
 이 문서는 "지금 시스템이 얼마나 느린지", "개선 전후가 얼마나 달라졌는지"를 같은 방식으로 반복 측정하기 위한 실전용 매뉴얼입니다.
 
-관련 개념 설명이 더 필요하면 [observability-manual-2026-06-06.md](./observability-manual-2026-06-06.md)를 같이 보면 됩니다.
+관련 개념 설명이 더 필요하면 [002_observability-manual-2026-06-06.md](./002_observability-manual-2026-06-06.md)를 같이 보면 됩니다.
 
 ![관측 흐름](./assets/observability-flow.svg)
 

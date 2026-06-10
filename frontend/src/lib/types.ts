@@ -67,6 +67,7 @@ export type GeocodedLocation = {
 export type NoticeExtractionStatus = "EXTRACTED" | "LINK_ONLY" | "FAILED";
 
 export type NoticeRegistrationPeriod = {
+  id: number | null;
   label: string | null;
   startsAt: string;
   endsAt: string;
@@ -99,10 +100,12 @@ export type NoticeScanResponse = {
   trace: string[];
   sharedResult?: boolean;
   waitedForActiveScan?: boolean;
+  latestCheckFailed?: boolean;
 };
 
 export type RegistrationEvent = {
   id: number;
+  noticeRegistrationPeriodId: number | null;
   poolId: number;
   poolName: string;
   title: string;

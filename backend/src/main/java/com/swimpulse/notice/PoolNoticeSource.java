@@ -38,6 +38,14 @@ public class PoolNoticeSource {
 
 	private Instant lastScannedAt;
 
+	private Instant lastSuccessAt;
+
+	@Column(nullable = false)
+	private int failureCount;
+
+	@Column(length = 1000)
+	private String lastError;
+
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
 
@@ -46,14 +54,77 @@ public class PoolNoticeSource {
 
 	public PoolNoticeSource(Pool pool, String sourceUrl, NoticeSourceType sourceType) {
 		this.pool = pool;
-		this.sourceUrl = sourceUrl;
+		this.sourceUrl = NoticeSourceUrlNormalizer.normalize(sourceUrl);
 		this.sourceType = sourceType;
-		this.status = NoticeSourceStatus.ACTIVE;
+		this.status = NoticeSourceStatus.CANDIDATE;
+		this.failureCount = 0;
 		this.createdAt = Instant.now();
 	}
 
-	public void markScanned(NoticeSourceStatus status) {
-		this.status = status;
+	public void markVerified() {
+		this.status = NoticeSourceStatus.VERIFIED;
+		this.failureCount = 0;
+		this.lastError = null;
 		this.lastScannedAt = Instant.now();
+		this.lastSuccessAt = this.lastScannedAt;
+	}
+
+	public void markInactive() {
+		this.status = NoticeSourceStatus.INACTIVE;
+		this.failureCount = 0;
+		this.lastError = null;
+		this.lastScannedAt = Instant.now();
+	}
+
+	public void markFailure(String message, int failureThreshold) {
+		this.failureCount++;
+		this.lastError = truncate(message, 1000);
+		this.lastScannedAt = Instant.now();
+		if (this.failureCount >= failureThreshold) {
+			this.status = NoticeSourceStatus.FAILED;
+		}
+	}
+
+	public Long getId() {
+		return id;
+	}
+
+	public Pool getPool() {
+		return pool;
+	}
+
+	public String getSourceUrl() {
+		return sourceUrl;
+	}
+
+	public NoticeSourceType getSourceType() {
+		return sourceType;
+	}
+
+	public NoticeSourceStatus getStatus() {
+		return status;
+	}
+
+	public Instant getLastScannedAt() {
+		return lastScannedAt;
+	}
+
+	public Instant getLastSuccessAt() {
+		return lastSuccessAt;
+	}
+
+	public int getFailureCount() {
+		return failureCount;
+	}
+
+	public String getLastError() {
+		return lastError;
+	}
+
+	private static String truncate(String value, int maxLength) {
+		if (value == null || value.length() <= maxLength) {
+			return value;
+		}
+		return value.substring(0, maxLength);
 	}
 }

@@ -1,6 +1,8 @@
 package com.swimpulse.event;
 
 import com.swimpulse.common.NotFoundException;
+import com.swimpulse.common.BadRequestException;
+import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
 import com.swimpulse.pool.PoolRepository;
 import java.time.Instant;
 import java.util.Optional;
@@ -35,6 +37,24 @@ public class RegistrationEventResolver {
 				.orElseGet(() -> insertOrReuse(poolId, title, registrationStartsAt, registrationEndsAt));
 	}
 
+	@Transactional
+	public RegistrationEvent getOrCreateForNoticePeriod(
+			NoticeRegistrationPeriodEntity period,
+			String title
+	) {
+		Long periodId = period.getId();
+		Long poolId = period.getNotice().getPool().getId();
+		return eventRepository.findByNoticeRegistrationPeriod_Id(periodId)
+				.orElseGet(() -> findExisting(
+						poolId,
+						title,
+						period.getStartsAt(),
+						period.getEndsAt()
+				)
+						.map(existing -> assignPeriod(existing, period))
+						.orElseGet(() -> insertOrReuse(period, poolId, title)));
+	}
+
 	private RegistrationEvent insertOrReuse(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt) {
 		try {
 			return insertService.insert(poolId, title, registrationStartsAt, registrationEndsAt);
@@ -44,6 +64,43 @@ public class RegistrationEventResolver {
 			return findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
 					.orElseThrow(() -> exception);
 		}
+	}
+
+	private RegistrationEvent insertOrReuse(
+			NoticeRegistrationPeriodEntity period,
+			Long poolId,
+			String title
+	) {
+		try {
+			return insertService.insertForNoticePeriod(
+					period.getId(),
+					poolId,
+					title,
+					period.getStartsAt(),
+					period.getEndsAt()
+			);
+		} catch (DataIntegrityViolationException exception) {
+			log.info("Concurrent notice period event insert detected. Reusing existing row. periodId={} poolId={}",
+					period.getId(), poolId);
+			return eventRepository.findByNoticeRegistrationPeriod_Id(period.getId())
+					.or(() -> findExisting(poolId, title, period.getStartsAt(), period.getEndsAt()))
+					.map(existing -> assignPeriod(existing, period))
+					.orElseThrow(() -> exception);
+		}
+	}
+
+	private RegistrationEvent assignPeriod(
+			RegistrationEvent event,
+			NoticeRegistrationPeriodEntity period
+	) {
+		if (event.getNoticeRegistrationPeriod() == null) {
+			event.assignNoticeRegistrationPeriod(period);
+			return event;
+		}
+		if (event.getNoticeRegistrationPeriod().getId().equals(period.getId())) {
+			return event;
+		}
+		throw new BadRequestException("Registration event is already linked to another notice period.");
 	}
 
 	private Optional<RegistrationEvent> findExisting(

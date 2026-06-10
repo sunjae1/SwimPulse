@@ -1,6 +1,7 @@
 package com.swimpulse.event;
 
 import com.swimpulse.pool.Pool;
+import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -33,6 +34,30 @@ public class RegistrationEventInsertService {
 		));
 		log.info("Registration event created. eventId={} poolId={} status={} startsAt={} endsAt={}",
 				saved.getId(), poolId, saved.getStatus(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
+		return saved;
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public RegistrationEvent insertForNoticePeriod(
+			Long noticeRegistrationPeriodId,
+			Long poolId,
+			String title,
+			Instant registrationStartsAt,
+			Instant registrationEndsAt
+	) {
+		Pool poolReference = entityManager.getReference(Pool.class, poolId);
+		NoticeRegistrationPeriodEntity periodReference =
+				entityManager.getReference(NoticeRegistrationPeriodEntity.class, noticeRegistrationPeriodId);
+		RegistrationEvent saved = eventRepository.saveAndFlush(new RegistrationEvent(
+				poolReference,
+				periodReference,
+				title,
+				registrationStartsAt,
+				registrationEndsAt,
+				calculateStatus(registrationStartsAt, registrationEndsAt, Instant.now())
+		));
+		log.info("Registration event created from notice period. eventId={} periodId={} poolId={} status={}",
+				saved.getId(), noticeRegistrationPeriodId, poolId, saved.getStatus());
 		return saved;
 	}
 

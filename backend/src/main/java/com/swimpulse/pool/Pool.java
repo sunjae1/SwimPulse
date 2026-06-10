@@ -91,6 +91,8 @@ public class Pool {
 	@Column(length = 500)
 	private String homepageCandidateLink;
 
+	private Instant lastNoticeDiscoveryAt;
+
 	@Column(length = 500)
 	private String imageUrl;
 
@@ -306,6 +308,14 @@ public class Pool {
 
 	public String getHomepageCandidateLink() {
 		return homepageCandidateLink;
+	}
+
+	public Instant getLastNoticeDiscoveryAt() {
+		return lastNoticeDiscoveryAt;
+	}
+
+	public void markNoticeDiscoveryAttempt() {
+		this.lastNoticeDiscoveryAt = Instant.now();
 	}
 
 	public String getImageUrl() {

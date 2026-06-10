@@ -11,6 +11,12 @@ import com.swimpulse.common.BadRequestException;
 import com.swimpulse.event.EventStatus;
 import com.swimpulse.event.RegistrationEvent;
 import com.swimpulse.event.RegistrationEventResolver;
+import com.swimpulse.notice.NoticeRegistrationPeriodRepository;
+import com.swimpulse.notice.NoticeRegistrationPeriod;
+import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
+import com.swimpulse.notice.NoticeRegistrationPeriodStatus;
+import com.swimpulse.notice.NoticeExtractionStatus;
+import com.swimpulse.notice.PoolNotice;
 import com.swimpulse.pool.Pool;
 import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
@@ -35,6 +41,9 @@ class SubscriptionServiceTests {
 	@Mock
 	private RegistrationEventResolver eventResolver;
 
+	@Mock
+	private NoticeRegistrationPeriodRepository periodRepository;
+
 	private SubscriptionService subscriptionService;
 
 	@BeforeEach
@@ -42,7 +51,8 @@ class SubscriptionServiceTests {
 		subscriptionService = new SubscriptionService(
 				subscriptionRepository,
 				userRepository,
-				eventResolver
+				eventResolver,
+				periodRepository
 		);
 	}
 
@@ -97,6 +107,65 @@ class SubscriptionServiceTests {
 		assertEquals(newEndsAt, response.event().registrationEndsAt());
 		assertSame(subscription.getEvent().getPool(), pool);
 		assertEquals(31L, subscription.getEvent().getId());
+	}
+
+	@Test
+	void subscribeLinksEventToSelectedNoticePeriod() {
+		AppUser user = new AppUser("swimmer@example.com", "수영러", null);
+		setField(user, "id", 7L);
+		Pool pool = new Pool("강남 수영장", "강남구", "테스트");
+		setField(pool, "id", 101L);
+		PoolNotice notice = new PoolNotice(
+				pool,
+				"7월 신규 회원 모집",
+				"https://example.com/notices/7",
+				"본문",
+				NoticeExtractionStatus.EXTRACTED,
+				0.9,
+				null,
+				null,
+				"테스트"
+		);
+		setField(notice, "id", 51L);
+		Instant startsAt = Instant.now().plus(2, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		Instant endsAt = startsAt.plus(2, ChronoUnit.DAYS);
+		NoticeRegistrationPeriodEntity period = new NoticeRegistrationPeriodEntity(
+				notice,
+				new NoticeRegistrationPeriod("신규 회원", startsAt, endsAt, "7. 1. ~ 7. 3.", "block")
+		);
+		setField(period, "id", 61L);
+		RegistrationEvent event = new RegistrationEvent(
+				pool,
+				period,
+				"신규 회원 - 7월 신규 회원 모집",
+				startsAt,
+				endsAt,
+				EventStatus.UPCOMING
+		);
+		setField(event, "id", 71L);
+
+		when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+		when(periodRepository.findByIdAndStatus(61L, NoticeRegistrationPeriodStatus.ACTIVE))
+				.thenReturn(Optional.of(period));
+		when(eventResolver.getOrCreateForNoticePeriod(period, "신규 회원 - 7월 신규 회원 모집"))
+				.thenReturn(event);
+		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 71L)).thenReturn(Optional.empty());
+		when(subscriptionRepository.save(org.mockito.ArgumentMatchers.any(Subscription.class)))
+				.thenAnswer(invocation -> invocation.getArgument(0));
+
+		SubscriptionResponse response = subscriptionService.subscribe(
+				7L,
+				new CreateSubscriptionRequest(
+						101L,
+						"신규 회원 - 7월 신규 회원 모집",
+						startsAt,
+						endsAt,
+						61L
+				)
+		);
+
+		assertEquals(61L, response.event().noticeRegistrationPeriodId());
+		verify(eventResolver).getOrCreateForNoticePeriod(period, "신규 회원 - 7월 신규 회원 모집");
 	}
 
 	@Test

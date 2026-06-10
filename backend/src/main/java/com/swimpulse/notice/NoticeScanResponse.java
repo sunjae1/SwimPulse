@@ -11,6 +11,7 @@ public record NoticeScanResponse(
 		String message,
 		List<String> trace,
 		boolean sharedResult,
-		boolean waitedForActiveScan
+		boolean waitedForActiveScan,
+		boolean latestCheckFailed
 ) {
 }

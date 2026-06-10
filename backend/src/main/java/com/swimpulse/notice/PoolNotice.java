@@ -12,8 +12,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "pool_notices")
@@ -51,6 +54,19 @@ public class PoolNotice {
 	@Lob
 	@Column(columnDefinition = "LONGTEXT")
 	private String registrationPeriodsJson;
+
+	@Column(nullable = false)
+	private int parserVersion;
+
+	private Instant lastAnalyzedAt;
+
+	@OneToMany(mappedBy = "notice", fetch = FetchType.LAZY)
+	private List<NoticeRegistrationPeriodEntity> registrationPeriods = new ArrayList<>();
+
+	private Instant periodsMigratedAt;
+
+	@Column(length = 1000)
+	private String periodsMigrationError;
 
 	@Column(length = 500)
 	private String reason;
@@ -97,6 +113,7 @@ public class PoolNotice {
 		this.registrationEndsAt = registrationEndsAt;
 		this.reason = reason;
 		this.registrationPeriodsJson = registrationPeriodsJson;
+		this.parserVersion = 0;
 		this.createdAt = Instant.now();
 	}
 
@@ -118,6 +135,21 @@ public class PoolNotice {
 		this.registrationEndsAt = registrationEndsAt;
 		this.reason = reason;
 		this.registrationPeriodsJson = registrationPeriodsJson;
+	}
+
+	public void markAnalyzed(int parserVersion) {
+		this.parserVersion = parserVersion;
+		this.lastAnalyzedAt = Instant.now();
+	}
+
+	public void markPeriodsMigrated() {
+		this.periodsMigratedAt = Instant.now();
+		this.periodsMigrationError = null;
+	}
+
+	public void markPeriodsMigrationFailed(String message) {
+		this.periodsMigratedAt = Instant.now();
+		this.periodsMigrationError = truncate(message, 1000);
 	}
 
 	public Long getId() {
@@ -160,7 +192,34 @@ public class PoolNotice {
 		return registrationPeriodsJson;
 	}
 
+	public int getParserVersion() {
+		return parserVersion;
+	}
+
+	public Instant getLastAnalyzedAt() {
+		return lastAnalyzedAt;
+	}
+
+	public List<NoticeRegistrationPeriodEntity> getRegistrationPeriods() {
+		return registrationPeriods;
+	}
+
+	public Instant getPeriodsMigratedAt() {
+		return periodsMigratedAt;
+	}
+
+	public String getPeriodsMigrationError() {
+		return periodsMigrationError;
+	}
+
 	public String getReason() {
 		return reason;
+	}
+
+	private static String truncate(String value, int maxLength) {
+		if (value == null || value.length() <= maxLength) {
+			return value;
+		}
+		return value.substring(0, maxLength);
 	}
 }

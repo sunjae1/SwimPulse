@@ -4,6 +4,9 @@ import com.swimpulse.common.NotFoundException;
 import com.swimpulse.common.BadRequestException;
 import com.swimpulse.event.RegistrationEvent;
 import com.swimpulse.event.RegistrationEventResolver;
+import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
+import com.swimpulse.notice.NoticeRegistrationPeriodRepository;
+import com.swimpulse.notice.NoticeRegistrationPeriodStatus;
 import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
 import java.time.Instant;
@@ -20,15 +23,18 @@ public class SubscriptionService {
 	private final SubscriptionRepository subscriptionRepository;
 	private final AppUserRepository userRepository;
 	private final RegistrationEventResolver eventResolver;
+	private final NoticeRegistrationPeriodRepository periodRepository;
 
 	public SubscriptionService(
 			SubscriptionRepository subscriptionRepository,
 			AppUserRepository userRepository,
-			RegistrationEventResolver eventResolver
+			RegistrationEventResolver eventResolver,
+			NoticeRegistrationPeriodRepository periodRepository
 	) {
 		this.subscriptionRepository = subscriptionRepository;
 		this.userRepository = userRepository;
 		this.eventResolver = eventResolver;
+		this.periodRepository = periodRepository;
 	}
 
 	@Transactional(readOnly = true)
@@ -42,21 +48,10 @@ public class SubscriptionService {
 
 	@Transactional
 	public SubscriptionResponse subscribe(Long userId, CreateSubscriptionRequest request) {
-		if (!request.registrationStartsAt().isBefore(request.registrationEndsAt())) {
-			throw new BadRequestException("registrationStartsAt must be before registrationEndsAt");
-		}
-		if (!request.registrationEndsAt().isAfter(Instant.now())) {
-			throw new BadRequestException("Cannot subscribe to an already closed registration period.");
-		}
 		AppUser user = userRepository.findById(userId)
 				.orElseThrow(() -> new NotFoundException("User not found: " + userId));
 		String title = normalizeTitle(request.title());
-		RegistrationEvent event = eventResolver.getOrCreate(
-				request.poolId(),
-				title,
-				request.registrationStartsAt(),
-				request.registrationEndsAt()
-		);
+		RegistrationEvent event = resolveEvent(request, title);
 		return subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
 				.map(subscription -> {
 					log.info("Subscription already exists. userId={} eventId={} poolId={}", userId, event.getId(), request.poolId());
@@ -68,6 +63,44 @@ public class SubscriptionService {
 							userId, request.poolId(), event.getId(), saved.getId());
 					return SubscriptionResponse.from(saved);
 				});
+	}
+
+	private RegistrationEvent resolveEvent(CreateSubscriptionRequest request, String title) {
+		if (request.noticeRegistrationPeriodId() != null) {
+			NoticeRegistrationPeriodEntity period = periodRepository.findByIdAndStatus(
+							request.noticeRegistrationPeriodId(),
+							NoticeRegistrationPeriodStatus.ACTIVE
+					)
+					.orElseThrow(() -> new NotFoundException(
+							"Active notice registration period not found: " + request.noticeRegistrationPeriodId()
+					));
+			if (!period.getNotice().getPool().getId().equals(request.poolId())) {
+				throw new BadRequestException("Notice registration period does not belong to the requested pool.");
+			}
+			if (!period.getStartsAt().equals(request.registrationStartsAt())
+					|| !period.getEndsAt().equals(request.registrationEndsAt())) {
+				throw new BadRequestException("Registration period changed. Refresh the notice result and try again.");
+			}
+			validateOpenPeriod(period.getStartsAt(), period.getEndsAt());
+			return eventResolver.getOrCreateForNoticePeriod(period, title);
+		}
+
+		validateOpenPeriod(request.registrationStartsAt(), request.registrationEndsAt());
+		return eventResolver.getOrCreate(
+				request.poolId(),
+				title,
+				request.registrationStartsAt(),
+				request.registrationEndsAt()
+		);
+	}
+
+	private void validateOpenPeriod(Instant startsAt, Instant endsAt) {
+		if (!startsAt.isBefore(endsAt)) {
+			throw new BadRequestException("registrationStartsAt must be before registrationEndsAt");
+		}
+		if (!endsAt.isAfter(Instant.now())) {
+			throw new BadRequestException("Cannot subscribe to an already closed registration period.");
+		}
 	}
 
 	@Transactional

@@ -7,6 +7,8 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface RegistrationEventRepository extends JpaRepository<RegistrationEvent, Long> {
+	long countByNoticeRegistrationPeriodIsNotNull();
+
 	List<RegistrationEvent> findAllByOrderByRegistrationStartsAtAsc();
 
 	List<RegistrationEvent> findByPool_IdOrderByRegistrationStartsAtAsc(Long poolId);
@@ -17,6 +19,8 @@ public interface RegistrationEventRepository extends JpaRepository<RegistrationE
 			Instant registrationStartsAt,
 			Instant registrationEndsAt
 	);
+
+	Optional<RegistrationEvent> findByNoticeRegistrationPeriod_Id(Long noticeRegistrationPeriodId);
 
 	List<RegistrationEvent> findByStatusOrderByRegistrationStartsAtAsc(EventStatus status);
 

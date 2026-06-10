@@ -8,6 +8,7 @@ public record CreateSubscriptionRequest(
 		@NotNull Long poolId,
 		@NotBlank String title,
 		@NotNull Instant registrationStartsAt,
-		@NotNull Instant registrationEndsAt
+		@NotNull Instant registrationEndsAt,
+		Long noticeRegistrationPeriodId
 ) {
 }

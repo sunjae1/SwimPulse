@@ -35,8 +35,12 @@ public class SubscriptionController {
 
 	@PostMapping
 	public SubscriptionResponse subscribe(@AuthenticationPrincipal AuthenticatedUser user, @Valid @RequestBody CreateSubscriptionRequest request) {
-		log.info("Subscription requested. userId={} poolId={} startsAt={} endsAt={}",
-				user.id(), request.poolId(), request.registrationStartsAt(), request.registrationEndsAt());
+		log.info("Subscription requested. userId={} poolId={} noticePeriodId={} startsAt={} endsAt={}",
+				user.id(),
+				request.poolId(),
+				request.noticeRegistrationPeriodId(),
+				request.registrationStartsAt(),
+				request.registrationEndsAt());
 		return subscriptionService.subscribe(user.id(), request);
 	}
 

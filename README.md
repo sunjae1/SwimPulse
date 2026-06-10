@@ -156,6 +156,9 @@ SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=https://unnamable-preset-contact.ngrok-free.
 | POST | `/api/pools/from-location-candidate` | 검색 후보를 수영장으로 추가 |
 | POST | `/api/pools/homepages/enrich?limit=50` | 네이버 지역 검색으로 홈페이지 URL 보강 |
 | POST | `/api/pools/{poolId}/notices/scan` | 홈페이지 공지 후보 수집과 모집 기간 추출 |
+| POST | `/api/pools/notice-sources/reverify?limit=20` | 공지 경로 후보를 최대 20개 시설씩 배치 재검증 |
+| POST | `/api/pools/notices/periods/migrate?limit=50` | 기존 `registration_periods_json`을 기간 행으로 이관 |
+| GET | `/api/pools/notices/periods/migration-status` | 기간 이관 및 이벤트 FK 연결 현황 |
 | GET | `/api/events` | 접수 이벤트 목록 |
 | POST | `/api/events` | 수동 접수 이벤트 등록 |
 | GET | `/api/subscriptions` | 현재 사용자 구독 목록 |
@@ -172,13 +175,65 @@ SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=https://unnamable-preset-contact.ngrok-free.
 /oauth2/authorization/google
 ```
 
+공지 경로 배치 재검증은 로그인한 브라우저 개발자 도구에서 다음처럼 호출할 수 있습니다.
+
+```javascript
+await fetch("/api/pools/notice-sources/reverify?limit=20", {
+  method: "POST",
+  credentials: "include",
+}).then((response) => response.json());
+```
+
+`pool_notice_sources.status` 의미:
+
+- `CANDIDATE`: 발견됐지만 공지 경로인지 아직 검증되지 않음
+- `VERIFIED`: 공지 게시판 구조 또는 등록 기간을 확인해 일반 스캔에서 우선 사용
+- `INACTIVE`: 접근은 성공했지만 공지·등록 정보와 관련 없는 페이지
+- `FAILED`: 연속 접근 실패가 기본 3회에 도달한 페이지
+
+전체 경로 탐색은 pool별로 기본 24시간에 한 번만 수행하고, `FAILED` 경로 자체의 재검증은 기본 7일 후 허용됩니다.
+
+상세 공지 분석 결과에는 `parser_version`과 `last_analyzed_at`이 저장됩니다. 현재 파서 버전으로 분석된 정상 결과는 모집 기간이 한 개뿐이어도 DB 결과를 재사용하며, 파서 버전을 올린 경우에만 기존 상세 페이지를 다시 분석합니다.
+
+모집 기간 저장 관계:
+
+```text
+pool_notices 1 : N notice_registration_periods
+notice_registration_periods 1 : 0..1 registration_events
+```
+
+신규 크롤링은 기간 배열의 각 요소를 `notice_registration_periods` 한 행으로 저장합니다. 같은 기간은 재사용하고, 새 기간은 추가하며, 최신 분석에서 사라진 기간은 삭제하지 않고 `INACTIVE`로 변경합니다. `registration_periods_json`은 기존 데이터 호환을 위해 유지하지만 조회 API는 활성 기간 행을 우선 사용합니다.
+
+기존 JSON 이관:
+
+```javascript
+await fetch("/api/pools/notices/periods/migrate?limit=50", {
+  method: "POST",
+  credentials: "include",
+}).then((response) => response.json());
+```
+
+이관 상태 확인:
+
+```javascript
+await fetch("/api/pools/notices/periods/migration-status", {
+  credentials: "include",
+}).then((response) => response.json());
+```
+
 구독 생성 요청:
 
 ```json
 {
-  "poolId": 1
+  "poolId": 16,
+  "title": "신규 회원 - 7월 회원 모집",
+  "registrationStartsAt": "2026-06-30T15:00:00Z",
+  "registrationEndsAt": "2026-07-03T14:59:59Z",
+  "noticeRegistrationPeriodId": 43
 }
 ```
+
+`noticeRegistrationPeriodId`가 있으면 backend는 활성 기간 행과 pool/시각을 다시 검증한 뒤 `registration_events.notice_registration_period_id`에 연결합니다. 수동 이벤트는 이 FK 없이 생성할 수 있습니다.
 
 디바이스 토큰 등록 요청:
 

@@ -6,9 +6,9 @@
 
 관련 문서:
 
-- [performance-measurement-manual-2026-06-06.md](./performance-measurement-manual-2026-06-06.md)
-- [monitoring-thresholds-2026-06-07.md](./monitoring-thresholds-2026-06-07.md)
-- [observability-manual-2026-06-06.md](./observability-manual-2026-06-06.md)
+- [003_performance-measurement-manual-2026-06-06.md](./003_performance-measurement-manual-2026-06-06.md)
+- [005_monitoring-thresholds-2026-06-07.md](./005_monitoring-thresholds-2026-06-07.md)
+- [002_observability-manual-2026-06-06.md](./002_observability-manual-2026-06-06.md)
 
 ## 1. 먼저 짚고 갈 것
 
@@ -155,7 +155,7 @@ docker compose --profile loadtest run --rm `
   -e VUS=5 `
   -e DURATION=1m `
   -e SLEEP_SECONDS=0.5 `
-  -e POOL_IDS="1,2,3,4,5,6,7,8,9,10" `
+  -e POOL_IDS="10,13,16,22,23,28,30,32,33,36" `
   -e ACCESS_TOKEN="여기에_쿠키값" `
   k6 run /scripts/notice-scan-multi-pool-load.js `
   --summary-export /results/notice-scan-multi-summary.json `
@@ -168,6 +168,26 @@ docker compose --profile loadtest run --rm `
   락 충돌, 중복 스캔 차단 동작 확인용
 - 여러 `POOL_ID` + 중간 `VUS`
   실제 공지 스캔 처리량, 외부 사이트 지연 영향 확인용
+
+다중 pool 스크립트의 성공 기준:
+
+- HTTP 상태가 `200`
+- 응답의 `notices`가 배열
+- 응답의 `message`가 비어 있지 않음
+- 응답의 `poolId`가 요청한 pool과 일치
+
+추가 결과 지표:
+
+- `notice_scan_responses_with_notices`
+  정상 응답이며 공지 결과가 한 개 이상인 요청 수
+- `notice_scan_responses_without_notices`
+  크롤링 요청은 정상 완료됐지만 상세 공지를 찾지 못한 요청 수
+- `notice_scan_shared_responses`
+  같은 pool의 선행 스캔 결과를 Redis를 통해 공유받은 요청 수
+- `notice_scan_invalid_responses`
+  200이 아니거나 응답 구조가 올바르지 않은 요청 수
+- `notice_scan_functional_failed`
+  위 기능 검증에 실패한 비율
 
 ## 6. 결과 파일이 무엇을 뜻하나
 
