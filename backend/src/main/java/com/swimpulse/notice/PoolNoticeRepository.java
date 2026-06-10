@@ -13,6 +13,8 @@ public interface PoolNoticeRepository extends JpaRepository<PoolNotice, Long> {
 
 	Optional<PoolNotice> findByUrl(String url);
 
+	List<PoolNotice> findByPool_IdOrderByIdAsc(Long poolId);
+
 	List<PoolNotice> findTop20ByPoolIdOrderByIdDesc(Long poolId);
 
 	@Query("""

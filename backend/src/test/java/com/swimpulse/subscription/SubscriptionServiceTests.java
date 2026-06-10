@@ -169,6 +169,45 @@ class SubscriptionServiceTests {
 	}
 
 	@Test
+	void subscribeCreatesCustomEventWhenPastNoticePeriodIsShiftedToCurrentMonth() {
+		AppUser user = new AppUser("swimmer@example.com", "수영러", null);
+		setField(user, "id", 7L);
+		Pool pool = new Pool("오정레포츠센터수영장", "오정구", "테스트");
+		setField(pool, "id", 44L);
+		Instant startsAt = Instant.now().plus(10, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		Instant endsAt = startsAt.plus(4, ChronoUnit.DAYS);
+		String title = "재등록 - 6월 회원모집 (이번 달 예상)";
+		RegistrationEvent event = new RegistrationEvent(
+				pool,
+				title,
+				startsAt,
+				endsAt,
+				EventStatus.UPCOMING
+		);
+		setField(event, "id", 72L);
+
+		when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+		when(eventResolver.getOrCreate(44L, title, startsAt, endsAt)).thenReturn(event);
+		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 72L)).thenReturn(Optional.empty());
+		when(subscriptionRepository.save(org.mockito.ArgumentMatchers.any(Subscription.class)))
+				.thenAnswer(invocation -> invocation.getArgument(0));
+
+		SubscriptionResponse response = subscriptionService.subscribe(
+				7L,
+				new CreateSubscriptionRequest(44L, title, startsAt, endsAt, null)
+		);
+
+		assertEquals(null, response.event().noticeRegistrationPeriodId());
+		assertEquals(startsAt, response.event().registrationStartsAt());
+		assertEquals(endsAt, response.event().registrationEndsAt());
+		verify(eventResolver).getOrCreate(44L, title, startsAt, endsAt);
+		verify(periodRepository, never()).findByIdAndStatus(
+				org.mockito.ArgumentMatchers.anyLong(),
+				org.mockito.ArgumentMatchers.any(NoticeRegistrationPeriodStatus.class)
+		);
+	}
+
+	@Test
 	void updatePeriodRejectsDuplicateSubscriptionForSameTargetEvent() {
 		AppUser user = new AppUser("swimmer@example.com", "수영러", null);
 		setField(user, "id", 7L);

@@ -1,6 +1,7 @@
 package com.swimpulse.notice;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,6 +11,24 @@ import java.lang.reflect.Method;
 import org.junit.jupiter.api.Test;
 
 class PoolNoticeParserVersionTests {
+	@Test
+	void noticeStorageTruncatesLongTitleAndNormalizesSessionUrl() {
+		PoolNotice notice = new PoolNotice(
+				new Pool("테스트수영장", "테스트구", "테스트"),
+				"긴 제목 ".repeat(100),
+				"https://example.com/notice;jsessionid=ABC123?id=1#top",
+				"본문",
+				NoticeExtractionStatus.EXTRACTED,
+				0.9,
+				null,
+				null,
+				"matched"
+		);
+
+		assertEquals(255, notice.getTitle().length());
+		assertEquals("https://example.com/notice?id=1", notice.getUrl());
+	}
+
 	@Test
 	void currentParserVersionReusesNoticeEvenWhenOnlyOnePeriodExists() throws Exception {
 		PoolNotice notice = extractedNotice("[{\"label\":\"신규 회원\"}]");
@@ -38,6 +57,24 @@ class PoolNoticeParserVersionTests {
 				null,
 				null,
 				"timeout"
+		);
+		notice.markAnalyzed(NoticeCrawlerService.CURRENT_PARSER_VERSION);
+
+		assertTrue(shouldRefresh(notice));
+	}
+
+	@Test
+	void truncatedCurrentTitleRemainsRetryableForPageTitleRepair() throws Exception {
+		PoolNotice notice = new PoolNotice(
+				new Pool("테스트수영장", "테스트구", "테스트"),
+				"제목".repeat(200),
+				"https://example.com/notice/1",
+				"본문",
+				NoticeExtractionStatus.EXTRACTED,
+				0.9,
+				null,
+				null,
+				"matched"
 		);
 		notice.markAnalyzed(NoticeCrawlerService.CURRENT_PARSER_VERSION);
 

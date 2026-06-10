@@ -24,9 +24,9 @@ public class RegistrationEventInsertService {
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public RegistrationEvent insert(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt) {
-		Pool poolReference = entityManager.getReference(Pool.class, poolId);
+		Pool pool = entityManager.find(Pool.class, poolId);
 		RegistrationEvent saved = eventRepository.saveAndFlush(new RegistrationEvent(
-				poolReference,
+				pool,
 				title,
 				registrationStartsAt,
 				registrationEndsAt,
@@ -45,11 +45,11 @@ public class RegistrationEventInsertService {
 			Instant registrationStartsAt,
 			Instant registrationEndsAt
 	) {
-		Pool poolReference = entityManager.getReference(Pool.class, poolId);
+		Pool pool = entityManager.find(Pool.class, poolId);
 		NoticeRegistrationPeriodEntity periodReference =
 				entityManager.getReference(NoticeRegistrationPeriodEntity.class, noticeRegistrationPeriodId);
 		RegistrationEvent saved = eventRepository.saveAndFlush(new RegistrationEvent(
-				poolReference,
+				pool,
 				periodReference,
 				title,
 				registrationStartsAt,

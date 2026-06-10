@@ -21,7 +21,9 @@ import java.time.ZoneId;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -49,8 +51,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class NoticeCrawlerService {
 	private static final Logger log = LoggerFactory.getLogger(NoticeCrawlerService.class);
 	private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
-	static final int CURRENT_PARSER_VERSION = 1;
+	static final int CURRENT_PARSER_VERSION = 2;
 	private static final Pattern PERIOD = Pattern.compile("(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?");
+	private static final Pattern MONTH_TO_DAY_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
+	private static final Pattern MONTH_TO_MONTH_END_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*말일");
+	private static final Pattern MONTH_SINGLE_DAY = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일(?!\\s*[~\\-–])");
 	private static final Pattern DAY_ONLY_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*\\.\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*\\.\\s*(?:\\([^)]*\\))?(?!\\s*\\d)");
 	private static final Pattern MONTHLY_DAY_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
 	private static final Pattern MONTHLY_TO_NEXT_MONTH_DAY_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*익월\\s*(\\d{1,2})\\s*일");
@@ -325,22 +330,29 @@ public class NoticeCrawlerService {
 		detailCandidates = deduplicateDetailCandidates(detailCandidates);
 
 		List<PoolNoticeResponse> notices = new ArrayList<>();
-		for (NoticeDetailCandidate candidate : detailCandidates) {
-			noticeRepository.findByUrl(candidate.url()).ifPresentOrElse(
-					existing -> {
-						if (shouldRefreshExistingNotice(existing)) {
-							trace.add("기존 저장 공지의 구조화 기간을 보강합니다(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
-							notices.add(toResponse(refreshNoticeDetail(existing, pool, candidate)));
-							return;
-						}
-						trace.add("기존 저장 공지 재사용(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
-						notices.add(toResponse(existing));
-					},
-					() -> {
-						trace.add("상세 공지 본문 분석(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
-						notices.add(toResponse(scanNoticeDetail(pool, candidate)));
-					}
+		Map<String, PoolNotice> existingNoticesByUrl = new LinkedHashMap<>();
+		for (PoolNotice existing : noticeRepository.findByPool_IdOrderByIdAsc(poolId)) {
+			existingNoticesByUrl.putIfAbsent(
+					NoticeSourceUrlNormalizer.normalize(existing.getUrl()),
+					existing
 			);
+		}
+		for (NoticeDetailCandidate candidate : detailCandidates) {
+			PoolNotice existing = existingNoticesByUrl.get(candidate.url());
+			if (existing != null) {
+				if (shouldRefreshExistingNotice(existing)) {
+					trace.add("기존 저장 공지의 구조화 기간을 보강합니다(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
+					notices.add(toResponse(refreshNoticeDetail(existing, pool, candidate)));
+					continue;
+				}
+				trace.add("기존 저장 공지 재사용(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
+				notices.add(toResponse(existing));
+				continue;
+			}
+			trace.add("상세 공지 본문 분석(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
+			PoolNotice saved = scanNoticeDetail(pool, candidate);
+			existingNoticesByUrl.put(candidate.url(), saved);
+			notices.add(toResponse(saved));
 		}
 		boolean latestCheckFailed = !pathAvailable;
 		String message;
@@ -812,7 +824,8 @@ public class NoticeCrawlerService {
 			Document document
 	) {
 		Set<NoticeDetailCandidate> candidates = new LinkedHashSet<>();
-		for (Element link : document.select("a[href]")) {
+		Element content = noticeContentScope(document);
+		for (Element link : content.select("a[href]")) {
 			String title = firstText(link.text(), link.attr("title"));
 			String absoluteUrl = NoticeSourceUrlNormalizer.normalize(link.absUrl("href"));
 			if (!hasText(title) || !hasText(absoluteUrl) || !sameHost(homepageUrl, absoluteUrl)) {
@@ -841,14 +854,15 @@ public class NoticeCrawlerService {
 		if (isInlineNoticePage(document)) {
 			return true;
 		}
-		String headingText = document.select("h1, h2, h3, h4, caption, .title, .subject, .board-title")
+		Element content = noticeContentScope(document);
+		String headingText = content.select("h1, h2, h3, h4, caption, .title, .subject, .board-title")
 				.text();
 		String signal = normalizeForSearch(document.title() + " " + headingText + " " + sourceUrl);
 		if (containsAny(signal, RENTAL_PAGE_KEYWORDS)) {
 			return false;
 		}
 		boolean strongKeyword = containsAny(signal, VERIFIED_SOURCE_KEYWORDS);
-		boolean boardStructure = !document.select(
+		boolean boardStructure = !content.select(
 				"table tbody tr, [class*=board] a[href], [id*=board] a[href], "
 						+ "[class*=notice] a[href], [id*=notice] a[href]"
 		).isEmpty();
@@ -868,15 +882,38 @@ public class NoticeCrawlerService {
 		if (containsAny(titleHaystack, RENTAL_PAGE_KEYWORDS)) {
 			return false;
 		}
-		String text = document.text();
+		String text = noticeContentScope(document).text();
 		String haystack = normalizeForSearch(text);
 		return containsAny(haystack, List.of("접수기간", "접수시간", "수강신청", "회원모집", "신규접수", "매월"))
 				&& containsAny(haystack, DETAIL_KEYWORDS)
 				&& hasPotentialPeriodText(text);
 	}
 
+	private Element noticeContentScope(Document document) {
+		Document contentDocument = document.clone();
+		contentDocument.select(
+				"header, nav, footer, aside, "
+						+ "[role=navigation], [role=banner], [role=contentinfo], "
+						+ ".gnb, .gnb_wrap, .lnb, .snb, .top-menu, .topmenu, "
+						+ ".global-menu, .site-menu, .sitemap, .breadcrumb, .location, "
+						+ ".quick-menu, .quickmenu"
+		).remove();
+		Element content = contentDocument.selectFirst(
+				"main, [role=main], #contents, #content, #container, "
+						+ ".contents_article, .contents, .content"
+		);
+		if (content != null) {
+			return content;
+		}
+		Element body = contentDocument.body();
+		return body == null ? contentDocument : body;
+	}
+
 	private boolean hasPotentialPeriodText(String text) {
 		return PERIOD.matcher(text).find()
+				|| MONTH_TO_DAY_PERIOD.matcher(text).find()
+				|| MONTH_TO_MONTH_END_PERIOD.matcher(text).find()
+				|| MONTH_SINGLE_DAY.matcher(text).find()
 				|| MONTHLY_DAY_PERIOD.matcher(text).find()
 				|| MONTHLY_TO_NEXT_MONTH_DAY_PERIOD.matcher(text).find()
 				|| MONTHLY_TO_MONTH_END_PERIOD.matcher(text).find()
@@ -938,6 +975,7 @@ public class NoticeCrawlerService {
 					detail.reason(),
 					detail.registrationPeriodsJson()
 			);
+			existing.normalizeUrl();
 			existing.markAnalyzed(CURRENT_PARSER_VERSION);
 			synchronizeRegistrationPeriods(existing, detail.registrationPeriods());
 			log.info("Notice detail refreshed. poolId={} noticeId={} status={} confidence={} url={}",
@@ -963,7 +1001,8 @@ public class NoticeCrawlerService {
 
 	private ScannedNoticeDetail analyzeNoticeDetail(Pool pool, NoticeDetailCandidate candidate) {
 		Document document = fetch(candidate.url());
-		String title = firstText(candidate.title(), firstText(document.title(), pool.getName() + " 공지"));
+		String pageTitle = firstText(document.title(), pool.getName() + " 공지");
+		String title = firstText(candidate.title(), pageTitle);
 		String text = title + "\n" + document.text();
 		List<String> imageUrls = document.select("img[src]")
 				.stream()
@@ -981,7 +1020,7 @@ public class NoticeCrawlerService {
 		log.info("Notice detail analyzed. poolId={} status={} confidence={} periods={} url={}",
 				pool.getId(), status, result.confidence(), result.registrationPeriods().size(), candidate.url());
 		return new ScannedNoticeDetail(
-				firstText(result.title(), title),
+				selectNoticeTitle(result.title(), pageTitle, candidate.url()),
 				truncate(text, 20_000),
 				status,
 				result.confidence(),
@@ -991,6 +1030,22 @@ public class NoticeCrawlerService {
 				serializeRegistrationPeriods(result.registrationPeriods()),
 				result.registrationPeriods()
 		);
+	}
+
+	private String selectNoticeTitle(String extractedTitle, String fallbackTitle, String url) {
+		String normalizedExtracted = normalizeWhitespace(extractedTitle);
+		if (hasText(normalizedExtracted) && normalizedExtracted.length() <= 255) {
+			return normalizedExtracted;
+		}
+		if (hasText(normalizedExtracted)) {
+			log.warn("Extracted notice title exceeded column length. Falling back to page title. length={} url={}",
+					normalizedExtracted.length(), url);
+		}
+		return truncate(normalizeWhitespace(fallbackTitle), 255);
+	}
+
+	private String normalizeWhitespace(String value) {
+		return value == null ? null : value.replaceAll("\\s+", " ").trim();
 	}
 
 	private NoticeExtractionResult extractByRule(String title, String url, String text, Document document) {
@@ -1170,7 +1225,95 @@ public class NoticeCrawlerService {
 				// Ignore malformed date fragments that merely look like registration periods.
 			}
 		}
+		Matcher monthToDayMatcher = MONTH_TO_DAY_PERIOD.matcher(text);
+		while (monthToDayMatcher.find()) {
+			try {
+				int month = Integer.parseInt(monthToDayMatcher.group(1));
+				LocalDate startsAt = LocalDate.of(
+						year,
+						month,
+						Integer.parseInt(monthToDayMatcher.group(2))
+				);
+				LocalDate endsAt = LocalDate.of(
+						year,
+						month,
+						Integer.parseInt(monthToDayMatcher.group(3))
+				);
+				if (endsAt.isBefore(startsAt)) {
+					endsAt = endsAt.plusMonths(1);
+				}
+				periods.add(new MatchedPeriod(
+						startsAt,
+						endsAt,
+						resolvePeriodLabel(text, monthToDayMatcher.start(), monthToDayMatcher.end(), label),
+						matchedText(text, monthToDayMatcher),
+						source + " omitted end month"
+				));
+			} catch (DateTimeException | NumberFormatException ignored) {
+				// Ignore malformed explicit-month date fragments.
+			}
+		}
+		Matcher monthEndMatcher = MONTH_TO_MONTH_END_PERIOD.matcher(text);
+		while (monthEndMatcher.find()) {
+			try {
+				int month = Integer.parseInt(monthEndMatcher.group(1));
+				YearMonth yearMonth = YearMonth.of(year, month);
+				LocalDate startsAt = yearMonth.atDay(Integer.parseInt(monthEndMatcher.group(2)));
+				periods.add(new MatchedPeriod(
+						startsAt,
+						yearMonth.atEndOfMonth(),
+						resolvePeriodLabel(text, monthEndMatcher.start(), monthEndMatcher.end(), label),
+						matchedText(text, monthEndMatcher),
+						source + " explicit month end"
+				));
+			} catch (DateTimeException | NumberFormatException ignored) {
+				// Ignore malformed explicit-month-to-month-end fragments.
+			}
+		}
+		Matcher singleDayMatcher = MONTH_SINGLE_DAY.matcher(text);
+		while (singleDayMatcher.find()) {
+			if (!isRegistrationSingleDay(text, label, singleDayMatcher)) {
+				continue;
+			}
+			try {
+				LocalDate date = LocalDate.of(
+						year,
+						Integer.parseInt(singleDayMatcher.group(1)),
+						Integer.parseInt(singleDayMatcher.group(2))
+				);
+				periods.add(new MatchedPeriod(
+						date,
+						date,
+						resolvePeriodLabel(text, singleDayMatcher.start(), singleDayMatcher.end(), label),
+						matchedText(text, singleDayMatcher),
+						source + " explicit single day"
+				));
+			} catch (DateTimeException | NumberFormatException ignored) {
+				// Ignore malformed explicit single-day fragments.
+			}
+		}
 		return periods;
+	}
+
+	private boolean isRegistrationSingleDay(String text, String label, Matcher matcher) {
+		int afterEnd = Math.min(text.length(), matcher.end() + 30);
+		String immediateAfter = normalizeForSearch(text.substring(matcher.end(), afterEnd));
+		if (immediateAfter.matches("^(?:\\d{1,2}시)?추첨.*")) {
+			return false;
+		}
+		int contextStart = Math.max(0, matcher.start() - 100);
+		int contextEnd = Math.min(text.length(), matcher.end() + 80);
+		String context = normalizeForSearch(
+				firstText(label, "") + " " + text.substring(contextStart, contextEnd)
+		);
+		return containsAny(
+				context,
+				List.of("접수", "반변경", "재등록", "신규등록", "신규신청", "회원모집", "수강신청")
+		);
+	}
+
+	private String matchedText(String text, Matcher matcher) {
+		return text.substring(matcher.start(), matcher.end()).replaceAll("\\s+", " ").trim();
 	}
 
 	private List<MatchedPeriod> findMonthlyDayPeriodsInValue(String text, String label, String source) {
@@ -1554,7 +1697,8 @@ public class NoticeCrawlerService {
 
 	private boolean shouldRefreshExistingNotice(PoolNotice notice) {
 		return notice.getParserVersion() < CURRENT_PARSER_VERSION
-				|| notice.getExtractionStatus() == NoticeExtractionStatus.FAILED;
+				|| notice.getExtractionStatus() == NoticeExtractionStatus.FAILED
+				|| notice.getTitle().length() >= 255;
 	}
 
 	private PoolNoticeResponse toResponse(PoolNotice notice) {

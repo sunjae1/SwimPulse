@@ -3,6 +3,7 @@ package com.swimpulse.notice;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.InvocationTargetException;
@@ -146,6 +147,64 @@ class NoticeCrawlerServiceTests {
 	}
 
 	@Test
+	void noticeSourceVerificationIgnoresGlobalNavigationSignals() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<head><title>주거복지 정보 : 부천도시공사</title></head>
+					<body>
+						<nav class="gnb_wrap">
+							<a href="/fmcs/312" class="menutype_modules_board">회원모집안내</a>
+							<a href="/fmcs/271?center=BCS01">6월 수강신청</a>
+							<a href="/fmcs/156" class="notice-board">공지사항</a>
+						</nav>
+						<div id="contents">
+							<h2>주거복지 정보</h2>
+							<table>
+								<tbody>
+									<tr><td>청년 주거복지 교육 안내</td></tr>
+								</tbody>
+							</table>
+						</div>
+					</body>
+				</html>
+				""", "https://www.best.or.kr/fmcs/670");
+
+		assertFalse(isLikelyNoticeSource(service, document, "https://www.best.or.kr/fmcs/670"));
+		assertEquals(0, detailCandidateCount(
+				service,
+				"https://www.best.or.kr/fmcs/44",
+				"https://www.best.or.kr/fmcs/670",
+				document
+		));
+	}
+
+	@Test
+	void noticeSourceVerificationUsesMainContentSignals() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<head><title>회원모집 안내</title></head>
+					<body>
+						<nav><a href="/unrelated">사이트 메뉴</a></nav>
+						<main>
+							<h2>회원모집 안내</h2>
+							<div class="modules_board">
+								<table>
+									<tbody>
+										<tr><td><a href="/notice/1">회원모집 공지</a></td></tr>
+									</tbody>
+								</table>
+							</div>
+						</main>
+					</body>
+				</html>
+				""", "https://example.com/notices");
+
+		assertTrue(isLikelyNoticeSource(service, document, "https://example.com/notices"));
+	}
+
+	@Test
 	void extractsMonthlyRegistrationPeriodFromInlinePageText() throws Exception {
 		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
 		Document document = Jsoup.parse("""
@@ -193,6 +252,54 @@ class NoticeCrawlerServiceTests {
 		assertMonthlyPeriod(result.registrationPeriods(), "수영 신규접수", "매월 25일 ~ 말일", expectedMonthlyRangeToEnd(25));
 		assertMonthlyPeriod(result.registrationPeriods(), "아쿠아로빅 신규접수", "매월 25일 ~ 말일", expectedMonthlyRangeToEnd(25));
 		assertMonthlyPeriod(result.registrationPeriods(), "아쿠아로빅 신규접수", "매월 26일 ~ 말일", expectedMonthlyRangeToEnd(26));
+	}
+
+	@Test
+	void extractsExplicitMonthPeriodsWithOmittedEndMonthAndSkipsDrawingDay() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<table>
+					<tbody>
+						<tr>
+							<td>회원 구분</td>
+							<td>접수기간</td>
+						</tr>
+						<tr>
+							<td>기존회원(재등록) 초급수영 접수</td>
+							<td>5월 20일 ~ 24일</td>
+						</tr>
+						<tr>
+							<td>반변경 및 초급수영추첨</td>
+							<td>5월 26일 반변경</td>
+						</tr>
+						<tr>
+							<td>아쿠아 잔여자리 접수및 추첨시간</td>
+							<td>
+								<p>5월 26일~27일</p>
+								<p>5월 28일 10시 추첨</p>
+							</td>
+						</tr>
+						<tr>
+							<td>신규회원접수</td>
+							<td>5월 27일 ~ 말일</td>
+						</tr>
+					</tbody>
+				</table>
+				""");
+
+		NoticeExtractionResult result = extractByRule(
+				service,
+				"2026년 6월 오정레포츠센터 회원모집 안내",
+				document
+		);
+
+		assertEquals(4, result.registrationPeriods().size());
+		assertPeriod(result.registrationPeriods(), "재등록", 5, 20, 5, 24);
+		assertPeriod(result.registrationPeriods(), "반변경", 5, 26, 5, 26);
+		assertPeriod(result.registrationPeriods(), "아쿠아 잔여자리 접수및 추첨시간", 5, 26, 5, 27);
+		assertPeriod(result.registrationPeriods(), "신규 회원", 5, 27, 5, 31);
+		assertFalse(result.registrationPeriods().stream()
+				.anyMatch(period -> "5월 28일".equals(period.periodText())));
 	}
 
 	@Test
@@ -324,6 +431,37 @@ class NoticeCrawlerServiceTests {
 		Method method = NoticeCrawlerService.class.getDeclaredMethod("isInlineNoticePage", Document.class);
 		method.setAccessible(true);
 		return (boolean) method.invoke(service, document);
+	}
+
+	private boolean isLikelyNoticeSource(
+			NoticeCrawlerService service,
+			Document document,
+			String sourceUrl
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"isLikelyNoticeSource",
+				Document.class,
+				String.class
+		);
+		method.setAccessible(true);
+		return (boolean) method.invoke(service, document, sourceUrl);
+	}
+
+	private int detailCandidateCount(
+			NoticeCrawlerService service,
+			String homepageUrl,
+			String noticeListUrl,
+			Document document
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"discoverDetailNoticeUrls",
+				String.class,
+				String.class,
+				Document.class
+		);
+		method.setAccessible(true);
+		List<?> candidates = (List<?>) method.invoke(service, homepageUrl, noticeListUrl, document);
+		return candidates.size();
 	}
 
 	private void assertPeriod(

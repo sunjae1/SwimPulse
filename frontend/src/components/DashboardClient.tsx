@@ -77,6 +77,12 @@ type EventForm = {
   endsAt: string;
 };
 
+type PastPeriodPrompt = {
+  notice: PoolNotice;
+  originalPeriod: NoticeRegistrationPeriod;
+  shiftedPeriod: NoticeRegistrationPeriod;
+};
+
 const statusOptions: Array<EventStatus | "ALL"> = ["ALL", "UPCOMING", "OPEN", "CLOSED"];
 const NOTICE_AUTO_DISMISS_MS = 5000;
 
@@ -107,6 +113,7 @@ export function DashboardClient({
   const [statusFilter, setStatusFilter] = useState<EventStatus | "ALL">("ALL");
   const [noticeSubscriptionMode, setNoticeSubscriptionMode] = useState(false);
   const [pendingSubscriptionKey, setPendingSubscriptionKey] = useState<string | null>(null);
+  const [pastPeriodPrompt, setPastPeriodPrompt] = useState<PastPeriodPrompt | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingNoticeScanPoolIds, setPendingNoticeScanPoolIds] = useState<number[]>([]);
@@ -438,24 +445,63 @@ export function DashboardClient({
       setNotice("Google 로그인 후 구독할 수 있습니다.");
       return;
     }
-    const title = buildSubscriptionTitle(notice, period);
-    const key = subscriptionKey(notice.poolId, title, period.startsAt, period.endsAt);
+    if (isPastMonthPeriod(period)) {
+      setNotice("지난 달 모집 기간입니다.");
+      setPastPeriodPrompt({
+        notice,
+        originalPeriod: period,
+        shiftedPeriod: shiftPeriodToCurrentMonth(period),
+      });
+      return;
+    }
+    await createNoticePeriodSubscription(notice, period, period.id, buildSubscriptionTitle(notice, period));
+  }
+
+  async function confirmCurrentMonthSubscription() {
+    if (!pastPeriodPrompt) {
+      return;
+    }
+    const { notice: targetNotice, shiftedPeriod } = pastPeriodPrompt;
+    const subscribed = await createNoticePeriodSubscription(
+      targetNotice,
+      shiftedPeriod,
+      null,
+      buildEstimatedSubscriptionTitle(targetNotice, shiftedPeriod),
+    );
+    if (subscribed) {
+      setPastPeriodPrompt(null);
+    }
+  }
+
+  async function createNoticePeriodSubscription(
+    targetNotice: PoolNotice,
+    targetPeriod: NoticeRegistrationPeriod,
+    noticeRegistrationPeriodId: number | null,
+    title: string,
+  ) {
+    const key = subscriptionKey(targetNotice.poolId, title, targetPeriod.startsAt, targetPeriod.endsAt);
     setPendingSubscriptionKey(key);
     setNotice(null);
     try {
       await createSubscription({
-        poolId: notice.poolId,
+        poolId: targetNotice.poolId,
         title,
-        registrationStartsAt: period.startsAt,
-        registrationEndsAt: period.endsAt,
-        noticeRegistrationPeriodId: period.id,
+        registrationStartsAt: targetPeriod.startsAt,
+        registrationEndsAt: targetPeriod.endsAt,
+        noticeRegistrationPeriodId,
       });
       const [freshSubscriptions, freshEvents] = await Promise.all([getSubscriptions(), getEvents()]);
       setSubscriptions(freshSubscriptions);
       setEvents(freshEvents);
-      setNotice("선택한 모집 기간 알림을 구독했습니다.");
+      setNotice(
+        noticeRegistrationPeriodId === null
+          ? "이번 달 같은 날짜를 예상 모집 기간으로 구독했습니다."
+          : "선택한 모집 기간 알림을 구독했습니다.",
+      );
+      return true;
     } catch (error) {
       setNotice(getErrorMessage(error, "구독 요청을 처리하지 못했습니다."));
+      return false;
     } finally {
       setPendingSubscriptionKey(null);
     }
@@ -1170,6 +1216,22 @@ export function DashboardClient({
           onUnsubscribe={unsubscribeFromNoticePeriod}
         />
       ) : null}
+      {pastPeriodPrompt ? (
+        <PastPeriodSubscriptionModal
+          prompt={pastPeriodPrompt}
+          busy={
+            pendingSubscriptionKey ===
+            subscriptionKey(
+              pastPeriodPrompt.notice.poolId,
+              buildEstimatedSubscriptionTitle(pastPeriodPrompt.notice, pastPeriodPrompt.shiftedPeriod),
+              pastPeriodPrompt.shiftedPeriod.startsAt,
+              pastPeriodPrompt.shiftedPeriod.endsAt,
+            )
+          }
+          onConfirm={confirmCurrentMonthSubscription}
+          onClose={() => setPastPeriodPrompt(null)}
+        />
+      ) : null}
       {pushNotificationModal ? (
         <PushNotificationModal
           notification={pushNotificationModal}
@@ -1464,6 +1526,75 @@ function CandidateConfirmModal({
   );
 }
 
+function PastPeriodSubscriptionModal({
+  prompt,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  prompt: PastPeriodPrompt;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/45 px-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-lg border border-[#d8ddd5] bg-white shadow-xl">
+        <div className="flex items-center gap-3 border-b border-[#e3e7e1] px-5 py-4">
+          <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#fff2e2] text-[#946123]">
+            <CalendarClock size={20} aria-hidden />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">지난 달 모집 기간입니다.</h2>
+            <p className="text-sm text-[#66746d]">{prompt.notice.poolName}</p>
+          </div>
+        </div>
+        <div className="space-y-4 px-5 py-5">
+          <p className="text-sm font-semibold leading-6 text-[#31413b]">
+            이번 달 모집일과 다를 수 있습니다! 이번 달 같은 날에 알림을 보낼까요?
+          </p>
+          <div className="grid gap-2 rounded-md border border-[#e3e7e1] bg-[#fafbf8] px-3 py-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[#7c8982]">지난 모집 기간</span>
+              <span className="font-medium text-[#47564f]">
+                {formatDate(prompt.originalPeriod.startsAt)} - {formatDate(prompt.originalPeriod.endsAt)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[#7c8982]">예상 알림 기간</span>
+              <span className="font-semibold text-[#0f766e]">
+                {formatDate(prompt.shiftedPeriod.startsAt)} - {formatDate(prompt.shiftedPeriod.endsAt)}
+              </span>
+            </div>
+          </div>
+          <p className="text-xs leading-5 text-[#946123]">
+            공지 원문의 일자를 현재 월로 옮긴 예상 기간이며, 실제 모집 공지와 다를 수 있습니다.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] disabled:opacity-50"
+              onClick={onClose}
+              disabled={busy}
+              type="button"
+            >
+              취소
+            </button>
+            <button
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#0f766e] px-4 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
+              onClick={onConfirm}
+              disabled={busy}
+              type="button"
+            >
+              <Bell size={16} aria-hidden />
+              {busy ? "구독 중..." : "이 날짜로 구독"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NoticeResultModal({
   result,
   onClose,
@@ -1617,9 +1748,20 @@ function PeriodSelectionRow({
 }) {
   const title = buildSubscriptionTitle(notice, period);
   const key = subscriptionKey(notice.poolId, title, period.startsAt, period.endsAt);
-  const subscription = subscriptions.find((item) => item.event && subscriptionKeyFromEvent(item.event) === key);
-  const subscribed = subscribedEventKeys.has(key);
-  const pending = pendingSubscriptionKey === key;
+  const shiftedPeriod = isPastMonthPeriod(period) ? shiftPeriodToCurrentMonth(period) : null;
+  const shiftedTitle = shiftedPeriod ? buildEstimatedSubscriptionTitle(notice, shiftedPeriod) : null;
+  const shiftedKey =
+    shiftedPeriod && shiftedTitle
+      ? subscriptionKey(notice.poolId, shiftedTitle, shiftedPeriod.startsAt, shiftedPeriod.endsAt)
+      : null;
+  const subscription = subscriptions.find(
+    (item) =>
+      item.event &&
+      (subscriptionKeyFromEvent(item.event) === key ||
+        (shiftedKey !== null && subscriptionKeyFromEvent(item.event) === shiftedKey)),
+  );
+  const subscribed = subscribedEventKeys.has(key) || (shiftedKey !== null && subscribedEventKeys.has(shiftedKey));
+  const pending = pendingSubscriptionKey === key || (shiftedKey !== null && pendingSubscriptionKey === shiftedKey);
 
   return (
     <div className="grid gap-3 rounded-md border border-[#e3e7e1] bg-[#fafbf8] px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -1784,6 +1926,85 @@ function buildSubscriptionTitle(notice: PoolNotice, period: NoticeRegistrationPe
   const label = period.label?.trim() || "모집 기간";
   const title = `${label} - ${notice.title}`.replace(/\s+/g, " ").trim();
   return title.length <= 120 ? title : title.slice(0, 120);
+}
+
+function buildEstimatedSubscriptionTitle(notice: PoolNotice, period: NoticeRegistrationPeriod) {
+  const baseTitle = buildSubscriptionTitle(notice, period);
+  const suffix = " (이번 달 예상)";
+  return `${baseTitle.slice(0, 120 - suffix.length)}${suffix}`;
+}
+
+function isPastMonthPeriod(period: NoticeRegistrationPeriod) {
+  const current = seoulDateParts(new Date());
+  const periodEnd = seoulDateParts(new Date(period.endsAt));
+  return periodEnd.year < current.year || (periodEnd.year === current.year && periodEnd.month < current.month);
+}
+
+function shiftPeriodToCurrentMonth(period: NoticeRegistrationPeriod): NoticeRegistrationPeriod {
+  const current = seoulDateParts(new Date());
+  const sourceStart = seoulDateParts(new Date(period.startsAt));
+  const sourceEnd = seoulDateParts(new Date(period.endsAt));
+  const dayMatches = Array.from((period.periodText ?? "").matchAll(/(\d{1,2})\s*일/g)).map((match) =>
+    Number(match[1]),
+  );
+  const startDay = dayMatches[0] ?? sourceStart.day;
+  const sourceCrossesMonth =
+    sourceEnd.year > sourceStart.year ||
+    (sourceEnd.year === sourceStart.year && sourceEnd.month > sourceStart.month) ||
+    /익월/.test(period.periodText ?? "");
+  const targetStart = normalizeYearMonth(current.year, current.month);
+  const targetEnd = normalizeYearMonth(current.year, current.month + (sourceCrossesMonth ? 1 : 0));
+  const endDay = /말일/.test(period.periodText ?? "")
+    ? daysInMonth(targetEnd.year, targetEnd.month)
+    : dayMatches[1] ?? sourceEnd.day;
+  const safeStartDay = Math.min(startDay, daysInMonth(targetStart.year, targetStart.month));
+  const safeEndDay = Math.min(endDay, daysInMonth(targetEnd.year, targetEnd.month));
+
+  return {
+    ...period,
+    id: null,
+    startsAt: seoulDateToIso(targetStart.year, targetStart.month, safeStartDay, false),
+    endsAt: seoulDateToIso(targetEnd.year, targetEnd.month, safeEndDay, true),
+  };
+}
+
+function seoulDateParts(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+  };
+}
+
+function normalizeYearMonth(year: number, month: number) {
+  const normalized = new Date(Date.UTC(year, month - 1, 1));
+  return {
+    year: normalized.getUTCFullYear(),
+    month: normalized.getUTCMonth() + 1,
+  };
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function seoulDateToIso(year: number, month: number, day: number, endOfDay: boolean) {
+  const localMilliseconds = Date.UTC(
+    year,
+    month - 1,
+    day,
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+  );
+  return new Date(localMilliseconds - 9 * 60 * 60 * 1000).toISOString();
 }
 
 function subscriptionKeyFromEvent(event: RegistrationEvent) {

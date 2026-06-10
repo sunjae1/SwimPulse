@@ -104,8 +104,8 @@ public class PoolNotice {
 			String registrationPeriodsJson
 	) {
 		this.pool = pool;
-		this.title = title;
-		this.url = url;
+		this.title = normalizeTitle(title);
+		this.url = NoticeSourceUrlNormalizer.normalize(url);
 		this.rawText = rawText;
 		this.extractionStatus = extractionStatus;
 		this.confidence = confidence;
@@ -127,7 +127,7 @@ public class PoolNotice {
 			String reason,
 			String registrationPeriodsJson
 	) {
-		this.title = title;
+		this.title = normalizeTitle(title);
 		this.rawText = rawText;
 		this.extractionStatus = extractionStatus;
 		this.confidence = confidence;
@@ -135,6 +135,10 @@ public class PoolNotice {
 		this.registrationEndsAt = registrationEndsAt;
 		this.reason = reason;
 		this.registrationPeriodsJson = registrationPeriodsJson;
+	}
+
+	public void normalizeUrl() {
+		this.url = NoticeSourceUrlNormalizer.normalize(this.url);
 	}
 
 	public void markAnalyzed(int parserVersion) {
@@ -221,5 +225,12 @@ public class PoolNotice {
 			return value;
 		}
 		return value.substring(0, maxLength);
+	}
+
+	private static String normalizeTitle(String value) {
+		if (value == null) {
+			return null;
+		}
+		return truncate(value.replaceAll("\\s+", " ").trim(), 255);
 	}
 }
