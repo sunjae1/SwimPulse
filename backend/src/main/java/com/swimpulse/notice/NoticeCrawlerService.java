@@ -10,6 +10,7 @@ import com.swimpulse.pool.Pool;
 import com.swimpulse.pool.PoolRepository;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
@@ -20,6 +21,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,7 +53,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class NoticeCrawlerService {
 	private static final Logger log = LoggerFactory.getLogger(NoticeCrawlerService.class);
 	private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
-	static final int CURRENT_PARSER_VERSION = 2;
+	static final int CURRENT_PARSER_VERSION = 4;
+	private static final String OCR_TEXT_MARKER = "[OCR IMAGE TEXT]";
 	private static final Pattern PERIOD = Pattern.compile("(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?");
 	private static final Pattern MONTH_TO_DAY_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
 	private static final Pattern MONTH_TO_MONTH_END_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*말일");
@@ -62,6 +65,29 @@ public class NoticeCrawlerService {
 	private static final Pattern MONTHLY_TO_MONTH_END_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*말일");
 	private static final Pattern MONTHLY_SINGLE_DAY = Pattern.compile("매월\\s*(\\d{1,2})\\s*일(?!\\s*[~\\-–])");
 	private static final Pattern QUARTERLY_DAY_PERIOD = Pattern.compile("분기별\\s*\\[([^]]+)]\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
+	private static final Pattern FN_VIEW = Pattern.compile("fn_view\\s*\\(\\s*(\\d+)\\s*\\)");
+	private static final Pattern OCR_EXPLICIT_DATE = Pattern.compile("(\\d{1,2}\\s*월\\s*\\d{1,2}\\s*일|매월\\s*\\d{1,2}\\s*일)");
+	private static final Pattern OCR_DATE_TIME_RANGE = Pattern.compile(
+			"((?:\\d{1,2}\\s*월\\s*)?\\d{1,2}\\s*일(?:\\([^\\n)]{0,10}\\))?)\\s+\\d{1,2}:\\d{2}\\s*[~\\-–]\\s*((?:\\d{1,2}\\s*월\\s*)?\\d{1,2}\\s*일(?:\\([^\\n)]{0,10}\\))?)\\s+\\d{1,2}:\\d{2}"
+	);
+	private static final List<String> OCR_DECORATIVE_IMAGE_KEYWORDS = List.of(
+			"logo",
+			"avatar",
+			"barcode",
+			"mberbarcode"
+	);
+	private static final List<String> OCR_SEGMENT_KEYWORDS = List.of(
+			"접수기간",
+			"재등록",
+			"반변경",
+			"신규",
+			"추첨",
+			"잔여",
+			"회원모집",
+			"온라인",
+			"현장접수",
+			"접수"
+	);
 	private static final List<String> NOTICE_LIST_KEYWORDS = List.of("공지", "회원모집", "회원모집안내", "모집안내", "수강", "수강신청안내", "접수", "프로그램", "교육", "강좌");
 	private static final List<String> DETAIL_KEYWORDS = List.of("수강", "회원", "접수", "모집", "등록", "수영", "강습");
 	private static final List<String> VERIFIED_SOURCE_KEYWORDS = List.of(
@@ -78,6 +104,13 @@ public class NoticeCrawlerService {
 	private static final List<String> RENTAL_PAGE_KEYWORDS = List.of("대관", "대관예약", "대관신청", "대관이용");
 	private static final List<String> NON_REGISTRATION_PERIOD_KEYWORDS = List.of("환불", "환불금액", "수강료", "개강", "종강", "월단위강습제", "첫수업일", "이용일수", "공제");
 	private static final List<PeriodLabel> PERIOD_LABELS = List.of(
+			new PeriodLabel("신규추첨접수온라인", "신규접수"),
+			new PeriodLabel("신규추첨접수", "신규접수"),
+			new PeriodLabel("신규잔여석접수온라인", "신규접수"),
+			new PeriodLabel("신규잔여석접수", "신규접수"),
+			new PeriodLabel("잔여석접수온라인", "신규접수"),
+			new PeriodLabel("잔여석접수", "신규접수"),
+			new PeriodLabel("잔여선착순", "신규접수"),
 			new PeriodLabel("신규회원모집", "신규회원모집"),
 			new PeriodLabel("신규회원", "신규 회원"),
 			new PeriodLabel("기존회원및추첨종목모집기간", "기존 회원 및 추첨종목 모집기간"),
@@ -105,6 +138,7 @@ public class NoticeCrawlerService {
 	private final PoolNoticeRepository noticeRepository;
 	private final PoolNoticeSourceRepository sourceRepository;
 	private final OpenAiNoticeExtractionClient openAiNoticeExtractionClient;
+	private final NoticeImageOcrService noticeImageOcrService;
 	private final ObjectMapper objectMapper;
 	private final NoticeRegistrationPeriodService registrationPeriodService;
 	private final boolean insecureSslFallbackEnabled;
@@ -134,6 +168,27 @@ public class NoticeCrawlerService {
 				sourceRepository,
 				openAiNoticeExtractionClient,
 				objectMapper,
+				NoticeImageOcrService.NO_OP,
+				insecureSslFallbackEnabled
+		);
+	}
+
+	NoticeCrawlerService(
+			PoolRepository poolRepository,
+			PoolNoticeRepository noticeRepository,
+			PoolNoticeSourceRepository sourceRepository,
+			OpenAiNoticeExtractionClient openAiNoticeExtractionClient,
+			ObjectMapper objectMapper,
+			NoticeImageOcrService noticeImageOcrService,
+			boolean insecureSslFallbackEnabled
+	) {
+		this(
+				poolRepository,
+				noticeRepository,
+				sourceRepository,
+				openAiNoticeExtractionClient,
+				objectMapper,
+				noticeImageOcrService,
 				null,
 				insecureSslFallbackEnabled,
 				null,
@@ -157,6 +212,7 @@ public class NoticeCrawlerService {
 			PoolNoticeSourceRepository sourceRepository,
 			OpenAiNoticeExtractionClient openAiNoticeExtractionClient,
 			ObjectMapper objectMapper,
+			NoticeImageOcrService noticeImageOcrService,
 			NoticeRegistrationPeriodService registrationPeriodService,
 			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled,
 			RedisLockService redisLockService,
@@ -175,6 +231,7 @@ public class NoticeCrawlerService {
 		this.noticeRepository = noticeRepository;
 		this.sourceRepository = sourceRepository;
 		this.openAiNoticeExtractionClient = openAiNoticeExtractionClient;
+		this.noticeImageOcrService = noticeImageOcrService == null ? NoticeImageOcrService.NO_OP : noticeImageOcrService;
 		this.objectMapper = objectMapper;
 		this.registrationPeriodService = registrationPeriodService;
 		this.insecureSslFallbackEnabled = insecureSslFallbackEnabled;
@@ -827,12 +884,12 @@ public class NoticeCrawlerService {
 		Element content = noticeContentScope(document);
 		for (Element link : content.select("a[href]")) {
 			String title = firstText(link.text(), link.attr("title"));
-			String absoluteUrl = NoticeSourceUrlNormalizer.normalize(link.absUrl("href"));
+			String absoluteUrl = resolveDetailNoticeUrl(noticeListUrl, document, link);
 			if (!hasText(title) || !hasText(absoluteUrl) || !sameHost(homepageUrl, absoluteUrl)) {
 				continue;
 			}
-			if (isDetailNoticeCandidate(title, link.attr("href"))) {
-				candidates.add(new NoticeDetailCandidate(absoluteUrl, title, "anchor link"));
+			if (isDetailNoticeCandidate(title, link.attr("href"), link.attr("onclick"))) {
+				candidates.add(new NoticeDetailCandidate(absoluteUrl, title, detailCandidateSource(link)));
 			}
 			if (candidates.size() >= MAX_DETAIL_URLS_PER_LIST) {
 				break;
@@ -870,11 +927,117 @@ public class NoticeCrawlerService {
 	}
 
 	private boolean isDetailNoticeCandidate(String anchorText, String href) {
-		String haystack = normalizeForSearch(anchorText + " " + href);
+		return isDetailNoticeCandidate(anchorText, href, null);
+	}
+
+	private boolean isDetailNoticeCandidate(String anchorText, String href, String onclick) {
+		String haystack = normalizeForSearch(anchorText + " " + href + " " + onclick);
 		if (containsAny(haystack, RENTAL_PAGE_KEYWORDS)) {
 			return false;
 		}
 		return hasMonthKeyword(haystack) && containsAny(haystack, DETAIL_KEYWORDS);
+	}
+
+	private String resolveDetailNoticeUrl(String noticeListUrl, Document document, Element link) {
+		String rawHref = link.attr("href");
+		String absoluteUrl = NoticeSourceUrlNormalizer.normalize(link.absUrl("href"));
+		if (hasText(absoluteUrl) && !isPlaceholderLink(rawHref)) {
+			return absoluteUrl;
+		}
+
+		String onclick = link.attr("onclick");
+		Matcher matcher = FN_VIEW.matcher(onclick);
+		if (!matcher.find()) {
+			return null;
+		}
+
+		String seq = matcher.group(1);
+		if (!hasText(seq)) {
+			return null;
+		}
+
+		String bbsId = extractBbsId(noticeListUrl, document);
+		if (!hasText(bbsId)) {
+			return null;
+		}
+
+		try {
+			URI noticeListUri = URI.create(noticeListUrl);
+			String detailPath = detailViewPath(noticeListUri.getPath());
+			if (!hasText(detailPath)) {
+				return null;
+			}
+			URI detailUri = new URI(
+					noticeListUri.getScheme(),
+					noticeListUri.getUserInfo(),
+					noticeListUri.getHost(),
+					noticeListUri.getPort(),
+					detailPath,
+					"seq=" + seq + "&bbsId=" + bbsId,
+					null
+			);
+			return NoticeSourceUrlNormalizer.normalize(detailUri.toASCIIString());
+		} catch (IllegalArgumentException | URISyntaxException exception) {
+			log.debug("Failed to resolve fn_view detail URL. noticeListUrl={} href={} onclick={} message={}",
+					noticeListUrl, rawHref, onclick, exception.getMessage());
+			return null;
+		}
+	}
+
+	private String detailCandidateSource(Element link) {
+		return isPlaceholderLink(link.attr("href")) && FN_VIEW.matcher(link.attr("onclick")).find()
+				? "onclick fn_view"
+				: "anchor link";
+	}
+
+	private boolean isPlaceholderLink(String href) {
+		if (!hasText(href)) {
+			return true;
+		}
+		String normalized = href.trim().toLowerCase();
+		return "#".equals(normalized)
+				|| "#none".equals(normalized)
+				|| normalized.startsWith("javascript:");
+	}
+
+	private String extractBbsId(String noticeListUrl, Document document) {
+		String fromUrl = extractQueryParameter(noticeListUrl, "bbsId");
+		if (hasText(fromUrl)) {
+			return fromUrl;
+		}
+		Element input = document.selectFirst("input[name=bbsId]");
+		if (input == null) {
+			return null;
+		}
+		return firstText(input.attr("value"), null);
+	}
+
+	private String extractQueryParameter(String url, String parameterName) {
+		try {
+			String query = URI.create(url).getQuery();
+			if (!hasText(query)) {
+				return null;
+			}
+			for (String pair : query.split("&")) {
+				String[] tokens = pair.split("=", 2);
+				if (tokens.length == 2 && parameterName.equals(tokens[0]) && hasText(tokens[1])) {
+					return tokens[1];
+				}
+			}
+			return null;
+		} catch (IllegalArgumentException exception) {
+			return null;
+		}
+	}
+
+	private String detailViewPath(String noticeListPath) {
+		if (!hasText(noticeListPath)) {
+			return null;
+		}
+		if (noticeListPath.endsWith("/list.do")) {
+			return noticeListPath.substring(0, noticeListPath.length() - "/list.do".length()) + "/view.do";
+		}
+		return noticeListPath.replace("/list.do", "/view.do");
 	}
 
 	private boolean isInlineNoticePage(Document document) {
@@ -898,15 +1061,90 @@ public class NoticeCrawlerService {
 						+ ".global-menu, .site-menu, .sitemap, .breadcrumb, .location, "
 						+ ".quick-menu, .quickmenu"
 		).remove();
-		Element content = contentDocument.selectFirst(
-				"main, [role=main], #contents, #content, #container, "
-						+ ".contents_article, .contents, .content"
-		);
-		if (content != null) {
-			return content;
+		for (String selector : List.of(
+				"#conBody",
+				"#conArea",
+				"#container",
+				"#contents",
+				"#content",
+				"main",
+				"[role=main]",
+				"article",
+				"section",
+				".contents_article",
+				".contents",
+				".content"
+		)) {
+			Element content = contentDocument.selectFirst(selector);
+			if (content != null) {
+				return content;
+			}
 		}
 		Element body = contentDocument.body();
 		return body == null ? contentDocument : body;
+	}
+
+	private List<String> selectNoticeOcrImageUrls(Document document) {
+		Element content = noticeContentScope(document);
+		List<List<String>> prioritizedBuckets = List.of(
+				new ArrayList<>(),
+				new ArrayList<>(),
+				new ArrayList<>(),
+				new ArrayList<>()
+		);
+		for (Element image : content.select("img[src]")) {
+			if (!isEligibleOcrImage(image)) {
+				continue;
+			}
+			String absoluteUrl = firstText(image.absUrl("src"), image.attr("src"));
+			if (!hasText(absoluteUrl)) {
+				continue;
+			}
+			prioritizedBuckets.get(ocrImagePriority(image)).add(absoluteUrl.trim());
+		}
+		Set<String> orderedUrls = new LinkedHashSet<>();
+		for (List<String> bucket : prioritizedBuckets) {
+			orderedUrls.addAll(bucket);
+		}
+		return List.copyOf(orderedUrls);
+	}
+
+	private int ocrImagePriority(Element image) {
+		String src = normalizeForSearch(image.attr("src"));
+		boolean inTbody = image.closest(".tbody") != null;
+		boolean smartEditorUpload = src.contains("smarteditor/upload");
+		if (inTbody && smartEditorUpload) {
+			return 0;
+		}
+		if (inTbody) {
+			return 1;
+		}
+		if (smartEditorUpload) {
+			return 2;
+		}
+		return 3;
+	}
+
+	private boolean isEligibleOcrImage(Element image) {
+		String src = firstText(image.attr("src"), "");
+		if (!hasText(src)) {
+			return false;
+		}
+		String normalizedSignal = normalizeForSearch(
+				src
+						+ " "
+						+ firstText(image.attr("title"), "")
+						+ " "
+						+ firstText(image.attr("alt"), "")
+						+ " "
+						+ firstText(image.className(), "")
+						+ " "
+						+ firstText(image.id(), "")
+		);
+		if (normalizedSignal.contains(".svg")) {
+			return false;
+		}
+		return !containsAny(normalizedSignal, OCR_DECORATIVE_IMAGE_KEYWORDS);
 	}
 
 	private boolean hasPotentialPeriodText(String text) {
@@ -1003,17 +1241,14 @@ public class NoticeCrawlerService {
 		Document document = fetch(candidate.url());
 		String pageTitle = firstText(document.title(), pool.getName() + " 공지");
 		String title = firstText(candidate.title(), pageTitle);
-		String text = title + "\n" + document.text();
-		List<String> imageUrls = document.select("img[src]")
-				.stream()
-				.map(image -> image.absUrl("src"))
-				.filter(this::hasText)
-				.limit(5)
-				.toList();
-		NoticeExtractionResult result = extractByRule(title, candidate.url(), text, document);
-		if (!result.hasPeriod() && openAiNoticeExtractionClient.isConfigured()) {
-			result = openAiNoticeExtractionClient.extract(title, candidate.url(), text, imageUrls);
+		String text = buildNoticeBodyText(title, document);
+		List<String> imageUrls = selectNoticeOcrImageUrls(document);
+		if (!imageUrls.isEmpty()) {
+			log.info("Notice OCR candidate images selected. url={} imageCount={} imageUrls={}",
+					candidate.url(), imageUrls.size(), imageUrls);
 		}
+		NoticeTextExtractionOutcome extractionOutcome = extractNoticeDetail(title, candidate.url(), text, document, imageUrls);
+		NoticeExtractionResult result = extractionOutcome.result();
 		NoticeExtractionStatus status = result.hasPeriod() && result.confidence() >= 0.65
 				? NoticeExtractionStatus.EXTRACTED
 				: NoticeExtractionStatus.LINK_ONLY;
@@ -1021,7 +1256,7 @@ public class NoticeCrawlerService {
 				pool.getId(), status, result.confidence(), result.registrationPeriods().size(), candidate.url());
 		return new ScannedNoticeDetail(
 				selectNoticeTitle(result.title(), pageTitle, candidate.url()),
-				truncate(text, 20_000),
+				truncate(extractionOutcome.rawText(), 20_000),
 				status,
 				result.confidence(),
 				result.registrationStartsAt(),
@@ -1030,6 +1265,193 @@ public class NoticeCrawlerService {
 				serializeRegistrationPeriods(result.registrationPeriods()),
 				result.registrationPeriods()
 		);
+	}
+
+	private NoticeTextExtractionOutcome extractNoticeDetail(
+			String title,
+			String url,
+			String text,
+			Document document,
+			List<String> imageUrls
+	) {
+		NoticeExtractionResult initialResult = extractByRule(title, url, text, document);
+		if (initialResult.hasPeriod() || imageUrls == null || imageUrls.isEmpty()) {
+			return new NoticeTextExtractionOutcome(text, initialResult);
+		}
+
+		log.info("Notice detail HTML extraction missed period. Running OCR retry. url={} imageCount={}",
+				url, imageUrls.size());
+		NoticeImageOcrService.NoticeImageOcrResult ocrResult;
+		try {
+			ocrResult = noticeImageOcrService.extractText(imageUrls);
+		} catch (RuntimeException exception) {
+			log.warn("Notice OCR retry failed unexpectedly. url={} message={}", url, exception.getMessage());
+			return new NoticeTextExtractionOutcome(text, initialResult);
+		}
+		if (!ocrResult.hasText()) {
+			log.info("Notice OCR retry skipped or produced no text. url={} reason={}",
+					url, firstText(ocrResult.reason(), "No OCR text."));
+			return new NoticeTextExtractionOutcome(text, initialResult);
+		}
+
+		String normalizedOcrText = preprocessOcrText(ocrResult.text());
+		if (!hasText(normalizedOcrText)) {
+			log.info("Notice OCR retry produced no usable normalized text. url={} rawTextLength={}",
+					url, ocrResult.text() == null ? 0 : ocrResult.text().length());
+			return new NoticeTextExtractionOutcome(text, initialResult);
+		}
+
+		String textWithOcr = appendOcrText(text, normalizedOcrText);
+		NoticeExtractionResult retryResult = extractByOcrSegments(title, url, normalizedOcrText);
+		log.info("Notice OCR retry completed. url={} extractedImages={} normalizedTextLength={} hasPeriod={} confidence={} periods={}",
+				url,
+				ocrResult.extractedImages(),
+				normalizedOcrText.length(),
+				retryResult.hasPeriod(),
+				retryResult.confidence(),
+				retryResult.registrationPeriods().size());
+		return retryResult.hasPeriod()
+				? new NoticeTextExtractionOutcome(textWithOcr, retryResult)
+				: new NoticeTextExtractionOutcome(textWithOcr, initialResult);
+	}
+
+	private String appendOcrText(String text, String ocrText) {
+		if (!hasText(ocrText)) {
+			return text;
+		}
+		if (!hasText(text)) {
+			return OCR_TEXT_MARKER + "\n" + ocrText.trim();
+		}
+		return text + "\n\n" + OCR_TEXT_MARKER + "\n" + ocrText.trim();
+	}
+
+	private String buildNoticeBodyText(String title, Document document) {
+		String contentText = normalizeCellText(noticeContentScope(document).text());
+		if (!hasText(contentText)) {
+			contentText = normalizeCellText(document.text());
+		}
+		return hasText(contentText) ? title + "\n" + contentText : title;
+	}
+
+	private NoticeExtractionResult extractByOcrSegments(String title, String url, String normalizedOcrText) {
+		List<String> segments = buildOcrParsingSegments(normalizedOcrText);
+		log.info("Notice OCR parsing prepared. url={} segmentCount={} normalizedTextLength={}",
+				url, segments.size(), normalizedOcrText.length());
+		if (segments.isEmpty()) {
+			return new NoticeExtractionResult(title, null, null, 0.45, "OCR segment candidate not found.", url);
+		}
+
+		List<MatchedPeriod> matchedPeriods = new ArrayList<>();
+		int matchedSegmentCount = 0;
+		for (int index = 0; index < segments.size(); index++) {
+			String segment = segments.get(index);
+			List<MatchedPeriod> segmentPeriods = findMatchedPeriods(segment);
+			if (segmentPeriods.isEmpty()) {
+				continue;
+			}
+			matchedSegmentCount++;
+			matchedPeriods.addAll(segmentPeriods);
+			log.info("Notice OCR segment matched. url={} segmentIndex={} periods={} segment={}",
+					url, index, segmentPeriods.size(), truncate(segment, 220));
+		}
+
+		matchedPeriods = deduplicatePeriods(matchedPeriods);
+		if (matchedPeriods.isEmpty()) {
+			return new NoticeExtractionResult(title, null, null, 0.45, "OCR segment period pattern not found.", url);
+		}
+
+		MatchedPeriod selected = selectRepresentativePeriod(matchedPeriods);
+		List<NoticeRegistrationPeriod> registrationPeriods = matchedPeriods.stream()
+				.map(this::toRegistrationPeriod)
+				.toList();
+		return new NoticeExtractionResult(
+				title,
+				selected.startsAt().atStartOfDay(SEOUL).toInstant(),
+				selected.endsAt().plusDays(1).atStartOfDay(SEOUL).minusSeconds(1).toInstant(),
+				selected.label() == null ? 0.74 : 0.8,
+				"OCR line/block parsing matched across " + matchedSegmentCount + " segment(s). "
+						+ buildPeriodReason(matchedPeriods, selected),
+				url,
+				registrationPeriods
+		);
+	}
+
+	private List<String> buildOcrParsingSegments(String normalizedOcrText) {
+		if (!hasText(normalizedOcrText)) {
+			return List.of();
+		}
+		List<String> lines = Arrays.stream(normalizedOcrText.split("\\R"))
+				.map(this::normalizeCellText)
+				.filter(this::hasText)
+				.toList();
+		Set<String> segments = new LinkedHashSet<>();
+		for (int index = 0; index < lines.size(); index++) {
+			String line = lines.get(index);
+			if (!isOcrSegmentCandidate(line)) {
+				continue;
+			}
+			segments.add(line);
+			if (index > 0 && isOcrContextLabelLine(lines.get(index - 1))) {
+				segments.add(lines.get(index - 1) + " " + line);
+			}
+			if (index + 1 < lines.size() && isOcrSegmentContinuationLine(lines.get(index + 1))) {
+				segments.add(line + " " + lines.get(index + 1));
+			}
+			if (index > 0
+					&& index + 1 < lines.size()
+					&& isOcrContextLabelLine(lines.get(index - 1))
+					&& isOcrSegmentContinuationLine(lines.get(index + 1))) {
+				segments.add(lines.get(index - 1) + " " + line + " " + lines.get(index + 1));
+			}
+		}
+		return List.copyOf(segments);
+	}
+
+	private boolean isOcrSegmentCandidate(String line) {
+		String haystack = normalizeForSearch(line);
+		boolean hasDateSignal = OCR_EXPLICIT_DATE.matcher(line).find() || hasPotentialPeriodText(line);
+		boolean hasKeyword = containsAny(haystack, OCR_SEGMENT_KEYWORDS) || containsAny(haystack, DETAIL_KEYWORDS);
+		return hasDateSignal && hasKeyword && !isExcludedPeriodContext(line);
+	}
+
+	private boolean isOcrContextLabelLine(String line) {
+		String haystack = normalizeForSearch(line);
+		return !OCR_EXPLICIT_DATE.matcher(line).find()
+				&& containsAny(haystack, OCR_SEGMENT_KEYWORDS)
+				&& !isExcludedPeriodContext(line);
+	}
+
+	private boolean isOcrSegmentContinuationLine(String line) {
+		String haystack = normalizeForSearch(line);
+		return OCR_EXPLICIT_DATE.matcher(line).find()
+				&& (containsAny(haystack, OCR_SEGMENT_KEYWORDS) || containsAny(haystack, DETAIL_KEYWORDS));
+	}
+
+	private String preprocessOcrText(String ocrText) {
+		if (!hasText(ocrText)) {
+			return "";
+		}
+		String normalized = ocrText
+				.replace("\r\n", "\n")
+				.replace('\r', '\n')
+				.replace('\u00a0', ' ')
+				.replace('\u200b', ' ')
+				.replace('_', ' ');
+		normalized = OCR_DATE_TIME_RANGE.matcher(normalized).replaceAll("$1 ~ $2");
+		List<String> normalizedLines = Arrays.stream(normalized.split("\\n", -1))
+				.map(this::preprocessOcrLine)
+				.toList();
+		return String.join("\n", normalizedLines).trim();
+	}
+
+	private String preprocessOcrLine(String line) {
+		if (!hasText(line)) {
+			return "";
+		}
+		String normalized = line.replaceAll("\\s+", " ").trim();
+		normalized = normalized.replaceAll("\\(을(?!\\))", "(일)");
+		normalized = normalized.replaceAll("\\((월|화|수|목|금|토|일)(?!\\))", "($1)");
+		return normalized;
 	}
 
 	private String selectNoticeTitle(String extractedTitle, String fallbackTitle, String url) {
@@ -1306,6 +1728,10 @@ public class NoticeCrawlerService {
 		String context = normalizeForSearch(
 				firstText(label, "") + " " + text.substring(contextStart, contextEnd)
 		);
+		if (containsAny(context, List.of("결제", "당첨", "발표", "취소"))
+				&& !containsAny(context, List.of("재등록", "반변경", "신규접수", "신규신청", "신규회원", "회원모집"))) {
+			return false;
+		}
 		return containsAny(
 				context,
 				List.of("접수", "반변경", "재등록", "신규등록", "신규신청", "회원모집", "수강신청")
@@ -1564,15 +1990,217 @@ public class NoticeCrawlerService {
 	}
 
 	private List<MatchedPeriod> deduplicatePeriods(List<MatchedPeriod> periods) {
+		if (periods.isEmpty()) {
+			return List.of();
+		}
 		Set<String> seen = new LinkedHashSet<>();
 		List<MatchedPeriod> unique = new ArrayList<>();
 		for (MatchedPeriod period : periods) {
-			String key = period.startsAt() + "|" + period.endsAt() + "|" + normalizeForSearch(period.label());
+			MatchedPeriod canonical = canonicalizePeriodLabel(period);
+			String key = canonical.startsAt() + "|" + canonical.endsAt() + "|" + normalizeForSearch(canonical.label());
 			if (seen.add(key)) {
-				unique.add(period);
+				unique.add(canonical);
 			}
 		}
-		return unique;
+		return normalizeMatchedPeriods(unique);
+	}
+
+	private List<MatchedPeriod> normalizeMatchedPeriods(List<MatchedPeriod> periods) {
+		List<MatchedPeriod> normalized = suppressMonthlyFalsePositives(periods);
+		normalized = collapseSameRangeDuplicates(normalized);
+		normalized = removeSingleDayNoiseInsideRanges(normalized);
+		normalized = collapseSameRangeDuplicates(normalized);
+		normalized = removeUnlabeledNoise(normalized);
+		return normalized;
+	}
+
+	private MatchedPeriod canonicalizePeriodLabel(MatchedPeriod period) {
+		String canonicalLabel = canonicalizePeriodLabel(period.label());
+		if ((canonicalLabel == null && period.label() == null)
+				|| (canonicalLabel != null && canonicalLabel.equals(period.label()))) {
+			return period;
+		}
+		return new MatchedPeriod(
+				period.startsAt(),
+				period.endsAt(),
+				canonicalLabel,
+				period.periodText(),
+				period.source()
+		);
+	}
+
+	private String canonicalizePeriodLabel(String label) {
+		if (!hasText(label)) {
+			return null;
+		}
+		String normalized = normalizeForSearch(label);
+		if (normalized.contains("신규추첨")
+				|| normalized.contains("신규잔여")
+				|| normalized.contains("잔여석접수")
+				|| normalized.contains("잔여선착순")) {
+			return "신규접수";
+		}
+		return label;
+	}
+
+	private List<MatchedPeriod> suppressMonthlyFalsePositives(List<MatchedPeriod> periods) {
+		return periods.stream()
+				.filter(period -> !shouldSuppressMonthlyPeriod(period, periods))
+				.toList();
+	}
+
+	private boolean shouldSuppressMonthlyPeriod(MatchedPeriod candidate, List<MatchedPeriod> periods) {
+		if (!candidate.source().contains("monthly")) {
+			return false;
+		}
+		for (MatchedPeriod other : periods) {
+			if (other == candidate || other.source().contains("monthly")) {
+				continue;
+			}
+			if (sameDateRange(candidate, other)) {
+				return true;
+			}
+			if (candidate.startsAt().equals(candidate.endsAt())
+					&& isMultiDayRange(other)
+					&& containsDate(other, candidate.startsAt())
+					&& labelsAreCompatible(candidate.label(), other.label())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private List<MatchedPeriod> collapseSameRangeDuplicates(List<MatchedPeriod> periods) {
+		Map<String, List<MatchedPeriod>> byRange = new LinkedHashMap<>();
+		for (MatchedPeriod period : periods) {
+			byRange.computeIfAbsent(rangeKey(period), ignored -> new ArrayList<>()).add(period);
+		}
+		List<MatchedPeriod> collapsed = new ArrayList<>();
+		for (List<MatchedPeriod> sameRangePeriods : byRange.values()) {
+			boolean hasMeaningfulLabel = sameRangePeriods.stream().anyMatch(period -> hasMeaningfulLabel(period.label()));
+			boolean hasAnyLabel = sameRangePeriods.stream().anyMatch(period -> hasText(period.label()));
+			Map<String, MatchedPeriod> bestByLabel = new LinkedHashMap<>();
+			for (MatchedPeriod period : sameRangePeriods) {
+				if (hasMeaningfulLabel && !hasMeaningfulLabel(period.label())) {
+					continue;
+				}
+				if (!hasMeaningfulLabel && hasAnyLabel && !hasText(period.label())) {
+					continue;
+				}
+				String labelKey = normalizeForSearch(period.label());
+				MatchedPeriod current = bestByLabel.get(labelKey);
+				if (current == null || periodPreferenceScore(period) > periodPreferenceScore(current)) {
+					bestByLabel.put(labelKey, period);
+				}
+			}
+			if (bestByLabel.isEmpty()) {
+				collapsed.add(sameRangePeriods.getFirst());
+				continue;
+			}
+			collapsed.addAll(bestByLabel.values());
+		}
+		return collapsed;
+	}
+
+	private List<MatchedPeriod> removeSingleDayNoiseInsideRanges(List<MatchedPeriod> periods) {
+		List<MatchedPeriod> filtered = new ArrayList<>();
+		for (MatchedPeriod period : periods) {
+			if (!isSingleDay(period)) {
+				filtered.add(period);
+				continue;
+			}
+			boolean coveredByRange = periods.stream()
+					.filter(other -> other != period)
+					.anyMatch(other -> isMultiDayRange(other)
+							&& containsDate(other, period.startsAt())
+							&& labelsAreCompatible(period.label(), other.label()));
+			if (!coveredByRange) {
+				filtered.add(period);
+			}
+		}
+		return filtered;
+	}
+
+	private List<MatchedPeriod> removeUnlabeledNoise(List<MatchedPeriod> periods) {
+		boolean hasMeaningfulLabel = periods.stream().anyMatch(period -> hasMeaningfulLabel(period.label()));
+		if (!hasMeaningfulLabel) {
+			return periods;
+		}
+		return periods.stream()
+				.filter(period -> hasText(period.label()))
+				.toList();
+	}
+
+	private boolean hasMeaningfulLabel(String label) {
+		return hasText(label) && !isGenericLabel(label);
+	}
+
+	private String labelCategory(String label) {
+		if (!hasText(label)) {
+			return "";
+		}
+		String normalized = normalizeForSearch(label);
+		if (normalized.contains("재등록")) {
+			return "재등록";
+		}
+		if (normalized.contains("반변경")) {
+			return "반변경";
+		}
+		if (normalized.contains("신규")) {
+			return "신규";
+		}
+		if (normalized.contains("접수기간")) {
+			return "접수기간";
+		}
+		return normalized;
+	}
+
+	private int periodPreferenceScore(MatchedPeriod period) {
+		int score = 0;
+		if (hasMeaningfulLabel(period.label())) {
+			score += 100;
+		} else if (hasText(period.label())) {
+			score += 50;
+		}
+		if (!period.source().contains("monthly")) {
+			score += 20;
+		}
+		if (isMultiDayRange(period)) {
+			score += 10;
+		}
+		score += normalizeForSearch(period.label()).length();
+		return score;
+	}
+
+	private boolean sameDateRange(MatchedPeriod left, MatchedPeriod right) {
+		return left.startsAt().equals(right.startsAt()) && left.endsAt().equals(right.endsAt());
+	}
+
+	private String rangeKey(MatchedPeriod period) {
+		return period.startsAt() + "|" + period.endsAt();
+	}
+
+	private boolean isSingleDay(MatchedPeriod period) {
+		return period.startsAt().equals(period.endsAt());
+	}
+
+	private boolean isMultiDayRange(MatchedPeriod period) {
+		return !isSingleDay(period);
+	}
+
+	private boolean containsDate(MatchedPeriod range, LocalDate date) {
+		return (!date.isBefore(range.startsAt())) && (!date.isAfter(range.endsAt()));
+	}
+
+	private boolean labelsAreCompatible(String firstLabel, String secondLabel) {
+		if (!hasText(firstLabel) || !hasText(secondLabel)) {
+			return true;
+		}
+		String firstCategory = labelCategory(firstLabel);
+		String secondCategory = labelCategory(secondLabel);
+		return firstCategory.equals(secondCategory)
+				|| isGenericLabel(firstLabel)
+				|| isGenericLabel(secondLabel);
 	}
 
 	private MatchedPeriod selectRepresentativePeriod(List<MatchedPeriod> matchedPeriods) {
@@ -1944,6 +2572,9 @@ public class NoticeCrawlerService {
 	}
 
 	private record MatchedPeriod(LocalDate startsAt, LocalDate endsAt, String label, String periodText, String source) {
+	}
+
+	private record NoticeTextExtractionOutcome(String rawText, NoticeExtractionResult result) {
 	}
 
 	private record ScannedNoticeDetail(

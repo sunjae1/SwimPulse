@@ -205,6 +205,414 @@ class NoticeCrawlerServiceTests {
 	}
 
 	@Test
+	void detailNoticeCandidatesSupportFnViewOnclickLinks() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<form>
+							<input type="hidden" name="bbsId" value="NOTICE">
+						</form>
+						<div id="content">
+							<table>
+								<tbody>
+									<tr>
+										<td>갈매멀티스포츠센터</td>
+										<td>
+											<a href="#none" onclick="fn_view(6593);">
+												[갈매멀티스포츠센터] 2026년 6월 종목별 회원모집 안내
+											</a>
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</body>
+				</html>
+				""", "https://www.guriuc.or.kr/sports/bbsArticle/list.do?bbsId=NOTICE");
+
+		List<String> candidates = detailCandidateUrls(
+				service,
+				"https://www.guriuc.or.kr/sports/main/main.do",
+				"https://www.guriuc.or.kr/sports/bbsArticle/list.do?bbsId=NOTICE",
+				document
+		);
+
+		assertEquals(List.of("https://www.guriuc.or.kr/sports/bbsArticle/view.do?seq=6593&bbsId=NOTICE"), candidates);
+	}
+
+	@Test
+	void detailNoticeCandidatesPreferRealContentAreaOverGenericPopupContent() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<head><title>공지사항 | 구리도시공사</title></head>
+					<body>
+						<div id="slideUpDiv">
+							<div class="content">
+								<img src="/sports/images/avatar.png" alt="mobile card">
+							</div>
+						</div>
+						<div id="container">
+							<form>
+								<input type="hidden" name="bbsId" value="NOTICE">
+							</form>
+							<table>
+								<caption>공지사항 게시판</caption>
+								<tbody>
+									<tr>
+										<td>갈매멀티스포츠센터</td>
+										<td>
+											<a href="#none" onclick="fn_view(6593);">
+												[갈매멀티스포츠센터] 2026년 6월 종목별 회원모집 안내
+											</a>
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</body>
+				</html>
+				""", "https://www.guriuc.or.kr/sports/bbsArticle/list.do?bbsId=NOTICE");
+
+		assertEquals(List.of("https://www.guriuc.or.kr/sports/bbsArticle/view.do?seq=6593&bbsId=NOTICE"), detailCandidateUrls(
+				service,
+				"https://www.guriuc.or.kr/sports/main/main.do",
+				"https://www.guriuc.or.kr/sports/bbsArticle/list.do?bbsId=NOTICE",
+				document
+		));
+	}
+
+	@Test
+	void noticeOcrImageSelectionPrioritizesTbodyAndSmartEditorImages() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<header>
+							<img src="/sports/images/common/logo.svg" alt="site logo">
+						</header>
+						<div id="content">
+							<img src="/sports/images/banner.png" alt="시설 안내 배너">
+							<div class="tbody">
+								<img src="/sports/images/avatar.png" alt="profile avatar">
+								<img src="/sportsman/smartEditor/upload/notice-priority.jpg" alt="공지 안내문">
+								<img src="/sports/uploads/notice-second.png" alt="본문 공지 이미지">
+							</div>
+							<img src="/sports/main/mberBarcodeImgView.do" alt="barcode image">
+							<img src="/sportsman/smartEditor/upload/notice-third.jpg" alt="본문 외 업로드 이미지">
+						</div>
+					</body>
+				</html>
+				""", "https://www.guriuc.or.kr/sports/bbsArticle/view.do?seq=6790&bbsId=NOTICE");
+
+		assertEquals(List.of(
+				"https://www.guriuc.or.kr/sportsman/smartEditor/upload/notice-priority.jpg",
+				"https://www.guriuc.or.kr/sports/uploads/notice-second.png",
+				"https://www.guriuc.or.kr/sportsman/smartEditor/upload/notice-third.jpg",
+				"https://www.guriuc.or.kr/sports/images/banner.png"
+		), selectNoticeOcrImageUrls(service, document));
+	}
+
+	@Test
+	void buildNoticeBodyTextUsesScopedMainContentInsteadOfWholeDocumentText() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<nav>
+							<a href="/refund">환불안내</a>
+						</nav>
+						<div id="content">
+							<p>갈매멀티스포츠센터 회원모집 안내</p>
+							<p>접수기간 : 6월 15일(월) ~ 6월 19일(금)</p>
+						</div>
+						<footer>사이트맵</footer>
+					</body>
+				</html>
+				""");
+
+		String text = buildNoticeBodyText(service, "7월 회원 모집 안내", document);
+
+		assertTrue(text.contains("접수기간 : 6월 15일(월) ~ 6월 19일(금)"));
+		assertFalse(text.contains("환불안내"));
+		assertFalse(text.contains("사이트맵"));
+	}
+
+	@Test
+	void imageOcrIsNotCalledWhenHtmlRuleParsingAlreadyFindsPeriod() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("매월 20일 ~ 25일");
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>수영 신규접수 : 매월 17일 ~ 22일</p>
+						<img src="https://example.com/notice.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"6월 수영 회원 모집 안내",
+				"https://example.com/notices/1",
+				"6월 수영 회원 모집 안내\n수영 신규접수 : 매월 17일 ~ 22일",
+				document,
+				List.of("https://example.com/notice.png")
+		);
+
+		assertTrue(outcome.result().hasPeriod());
+		assertEquals(0, ocrService.callCount());
+		assertFalse(outcome.rawText().contains("[OCR IMAGE TEXT]"));
+	}
+
+	@Test
+	void imageOcrRetryUsesExtractedTextWhenHtmlParsingMissesPeriod() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("수영 신규접수 : 매월 24일 ~ 말일");
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>갈매멀티스포츠센터 회원모집 안내</p>
+						<img src="https://example.com/notice.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"갈매멀티스포츠센터 6월 회원 모집 안내",
+				"https://example.com/notices/2",
+				"갈매멀티스포츠센터 6월 회원 모집 안내\n회원모집 안내",
+				document,
+				List.of("https://example.com/notice.png")
+		);
+
+		assertEquals(1, ocrService.callCount());
+		assertTrue(outcome.rawText().contains("[OCR IMAGE TEXT]"));
+		assertTrue(outcome.result().hasPeriod());
+		assertEquals(1, outcome.result().registrationPeriods().size());
+		assertEquals("매월 24일 ~ 말일", outcome.result().registrationPeriods().getFirst().periodText());
+	}
+
+	@Test
+	void imageOcrRetryParsesTimedDateRangesByLineSegments() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("""
+				2026년 7월 종목별 강습반 모집 안내
+				(재등록) 6월 15일(월) ~ 6월 19일(금) (06:00 ~ 22:00)
+				(반변경) 6월 20일(토) ~ 6월 21일(일) (06:00 ~ 22:00)
+				(신규추첨접수 온라인) 6월 22일(월) 08:00 ~ 6월 24일(수) 15:00
+				환불안내
+				(신규잔여석접수 온라인) 6월 27일(토) ~ 6월 30일(화) (06:00 ~ 22:00)
+				""");
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>갈매멀티스포츠센터 회원모집 안내</p>
+						<img src="https://example.com/notice.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"갈매멀티스포츠센터 7월 회원 모집 안내",
+				"https://example.com/notices/5",
+				"갈매멀티스포츠센터 7월 회원 모집 안내\n회원모집 안내",
+				document,
+				List.of("https://example.com/notice.png")
+		);
+
+		assertTrue(outcome.result().hasPeriod());
+		assertTrue(outcome.rawText().contains("6월 22일(월) ~ 6월 24일(수)"));
+		assertPeriod(outcome.result().registrationPeriods(), "재등록", 6, 15, 6, 19);
+		assertPeriod(outcome.result().registrationPeriods(), "반변경", 6, 20, 6, 21);
+		assertPeriodExists(outcome.result().registrationPeriods(), 6, 22, 6, 24);
+		assertPeriodExists(outcome.result().registrationPeriods(), 6, 27, 6, 30);
+	}
+
+	@Test
+	void imageOcrRetryNormalizesDuplicateRangeFragmentsAndSuppressesMonthlyFalsePositive() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("""
+				2026년 7월 종목별 강습반 모집 안내
+				(재등록) 6월 15일(월) ~ 6월 19일(금) (06:00 ~ 22:00)
+				(반변경) 6월 20일(토) ~ 6월 21일(일) (06:00 ~ 22:00)
+				(신규추첨접수 온라인) 6월 22일(월) 08:00 ~ 6월 24일(수) 15:00
+				(신규결제) 당첨자 발표 후(17:00)~ 6월 26일(금) 22:00까지 (온라인 결제만 가능), 기한 내 미결제 시 당첨 취소
+				(잔여 선착순) 6월 27일(토) ~ 6월 30일(화) (06:00 ~ 22:00)
+				*접수방법 홈페이지 온라인 접수 또는 (반 변경)현장 방문접수
+				※ 추첨 종목 신규접수는 매월 27일 접수
+				""");
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>갈매멀티스포츠센터 회원모집 안내</p>
+						<img src="https://example.com/notice.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"갈매멀티스포츠센터 7월 회원 모집 안내",
+				"https://example.com/notices/6",
+				"갈매멀티스포츠센터 7월 회원 모집 안내\n회원모집 안내",
+				document,
+				List.of("https://example.com/notice.png")
+		);
+
+		assertTrue(outcome.result().hasPeriod());
+		assertEquals(4, outcome.result().registrationPeriods().size());
+		assertPeriod(outcome.result().registrationPeriods(), "재등록", 6, 15, 6, 19);
+		assertPeriod(outcome.result().registrationPeriods(), "반변경", 6, 20, 6, 21);
+		assertTrue(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> "신규접수".equals(period.label())
+						&& toSeoulDate(period.startsAt()).equals(LocalDate.of(2026, 6, 22))
+						&& toSeoulDate(period.endsAt()).equals(LocalDate.of(2026, 6, 24))));
+		assertTrue(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> "신규접수".equals(period.label())
+						&& toSeoulDate(period.startsAt()).equals(LocalDate.of(2026, 6, 27))
+						&& toSeoulDate(period.endsAt()).equals(LocalDate.of(2026, 6, 30))));
+		assertFalse(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> period.startsAt().equals(period.endsAt())));
+		assertFalse(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> period.periodText() != null && period.periodText().contains("매월 27일")));
+		assertFalse(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> period.label() == null));
+	}
+
+	@Test
+	void imageOcrFailureFallsBackToInitialHtmlResult() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService(new RuntimeException("tesseract missing"));
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>갈매멀티스포츠센터 회원모집 안내</p>
+						<img src="https://example.com/notice.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"갈매멀티스포츠센터 6월 회원 모집 안내",
+				"https://example.com/notices/3",
+				"갈매멀티스포츠센터 6월 회원 모집 안내\n회원모집 안내",
+				document,
+				List.of("https://example.com/notice.png")
+		);
+
+		assertEquals(1, ocrService.callCount());
+		assertFalse(outcome.result().hasPeriod());
+		assertFalse(outcome.rawText().contains("[OCR IMAGE TEXT]"));
+	}
+
+	@Test
+	void emptyImageOcrTextKeepsInitialHtmlResult() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("   ");
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>갈매멀티스포츠센터 회원모집 안내</p>
+						<img src="https://example.com/notice.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"갈매멀티스포츠센터 6월 회원 모집 안내",
+				"https://example.com/notices/4",
+				"갈매멀티스포츠센터 6월 회원 모집 안내\n회원모집 안내",
+				document,
+				List.of("https://example.com/notice.png")
+		);
+
+		assertEquals(1, ocrService.callCount());
+		assertFalse(outcome.result().hasPeriod());
+		assertFalse(outcome.rawText().contains("[OCR IMAGE TEXT]"));
+	}
+
+	@Test
+	void resolvesFnViewDetailUrlFromPlaceholderAnchor() throws Exception {
+		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<form>
+							<input type="hidden" name="bbsId" value="NOTICE">
+						</form>
+						<a href="#none" onclick="fn_view(6593);">
+							[갈매멀티스포츠센터] 2026년 6월 종목별 회원모집 안내
+						</a>
+					</body>
+				</html>
+				""", "https://www.guriuc.or.kr/sports/bbsArticle/list.do?bbsId=NOTICE");
+		Element link = document.selectFirst("a[href]");
+
+		String detailUrl = resolveDetailNoticeUrl(
+				service,
+				"https://www.guriuc.or.kr/sports/bbsArticle/list.do?bbsId=NOTICE",
+				document,
+				link
+		);
+
+		assertEquals("https://www.guriuc.or.kr/sports/bbsArticle/view.do?seq=6593&bbsId=NOTICE", detailUrl);
+	}
+
+	@Test
 	void extractsMonthlyRegistrationPeriodFromInlinePageText() throws Exception {
 		NoticeCrawlerService service = new NoticeCrawlerService(null, null, null, null, new ObjectMapper(), false);
 		Document document = Jsoup.parse("""
@@ -464,6 +872,100 @@ class NoticeCrawlerServiceTests {
 		return candidates.size();
 	}
 
+	private List<String> detailCandidateUrls(
+			NoticeCrawlerService service,
+			String homepageUrl,
+			String noticeListUrl,
+			Document document
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"discoverDetailNoticeUrls",
+				String.class,
+				String.class,
+				Document.class
+		);
+		method.setAccessible(true);
+		List<?> candidates = (List<?>) method.invoke(service, homepageUrl, noticeListUrl, document);
+		List<String> urls = new java.util.ArrayList<>();
+		for (Object candidate : candidates) {
+			Method urlMethod = candidate.getClass().getDeclaredMethod("url");
+			urlMethod.setAccessible(true);
+			urls.add((String) urlMethod.invoke(candidate));
+		}
+		return urls;
+	}
+
+	private String resolveDetailNoticeUrl(
+			NoticeCrawlerService service,
+			String noticeListUrl,
+			Document document,
+			Element link
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"resolveDetailNoticeUrl",
+				String.class,
+				Document.class,
+				Element.class
+		);
+		method.setAccessible(true);
+		return (String) method.invoke(service, noticeListUrl, document, link);
+	}
+
+	private NoticeTextExtractionOutcomeView extractNoticeDetail(
+			NoticeCrawlerService service,
+			String title,
+			String url,
+			String text,
+			Document document,
+			List<String> imageUrls
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"extractNoticeDetail",
+				String.class,
+				String.class,
+				String.class,
+				Document.class,
+				List.class
+		);
+		method.setAccessible(true);
+		Object outcome = method.invoke(service, title, url, text, document, imageUrls);
+		Method rawTextMethod = outcome.getClass().getDeclaredMethod("rawText");
+		Method resultMethod = outcome.getClass().getDeclaredMethod("result");
+		rawTextMethod.setAccessible(true);
+		resultMethod.setAccessible(true);
+		return new NoticeTextExtractionOutcomeView(
+				(String) rawTextMethod.invoke(outcome),
+				(NoticeExtractionResult) resultMethod.invoke(outcome)
+		);
+	}
+
+	private String buildNoticeBodyText(
+			NoticeCrawlerService service,
+			String title,
+			Document document
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"buildNoticeBodyText",
+				String.class,
+				Document.class
+		);
+		method.setAccessible(true);
+		return (String) method.invoke(service, title, document);
+	}
+
+	@SuppressWarnings("unchecked")
+	private List<String> selectNoticeOcrImageUrls(
+			NoticeCrawlerService service,
+			Document document
+	) throws Exception {
+		Method method = NoticeCrawlerService.class.getDeclaredMethod(
+				"selectNoticeOcrImageUrls",
+				Document.class
+		);
+		method.setAccessible(true);
+		return (List<String>) method.invoke(service, document);
+	}
+
 	private void assertPeriod(
 			List<NoticeRegistrationPeriod> periods,
 			String label,
@@ -480,6 +982,22 @@ class NoticeCrawlerServiceTests {
 		int year = LocalDate.now(SEOUL).getYear();
 		assertEquals(LocalDate.of(year, startMonth, startDay), toSeoulDate(period.startsAt()));
 		assertEquals(LocalDate.of(year, endMonth, endDay), toSeoulDate(period.endsAt()));
+	}
+
+	private void assertPeriodExists(
+			List<NoticeRegistrationPeriod> periods,
+			int startMonth,
+			int startDay,
+			int endMonth,
+			int endDay
+	) {
+		int year = LocalDate.now(SEOUL).getYear();
+		NoticeRegistrationPeriod period = periods.stream()
+				.filter(candidate -> LocalDate.of(year, startMonth, startDay).equals(toSeoulDate(candidate.startsAt()))
+						&& LocalDate.of(year, endMonth, endDay).equals(toSeoulDate(candidate.endsAt())))
+				.findFirst()
+				.orElse(null);
+		assertNotNull(period, "Expected period range: " + startMonth + "/" + startDay + " ~ " + endMonth + "/" + endDay);
 	}
 
 	private LocalDate toSeoulDate(Instant instant) {
@@ -538,5 +1056,37 @@ class NoticeCrawlerServiceTests {
 		assertNotNull(period, "Expected period label/text: " + label + " / " + periodText);
 		assertEquals(expected[0], toSeoulDate(period.startsAt()));
 		assertEquals(expected[1], toSeoulDate(period.endsAt()));
+	}
+
+	private record NoticeTextExtractionOutcomeView(String rawText, NoticeExtractionResult result) {
+	}
+
+	private static final class FakeNoticeImageOcrService implements NoticeImageOcrService {
+		private final String text;
+		private final RuntimeException exception;
+		private int callCount;
+
+		private FakeNoticeImageOcrService(String text) {
+			this.text = text;
+			this.exception = null;
+		}
+
+		private FakeNoticeImageOcrService(RuntimeException exception) {
+			this.text = null;
+			this.exception = exception;
+		}
+
+		@Override
+		public NoticeImageOcrResult extractText(List<String> imageUrls) {
+			callCount++;
+			if (exception != null) {
+				throw exception;
+			}
+			return new NoticeImageOcrResult(text, imageUrls.size(), text == null || text.isBlank() ? 0 : 1, "fake");
+		}
+
+		private int callCount() {
+			return callCount;
+		}
 	}
 }

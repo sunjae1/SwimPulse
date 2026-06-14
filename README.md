@@ -57,6 +57,11 @@ NAVER_SEARCH_CLIENT_ID=
 NAVER_SEARCH_CLIENT_SECRET=
 OPENAI_API_KEY=
 SWIMPULSE_OPENAI_MODEL=gpt-5.4-mini
+SWIMPULSE_NOTICE_OCR_ENABLED=true
+SWIMPULSE_NOTICE_OCR_COMMAND=tesseract
+SWIMPULSE_NOTICE_OCR_LANGUAGES=kor+eng
+SWIMPULSE_NOTICE_OCR_MAX_IMAGES=3
+SWIMPULSE_NOTICE_OCR_TIMEOUT_MS=15000
 ```
 
 Docker Compose에서는 이 값들이 `env_file: ./backend/.env`로 백엔드 컨테이너에 주입됩니다. 백엔드 컨테이너 내부에서 로컬 PC의 MySQL에 붙을 때는 `localhost`가 아니라 `host.docker.internal`을 사용합니다. Redis는 compose 서비스명이 `redis`이므로 그대로 `redis`를 사용합니다.
@@ -194,6 +199,14 @@ await fetch("/api/pools/notice-sources/reverify?limit=20", {
 전체 경로 탐색은 pool별로 기본 24시간에 한 번만 수행하고, `FAILED` 경로 자체의 재검증은 기본 7일 후 허용됩니다.
 
 상세 공지 분석 결과에는 `parser_version`과 `last_analyzed_at`이 저장됩니다. 현재 파서 버전으로 분석된 정상 결과는 모집 기간이 한 개뿐이어도 DB 결과를 재사용하며, 파서 버전을 올린 경우에만 기존 상세 페이지를 다시 분석합니다.
+
+이미지 기반 상세 공지 처리:
+
+- 상세 본문 HTML에서 모집 기간을 못 찾으면 `img[src]` 이미지를 대상으로 로컬 OCR를 한 번 더 시도합니다.
+- OCR는 backend Docker 이미지 안의 `tesseract`를 사용합니다.
+- 이번 단계에서는 OpenAI fallback을 사용하지 않습니다. `OPENAI_API_KEY`가 있어도 공지 추출 경로에서는 호출하지 않습니다.
+- OCR 대상은 `img[src]`만이며 PDF, canvas, CSS background image는 범위 밖입니다.
+- OCR 설정을 바꿨거나 Dockerfile이 바뀌었으면 backend 이미지를 재빌드해야 합니다.
 
 모집 기간 저장 관계:
 
