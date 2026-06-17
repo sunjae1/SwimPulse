@@ -5,9 +5,15 @@ import com.swimpulse.common.RedisSingleFlightService;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -64,7 +70,7 @@ public class NaverMapsGeocodingClient {
 
 	public Optional<Coordinates> geocode(String address) {
 		String rawKey = normalizeCacheInput(address);
-		String cacheKey = "swimpulse:cache:geocode:v1:" + redisCache.hash(rawKey);
+		String cacheKey = geocodeCacheKey(rawKey);
 		log.debug("Naver maps geocode cache lookup. cache=geocode rawKey={} cacheKey={}", rawKey, cacheKey);
 		return singleFlightService.getOrLoad(
 				"geocode",
@@ -81,6 +87,96 @@ public class NaverMapsGeocodingClient {
 						cachedCoordinates.found() ? geocodeSuccessTtl : geocodeFailureTtl
 				)
 		).toCoordinates();
+	}
+
+	public Map<String, GeocodeBatchResult> geocodeAll(Collection<String> addresses, int maxConcurrency) {
+		LinkedHashMap<String, String> addressByCacheKey = new LinkedHashMap<>();
+		for (String address : addresses) {
+			if (!hasText(address)) {
+				continue;
+			}
+			String normalized = normalizeCacheInput(address);
+			addressByCacheKey.putIfAbsent(geocodeCacheKey(normalized), address);
+		}
+		if (addressByCacheKey.isEmpty()) {
+			return Map.of();
+		}
+
+		Map<String, CachedCoordinates> cachedByKey = redisCache.getMany(
+				"geocode",
+				List.copyOf(addressByCacheKey.keySet()),
+				CachedCoordinates.class
+		);
+		Map<String, GeocodeBatchResult> resultsByKey = new LinkedHashMap<>();
+		cachedByKey.forEach((key, value) -> resultsByKey.put(key, GeocodeBatchResult.from(value)));
+
+		List<Map.Entry<String, String>> misses = addressByCacheKey.entrySet()
+				.stream()
+				.filter(entry -> !cachedByKey.containsKey(entry.getKey()))
+				.toList();
+		if (!misses.isEmpty()) {
+			resultsByKey.putAll(loadMissingGeocodes(misses, Math.max(1, maxConcurrency)));
+		}
+
+		Map<String, GeocodeBatchResult> resultsByAddress = new LinkedHashMap<>();
+		for (String address : addresses) {
+			if (!hasText(address)) {
+				continue;
+			}
+			String cacheKey = geocodeCacheKey(normalizeCacheInput(address));
+			GeocodeBatchResult result = resultsByKey.get(cacheKey);
+			if (result != null) {
+				resultsByAddress.put(address, result);
+			}
+		}
+		return resultsByAddress;
+	}
+
+	private Map<String, GeocodeBatchResult> loadMissingGeocodes(
+			List<Map.Entry<String, String>> misses,
+			int maxConcurrency
+	) {
+		ExecutorService executor = Executors.newFixedThreadPool(maxConcurrency);
+		try {
+			List<CompletableFuture<Map.Entry<String, GeocodeBatchResult>>> futures = misses.stream()
+					.map(entry -> CompletableFuture.supplyAsync(() -> Map.entry(
+							entry.getKey(),
+							loadMissingGeocode(entry.getKey(), entry.getValue())
+					), executor))
+					.toList();
+			CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+			Map<String, GeocodeBatchResult> results = new LinkedHashMap<>();
+			for (CompletableFuture<Map.Entry<String, GeocodeBatchResult>> future : futures) {
+				Map.Entry<String, GeocodeBatchResult> entry = future.join();
+				results.put(entry.getKey(), entry.getValue());
+			}
+			return results;
+		} finally {
+			executor.shutdown();
+		}
+	}
+
+	private GeocodeBatchResult loadMissingGeocode(String cacheKey, String address) {
+		try {
+			CachedCoordinates coordinates = singleFlightService.loadAfterMiss(
+					"geocode",
+					cacheKey,
+					CachedCoordinates.class,
+					singleFlightLockTtl,
+					singleFlightWaitTimeout,
+					singleFlightPollInterval,
+					() -> requestGeocode(address),
+					cachedCoordinates -> redisCache.put(
+							"geocode",
+							cacheKey,
+							cachedCoordinates,
+							cachedCoordinates.found() ? geocodeSuccessTtl : geocodeFailureTtl
+					)
+			);
+			return GeocodeBatchResult.from(coordinates);
+		} catch (RuntimeException exception) {
+			return GeocodeBatchResult.failure(exception);
+		}
 	}
 
 	private CachedCoordinates requestGeocode(String address) {
@@ -243,11 +339,35 @@ public class NaverMapsGeocodingClient {
 		return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
 	}
 
+	private String geocodeCacheKey(String normalizedAddress) {
+		return "swimpulse:cache:geocode:v1:" + redisCache.hash(normalizedAddress);
+	}
+
 	private String bucket(double value) {
 		return String.format(Locale.ROOT, "%.4f", value);
 	}
 
 	public record Coordinates(double latitude, double longitude) {
+	}
+
+	public record GeocodeBatchResult(Optional<Coordinates> coordinates, RuntimeException exception) {
+		public static GeocodeBatchResult hit(Coordinates coordinates) {
+			return new GeocodeBatchResult(Optional.of(coordinates), null);
+		}
+
+		public static GeocodeBatchResult miss() {
+			return new GeocodeBatchResult(Optional.empty(), null);
+		}
+
+		public static GeocodeBatchResult failure(RuntimeException exception) {
+			return new GeocodeBatchResult(Optional.empty(), exception);
+		}
+
+		private static GeocodeBatchResult from(CachedCoordinates cachedCoordinates) {
+			return cachedCoordinates.toCoordinates()
+					.map(GeocodeBatchResult::hit)
+					.orElseGet(GeocodeBatchResult::miss);
+		}
 	}
 
 	private record CachedCoordinates(boolean found, Double latitude, Double longitude) {

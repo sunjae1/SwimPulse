@@ -7,6 +7,7 @@ import com.swimpulse.location.LocationSearchCandidate;
 import com.swimpulse.location.LocationService;
 import com.swimpulse.location.NaverLocalSearchClient;
 import com.swimpulse.pool.NaverMapsGeocodingClient.Coordinates;
+import com.swimpulse.pool.NaverMapsGeocodingClient.GeocodeBatchResult;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Comparator;
@@ -30,6 +31,7 @@ public class PoolService {
 	private static final int MAX_LOCATION_CANDIDATE_RADIUS_METERS = 20_000;
 	private static final int DEFAULT_LOCATION_CANDIDATE_DISPLAY = 10;
 	private static final int MAX_LOCATION_CANDIDATE_DISPLAY = 10;
+	private static final int LOCATION_CANDIDATE_GEOCODE_CONCURRENCY = 3;
 	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
 	private static final List<String> STRONG_POOL_CANDIDATE_TITLE_KEYWORDS = List.of(
 			"수영장",
@@ -144,10 +146,12 @@ public class PoolService {
 		log.info("Pool location candidate search started. latitude={} longitude={} radius={} query={} display={}",
 				latitude, longitude, normalizedRadius, searchQuery, normalizedDisplay);
 
-		List<ResolvedLocationCandidate> resolvedCandidates = naverLocalSearchClient.searchPoolLocationCandidates(searchQuery, normalizedDisplay)
+		List<LocationSearchCandidate> relevantCandidates = naverLocalSearchClient.searchPoolLocationCandidates(searchQuery, normalizedDisplay)
 				.stream()
 				.filter(this::isRelevantPoolLocationCandidate)
-				.map(candidate -> resolveLocationCandidate(candidate, latitude, longitude))
+				.toList();
+		List<ResolvedLocationCandidate> resolvedCandidates = resolveLocationCandidates(relevantCandidates, latitude, longitude)
+				.stream()
 				.filter(candidate -> candidate.latitude() != null && candidate.longitude() != null)
 				.filter(candidate -> candidate.distanceMeters() <= normalizedRadius)
 				.sorted(Comparator.comparingDouble(ResolvedLocationCandidate::distanceMeters))
@@ -159,7 +163,7 @@ public class PoolService {
 				.map(candidate -> enrichLocationCandidate(candidate, matchLookup.find(candidate.candidate())))
 				.toList();
 		log.info("Pool location candidate search completed. query={} candidateCount={} resultCount={} exactMatchPoolCount={}",
-				searchQuery, resolvedCandidates.size(), candidates.size(), matchLookup.poolCount());
+				searchQuery, relevantCandidates.size(), candidates.size(), matchLookup.poolCount());
 		return candidates;
 	}
 
@@ -606,8 +610,28 @@ public class PoolService {
 				.toLowerCase(Locale.ROOT);
 	}
 
+	private List<ResolvedLocationCandidate> resolveLocationCandidates(
+			List<LocationSearchCandidate> candidates,
+			Double originLatitude,
+			Double originLongitude
+	) {
+		List<String> addresses = candidates.stream()
+				.map(this::resolveCandidateAddress)
+				.filter(this::hasText)
+				.distinct()
+				.toList();
+		Map<String, GeocodeBatchResult> geocodedByAddress = naverMapsGeocodingClient.geocodeAll(
+				addresses,
+				LOCATION_CANDIDATE_GEOCODE_CONCURRENCY
+		);
+		return candidates.stream()
+				.map(candidate -> resolveLocationCandidate(candidate, geocodedByAddress, originLatitude, originLongitude))
+				.toList();
+	}
+
 	private ResolvedLocationCandidate resolveLocationCandidate(
 			LocationSearchCandidate candidate,
+			Map<String, GeocodeBatchResult> geocodedByAddress,
 			Double originLatitude,
 			Double originLongitude
 	) {
@@ -615,24 +639,35 @@ public class PoolService {
 		if (!hasText(address)) {
 			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
 		}
-		try {
-			Coordinates coordinates = naverMapsGeocodingClient.geocode(address).orElse(null);
-			if (coordinates == null) {
-				return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
-			}
-			double distance = locationService.distanceMeters(
-					originLatitude,
-					originLongitude,
-					coordinates.latitude(),
-					coordinates.longitude()
-			);
-			return new ResolvedLocationCandidate(candidate, coordinates.latitude(), coordinates.longitude(), distance);
-		} catch (RestClientResponseException exception) {
-			throwIfRateLimited("Naver Maps geocoding request failed", exception);
-			log.warn("Pool location candidate geocode failed. title={} status={} {}",
-					candidate.title(), exception.getStatusCode().value(), exception.getStatusText());
+		GeocodeBatchResult result = geocodedByAddress.get(address);
+		if (result == null) {
 			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
 		}
+		RuntimeException exception = result.exception();
+		if (exception != null) {
+			if (exception instanceof RestClientResponseException restClientResponseException) {
+				throwIfRateLimited("Naver Maps geocoding request failed", restClientResponseException);
+				log.warn("Pool location candidate geocode failed. title={} status={} {}",
+						candidate.title(),
+						restClientResponseException.getStatusCode().value(),
+						restClientResponseException.getStatusText());
+			} else {
+				log.warn("Pool location candidate geocode failed. title={} message={}",
+						candidate.title(), exception.getMessage());
+			}
+			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
+		}
+		Coordinates coordinates = result.coordinates().orElse(null);
+		if (coordinates == null) {
+			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
+		}
+		double distance = locationService.distanceMeters(
+				originLatitude,
+				originLongitude,
+				coordinates.latitude(),
+				coordinates.longitude()
+		);
+		return new ResolvedLocationCandidate(candidate, coordinates.latitude(), coordinates.longitude(), distance);
 	}
 
 	private PoolLocationCandidateResponse enrichLocationCandidate(ResolvedLocationCandidate candidate, Pool exactMatch) {

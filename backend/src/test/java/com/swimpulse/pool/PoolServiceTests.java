@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +17,7 @@ import com.swimpulse.location.LocationService;
 import com.swimpulse.location.LocationSearchCandidate;
 import com.swimpulse.location.NaverLocalSearchClient;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -139,8 +142,11 @@ class PoolServiceTests {
 		when(naverMapsGeocodingClient.reverseGeocode(37.5, 126.7))
 				.thenReturn(Optional.of("경기도 부천시 원미구 중동"));
 		when(naverLocalSearchClient.searchPoolLocationCandidates("경기도 부천시 원미구 수영장", 10)).thenReturn(List.of(candidate));
-		when(naverMapsGeocodingClient.geocode("경기도 부천시 원미구 석천로 293"))
-				.thenReturn(Optional.of(new NaverMapsGeocodingClient.Coordinates(37.5001, 126.7001)));
+		when(naverMapsGeocodingClient.geocodeAll(List.of("경기도 부천시 원미구 석천로 293"), 3))
+				.thenReturn(Map.of(
+						"경기도 부천시 원미구 석천로 293",
+						NaverMapsGeocodingClient.GeocodeBatchResult.hit(new NaverMapsGeocodingClient.Coordinates(37.5001, 126.7001))
+				));
 		when(poolRepository.findMatchingCandidates(any(), any(), any())).thenReturn(List.of(matchedPool));
 		when(locationService.distanceMeters(37.5, 126.7, 37.5001, 126.7001)).thenReturn(15.0);
 
@@ -181,10 +187,16 @@ class PoolServiceTests {
 				.thenReturn(Optional.of("경기도 부천시 원미구 중동"));
 		when(naverLocalSearchClient.searchPoolLocationCandidates("경기도 부천시 원미구 체육센터", 10))
 				.thenReturn(List.of(strongTitleCandidate, categoryCandidate, irrelevantCandidate));
-		when(naverMapsGeocodingClient.geocode("경기도 부천시 원미구 체육로 1"))
-				.thenReturn(Optional.of(new NaverMapsGeocodingClient.Coordinates(37.5001, 126.7001)));
-		when(naverMapsGeocodingClient.geocode("경기도 부천시 소사구 공공로 2"))
-				.thenReturn(Optional.of(new NaverMapsGeocodingClient.Coordinates(37.5002, 126.7002)));
+		when(naverMapsGeocodingClient.geocodeAll(argThat(addresses ->
+				addresses.contains("경기도 부천시 원미구 체육로 1")
+						&& addresses.contains("경기도 부천시 소사구 공공로 2")
+						&& !addresses.contains("경기도 부천시 원미구 카페로 3")
+		), eq(3))).thenReturn(Map.of(
+				"경기도 부천시 원미구 체육로 1",
+				NaverMapsGeocodingClient.GeocodeBatchResult.hit(new NaverMapsGeocodingClient.Coordinates(37.5001, 126.7001)),
+				"경기도 부천시 소사구 공공로 2",
+				NaverMapsGeocodingClient.GeocodeBatchResult.hit(new NaverMapsGeocodingClient.Coordinates(37.5002, 126.7002))
+		));
 		when(locationService.distanceMeters(37.5, 126.7, 37.5001, 126.7001)).thenReturn(20.0);
 		when(locationService.distanceMeters(37.5, 126.7, 37.5002, 126.7002)).thenReturn(30.0);
 		when(poolRepository.findMatchingCandidates(any(), any(), any())).thenReturn(List.of());
@@ -194,7 +206,9 @@ class PoolServiceTests {
 		assertEquals(2, results.size());
 		assertEquals("부천국민체육센터", results.get(0).title());
 		assertEquals("송내사회체육관", results.get(1).title());
-		verify(naverMapsGeocodingClient, never()).geocode("경기도 부천시 원미구 카페로 3");
+		verify(naverMapsGeocodingClient).geocodeAll(argThat(addresses ->
+				!addresses.contains("경기도 부천시 원미구 카페로 3")
+		), eq(3));
 	}
 
 	@Test

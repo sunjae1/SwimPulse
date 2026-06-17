@@ -75,6 +75,28 @@ public class RedisSingleFlightService {
 		);
 	}
 
+	public <T> T loadAfterMiss(
+			String cacheName,
+			String cacheKey,
+			Class<T> type,
+			Duration lockTtl,
+			Duration waitTimeout,
+			Duration pollInterval,
+			Supplier<T> loader,
+			Consumer<T> cacheWriter
+	) {
+		return loadWithSingleFlight(
+				cacheName,
+				cacheKey,
+				() -> redisCache.peek(cacheName, cacheKey, type),
+				lockTtl,
+				waitTimeout,
+				pollInterval,
+				loader,
+				cacheWriter
+		);
+	}
+
 	private <T> T loadWithSingleFlight(
 			String cacheName,
 			String cacheKey,

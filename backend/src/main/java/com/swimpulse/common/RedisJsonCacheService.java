@@ -9,7 +9,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +75,40 @@ public class RedisJsonCacheService {
 
 	public <T> Optional<List<T>> peekList(String cacheName, String key, Class<T> elementType) {
 		return getList(cacheName, key, elementType, false);
+	}
+
+	public <T> Map<String, T> getMany(String cacheName, List<String> keys, Class<T> type) {
+		if (keys.isEmpty()) {
+			return Map.of();
+		}
+		try {
+			List<String> values = redisTemplate.opsForValue().multiGet(keys);
+			if (values == null) {
+				keys.forEach(key -> record(cacheName, "miss"));
+				return Map.of();
+			}
+			Map<String, T> hits = new LinkedHashMap<>();
+			for (int index = 0; index < keys.size(); index++) {
+				String value = values.get(index);
+				if (value == null) {
+					record(cacheName, "miss");
+					continue;
+				}
+				record(cacheName, "hit");
+				hits.put(keys.get(index), objectMapper.readValue(value, type));
+			}
+			return hits;
+		} catch (RedisConnectionFailureException exception) {
+			record(cacheName, "redis_error");
+			log.debug("Redis cache multi read skipped. cache={} keyCount={} message={}",
+					cacheName, keys.size(), exception.getMessage());
+			return Map.of();
+		} catch (Exception exception) {
+			record(cacheName, "error");
+			log.warn("Redis cache multi read failed. cache={} keyCount={} message={}",
+					cacheName, keys.size(), exception.getMessage());
+			return Map.of();
+		}
 	}
 
 	private <T> Optional<List<T>> getList(String cacheName, String key, Class<T> elementType, boolean recordAccess) {
