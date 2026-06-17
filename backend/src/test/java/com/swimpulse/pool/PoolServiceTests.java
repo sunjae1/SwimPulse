@@ -154,6 +154,50 @@ class PoolServiceTests {
 	}
 
 	@Test
+	void findLocationCandidatesFiltersIrrelevantNaverResultsBeforeGeocoding() {
+		LocationSearchCandidate strongTitleCandidate = LocationSearchCandidate.basic(
+				"부천국민체육센터",
+				"스포츠,오락>체육센터",
+				"경기도 부천시 원미구 중동 1",
+				"경기도 부천시 원미구 체육로 1",
+				"https://sports.example.com"
+		);
+		LocationSearchCandidate categoryCandidate = LocationSearchCandidate.basic(
+				"송내사회체육관",
+				"공공,사회기관>복지시설",
+				"경기도 부천시 소사구 송내동 2",
+				"경기도 부천시 소사구 공공로 2",
+				"https://public.example.com"
+		);
+		LocationSearchCandidate irrelevantCandidate = LocationSearchCandidate.basic(
+				"부천수영장카페",
+				"음식점>카페",
+				"경기도 부천시 원미구 중동 3",
+				"경기도 부천시 원미구 카페로 3",
+				"https://cafe.example.com"
+		);
+		when(naverMapsGeocodingClient.isConfigured()).thenReturn(true);
+		when(naverMapsGeocodingClient.reverseGeocode(37.5, 126.7))
+				.thenReturn(Optional.of("경기도 부천시 원미구 중동"));
+		when(naverLocalSearchClient.searchPoolLocationCandidates("경기도 부천시 원미구 체육센터", 10))
+				.thenReturn(List.of(strongTitleCandidate, categoryCandidate, irrelevantCandidate));
+		when(naverMapsGeocodingClient.geocode("경기도 부천시 원미구 체육로 1"))
+				.thenReturn(Optional.of(new NaverMapsGeocodingClient.Coordinates(37.5001, 126.7001)));
+		when(naverMapsGeocodingClient.geocode("경기도 부천시 소사구 공공로 2"))
+				.thenReturn(Optional.of(new NaverMapsGeocodingClient.Coordinates(37.5002, 126.7002)));
+		when(locationService.distanceMeters(37.5, 126.7, 37.5001, 126.7001)).thenReturn(20.0);
+		when(locationService.distanceMeters(37.5, 126.7, 37.5002, 126.7002)).thenReturn(30.0);
+		when(poolRepository.findMatchingCandidates(any(), any(), any())).thenReturn(List.of());
+
+		List<PoolLocationCandidateResponse> results = poolService.findLocationCandidates(37.5, 126.7, 5000, null, 10);
+
+		assertEquals(2, results.size());
+		assertEquals("부천국민체육센터", results.get(0).title());
+		assertEquals("송내사회체육관", results.get(1).title());
+		verify(naverMapsGeocodingClient, never()).geocode("경기도 부천시 원미구 카페로 3");
+	}
+
+	@Test
 	void reverifyHomepagesAutoUpdatesBroadGovernmentRootHomepage() {
 		stubNormalizeComparable();
 		Pool pool = Pool.fromLocationCandidate(

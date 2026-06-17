@@ -124,7 +124,15 @@ VUS10 p95 latency
 - 새로 추가된 pool을 즉시 반영할 수 있다.
 - 짧은 TTL 중심이라 캐시 무효화가 단순하다.
 
-대신 cold cache에서 같은 key로 동시 요청이 몰리면 여러 요청이 동시에 외부 API를 호출할 수 있다. 이번 측정에서는 cold cache도 충분히 빨랐지만, 운영에서 thundering herd가 보이면 cache key별 짧은 Redis single-flight lock을 추가하는 것이 좋다.
+초기 구현에서는 cold cache에서 같은 key로 동시 요청이 몰리면 여러 요청이 동시에 외부 API를 호출할 수 있었다. 이후 cache key별 Redis single-flight lock을 추가해, 첫 요청만 외부 API를 호출하고 나머지 요청은 짧게 대기한 뒤 Redis에 채워진 값을 재사용하도록 보강했다.
+
+single-flight 기본값:
+
+| 설정 | 기본값 | 의미 |
+|---|---:|---|
+| `SWIMPULSE_CACHE_SINGLE_FLIGHT_LOCK_TTL_MS` | 3000ms | 외부 API 호출 담당 요청이 잡는 lock TTL |
+| `SWIMPULSE_CACHE_SINGLE_FLIGHT_WAIT_TIMEOUT_MS` | 2000ms | lock을 못 잡은 요청이 cache 채워지기를 기다리는 최대 시간 |
+| `SWIMPULSE_CACHE_SINGLE_FLIGHT_POLL_MS` | 50ms | 대기 중 Redis cache를 다시 확인하는 간격 |
 
 ## 결과 파일
 

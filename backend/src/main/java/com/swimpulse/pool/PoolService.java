@@ -12,6 +12,7 @@ import java.net.URISyntaxException;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -30,6 +31,44 @@ public class PoolService {
 	private static final int DEFAULT_LOCATION_CANDIDATE_DISPLAY = 10;
 	private static final int MAX_LOCATION_CANDIDATE_DISPLAY = 10;
 	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
+	private static final List<String> STRONG_POOL_CANDIDATE_TITLE_KEYWORDS = List.of(
+			"수영장",
+			"수영",
+			"체육센터",
+			"국민체육센터",
+			"구민체육센터",
+			"스포츠센터",
+			"멀티스포츠센터",
+			"문화센터",
+			"아쿠아"
+	);
+	private static final List<String> ACCEPTABLE_POOL_CANDIDATE_CATEGORY_KEYWORDS = List.of(
+			"스포츠",
+			"수영",
+			"체육",
+			"공공",
+			"사회기관",
+			"문화",
+			"예술"
+	);
+	private static final List<String> IRRELEVANT_POOL_CANDIDATE_CATEGORY_KEYWORDS = List.of(
+			"음식",
+			"카페",
+			"술집",
+			"숙박",
+			"호텔",
+			"모텔",
+			"병원",
+			"약국",
+			"부동산",
+			"미용",
+			"쇼핑",
+			"마트",
+			"편의점",
+			"은행",
+			"학원",
+			"교습"
+	);
 
 	private final PoolRepository poolRepository;
 	private final PoolNearbyQueryRepository poolNearbyQueryRepository;
@@ -107,6 +146,7 @@ public class PoolService {
 
 		List<ResolvedLocationCandidate> resolvedCandidates = naverLocalSearchClient.searchPoolLocationCandidates(searchQuery, normalizedDisplay)
 				.stream()
+				.filter(this::isRelevantPoolLocationCandidate)
 				.map(candidate -> resolveLocationCandidate(candidate, latitude, longitude))
 				.filter(candidate -> candidate.latitude() != null && candidate.longitude() != null)
 				.filter(candidate -> candidate.distanceMeters() <= normalizedRadius)
@@ -536,6 +576,34 @@ public class PoolService {
 				.limit(3)
 				.toList();
 		return tokens.isEmpty() ? null : String.join(" ", tokens);
+	}
+
+	private boolean isRelevantPoolLocationCandidate(LocationSearchCandidate candidate) {
+		String title = normalizeCandidateFilterText(candidate.title());
+		String category = normalizeCandidateFilterText(candidate.category());
+		if (containsAny(category, IRRELEVANT_POOL_CANDIDATE_CATEGORY_KEYWORDS)) {
+			log.debug("Pool location candidate filtered by category. title={} category={}",
+					candidate.title(), candidate.category());
+			return false;
+		}
+		if (containsAny(title, STRONG_POOL_CANDIDATE_TITLE_KEYWORDS)) {
+			return true;
+		}
+		if (containsAny(category, ACCEPTABLE_POOL_CANDIDATE_CATEGORY_KEYWORDS)) {
+			return true;
+		}
+		log.debug("Pool location candidate filtered by weak signal. title={} category={}",
+				candidate.title(), candidate.category());
+		return false;
+	}
+
+	private String normalizeCandidateFilterText(String value) {
+		if (value == null) {
+			return "";
+		}
+		return value.replaceAll("<[^>]*>", "")
+				.replaceAll("\\s+", "")
+				.toLowerCase(Locale.ROOT);
 	}
 
 	private ResolvedLocationCandidate resolveLocationCandidate(

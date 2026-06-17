@@ -2,6 +2,7 @@ package com.swimpulse.location;
 
 import com.swimpulse.common.BadRequestException;
 import com.swimpulse.common.RedisJsonCacheService;
+import com.swimpulse.common.RedisSingleFlightService;
 import com.swimpulse.common.TooManyRequestsException;
 import java.net.URI;
 import java.time.Duration;
@@ -25,23 +26,35 @@ public class NaverLocalSearchClient {
 	private final String clientId;
 	private final String clientSecret;
 	private final RedisJsonCacheService redisCache;
+	private final RedisSingleFlightService singleFlightService;
 	private final Duration locationSearchTtl;
 	private final Duration poolLocationCandidateTtl;
+	private final Duration singleFlightLockTtl;
+	private final Duration singleFlightWaitTimeout;
+	private final Duration singleFlightPollInterval;
 
 	public NaverLocalSearchClient(
 			RestClient.Builder restClientBuilder,
 			@Value("${swimpulse.naver.search.client-id:}") String clientId,
 			@Value("${swimpulse.naver.search.client-secret:}") String clientSecret,
 			RedisJsonCacheService redisCache,
+			RedisSingleFlightService singleFlightService,
 			@Value("${swimpulse.cache.location-search-ttl:PT5M}") Duration locationSearchTtl,
-			@Value("${swimpulse.cache.pool-location-candidates-ttl:PT1H}") Duration poolLocationCandidateTtl
+			@Value("${swimpulse.cache.pool-location-candidates-ttl:PT1H}") Duration poolLocationCandidateTtl,
+			@Value("${swimpulse.cache.single-flight-lock-ttl-ms:3000}") long singleFlightLockTtlMs,
+			@Value("${swimpulse.cache.single-flight-wait-timeout-ms:2000}") long singleFlightWaitTimeoutMs,
+			@Value("${swimpulse.cache.single-flight-poll-ms:50}") long singleFlightPollMs
 	) {
 		this.restClient = restClientBuilder.build();
 		this.clientId = clientId;
 		this.clientSecret = clientSecret;
 		this.redisCache = redisCache;
+		this.singleFlightService = singleFlightService;
 		this.locationSearchTtl = locationSearchTtl;
 		this.poolLocationCandidateTtl = poolLocationCandidateTtl;
+		this.singleFlightLockTtl = Duration.ofMillis(singleFlightLockTtlMs);
+		this.singleFlightWaitTimeout = Duration.ofMillis(singleFlightWaitTimeoutMs);
+		this.singleFlightPollInterval = Duration.ofMillis(singleFlightPollMs);
 	}
 
 	public List<LocationSearchCandidate> search(String query, int display) {
@@ -74,13 +87,19 @@ public class NaverLocalSearchClient {
 		if (!isConfigured()) {
 			throw new BadRequestException("Naver Search API credentials are not configured.");
 		}
-		String cacheKey = keyPrefix + redisCache.hash(normalizeCacheInput(query) + "|display=" + display);
-		return redisCache.getList(cacheName, cacheKey, LocationSearchCandidate.class)
-				.orElseGet(() -> {
-					List<LocationSearchCandidate> candidates = requestNaverLocalSearch(query, display);
-					redisCache.put(cacheName, cacheKey, candidates, ttl);
-					return candidates;
-				});
+		String rawKey = normalizeCacheInput(query) + "|display=" + display;
+		String cacheKey = keyPrefix + redisCache.hash(rawKey);
+		log.debug("Naver local search cache lookup. cache={} rawKey={} cacheKey={}", cacheName, rawKey, cacheKey);
+		return singleFlightService.getListOrLoad(
+				cacheName,
+				cacheKey,
+				LocationSearchCandidate.class,
+				singleFlightLockTtl,
+				singleFlightWaitTimeout,
+				singleFlightPollInterval,
+				() -> requestNaverLocalSearch(query, display),
+				candidates -> redisCache.put(cacheName, cacheKey, candidates, ttl)
+		);
 	}
 
 	private List<LocationSearchCandidate> requestNaverLocalSearch(String query, int display) {

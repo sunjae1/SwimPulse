@@ -36,13 +36,25 @@ public class RedisJsonCacheService {
 	}
 
 	public <T> Optional<T> get(String cacheName, String key, Class<T> type) {
+		return get(cacheName, key, type, true);
+	}
+
+	public <T> Optional<T> peek(String cacheName, String key, Class<T> type) {
+		return get(cacheName, key, type, false);
+	}
+
+	private <T> Optional<T> get(String cacheName, String key, Class<T> type, boolean recordAccess) {
 		try {
 			String json = redisTemplate.opsForValue().get(key);
 			if (json == null) {
-				record(cacheName, "miss");
+				if (recordAccess) {
+					record(cacheName, "miss");
+				}
 				return Optional.empty();
 			}
-			record(cacheName, "hit");
+			if (recordAccess) {
+				record(cacheName, "hit");
+			}
 			return Optional.of(objectMapper.readValue(json, type));
 		} catch (RedisConnectionFailureException exception) {
 			record(cacheName, "redis_error");
@@ -56,14 +68,26 @@ public class RedisJsonCacheService {
 	}
 
 	public <T> Optional<List<T>> getList(String cacheName, String key, Class<T> elementType) {
+		return getList(cacheName, key, elementType, true);
+	}
+
+	public <T> Optional<List<T>> peekList(String cacheName, String key, Class<T> elementType) {
+		return getList(cacheName, key, elementType, false);
+	}
+
+	private <T> Optional<List<T>> getList(String cacheName, String key, Class<T> elementType, boolean recordAccess) {
 		try {
 			String json = redisTemplate.opsForValue().get(key);
 			if (json == null) {
-				record(cacheName, "miss");
+				if (recordAccess) {
+					record(cacheName, "miss");
+				}
 				return Optional.empty();
 			}
 			JavaType type = objectMapper.getTypeFactory().constructCollectionType(List.class, elementType);
-			record(cacheName, "hit");
+			if (recordAccess) {
+				record(cacheName, "hit");
+			}
 			return Optional.of(objectMapper.readValue(json, type));
 		} catch (RedisConnectionFailureException exception) {
 			record(cacheName, "redis_error");

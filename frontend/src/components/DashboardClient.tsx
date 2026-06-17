@@ -107,6 +107,7 @@ export function DashboardClient({
   const [facilityCandidates, setFacilityCandidates] = useState<PoolLocationCandidate[]>([]);
   const [facilityCandidatesOpen, setFacilityCandidatesOpen] = useState(false);
   const [locationSearchBusy, setLocationSearchBusy] = useState(false);
+  const [facilityCandidatesBusyLabel, setFacilityCandidatesBusyLabel] = useState<string | null>(null);
   const [candidateToAdd, setCandidateToAdd] = useState<PoolLocationCandidate | null>(null);
   const [noticeScanResult, setNoticeScanResult] = useState<NoticeScanResponse | null>(null);
   const [events, setEvents] = useState<RegistrationEvent[]>(initialData.events);
@@ -284,6 +285,7 @@ export function DashboardClient({
     setNearbyOriginLabel(null);
     setFacilityCandidates([]);
     setFacilityCandidatesOpen(false);
+    setFacilityCandidatesBusyLabel(null);
     setNearbyMode(false);
     setNotice("전체 수영장 목록으로 돌아왔습니다.");
   }
@@ -303,6 +305,7 @@ export function DashboardClient({
       setLocationCandidates(candidates);
       setFacilityCandidates([]);
       setFacilityCandidatesOpen(false);
+      setFacilityCandidatesBusyLabel(null);
       setApiReachable(true);
       setNotice(candidates.length > 0 ? "검색 후보를 불러왔습니다." : "검색 후보가 없습니다.");
     } catch (error) {
@@ -320,6 +323,9 @@ export function DashboardClient({
     }
 
     setBusy(true);
+    setFacilityCandidates([]);
+    setFacilityCandidatesOpen(false);
+    setFacilityCandidatesBusyLabel(candidate.title);
     setNotice(null);
     try {
       const geocoded = await geocodeLocation(address);
@@ -346,6 +352,7 @@ export function DashboardClient({
       setNotice(getErrorMessage(error, "선택한 위치 기준 가까운 수영장을 찾지 못했습니다."));
     } finally {
       setBusy(false);
+      setFacilityCandidatesBusyLabel(null);
     }
   }
 
@@ -911,6 +918,7 @@ export function DashboardClient({
                     setLocationCandidates([]);
                     setFacilityCandidates([]);
                     setFacilityCandidatesOpen(false);
+                    setFacilityCandidatesBusyLabel(null);
                   }}
                   placeholder="화성남부국민체육센터"
                 />
@@ -945,6 +953,12 @@ export function DashboardClient({
                       </div>
                     );
                   })}
+                </div>
+              ) : null}
+              {facilityCandidatesBusyLabel ? (
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-[#d8ddd5] bg-[#fbfcf8] px-3 py-3 text-sm font-semibold text-[#31413b]">
+                  <RefreshCw size={16} className="animate-spin text-[#0f766e]" aria-hidden />
+                  {facilityCandidatesBusyLabel} 기준 수영장 후보 찾는 중
                 </div>
               ) : null}
               {facilityCandidates.length > 0 ? (
@@ -1590,7 +1604,7 @@ function PastPeriodSubscriptionModal({
         </div>
         <div className="space-y-4 px-5 py-5">
           <p className="text-sm font-semibold leading-6 text-[#31413b]">
-            이번 달 모집일과 다를 수 있습니다! 이번 달 같은 날에 알림을 보낼까요?
+            이번 달 모집일과 다를 수 있습니다! <br></br>이번 달 같은 날에 알림을 보낼까요?
           </p>
           <div className="grid gap-2 rounded-md border border-[#e3e7e1] bg-[#fafbf8] px-3 py-3 text-sm">
             <div className="flex items-center justify-between gap-3">

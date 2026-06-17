@@ -1,6 +1,7 @@
 package com.swimpulse.pool;
 
 import com.swimpulse.common.RedisJsonCacheService;
+import com.swimpulse.common.RedisSingleFlightService;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -24,38 +25,65 @@ public class NaverMapsGeocodingClient {
 	private final String clientId;
 	private final String clientSecret;
 	private final RedisJsonCacheService redisCache;
+	private final RedisSingleFlightService singleFlightService;
 	private final Duration geocodeSuccessTtl;
 	private final Duration geocodeFailureTtl;
 	private final Duration reverseGeocodeSuccessTtl;
 	private final Duration reverseGeocodeFailureTtl;
+	private final Duration singleFlightLockTtl;
+	private final Duration singleFlightWaitTimeout;
+	private final Duration singleFlightPollInterval;
 
 	public NaverMapsGeocodingClient(
 			RestClient.Builder restClientBuilder,
 			@Value("${swimpulse.naver.maps.client-id:}") String clientId,
 			@Value("${swimpulse.naver.maps.client-secret:}") String clientSecret,
 			RedisJsonCacheService redisCache,
+			RedisSingleFlightService singleFlightService,
 			@Value("${swimpulse.cache.geocode-success-ttl:P30D}") Duration geocodeSuccessTtl,
 			@Value("${swimpulse.cache.geocode-failure-ttl:P1D}") Duration geocodeFailureTtl,
 			@Value("${swimpulse.cache.reverse-geocode-success-ttl:P7D}") Duration reverseGeocodeSuccessTtl,
-			@Value("${swimpulse.cache.reverse-geocode-failure-ttl:P1D}") Duration reverseGeocodeFailureTtl
+			@Value("${swimpulse.cache.reverse-geocode-failure-ttl:P1D}") Duration reverseGeocodeFailureTtl,
+			@Value("${swimpulse.cache.single-flight-lock-ttl-ms:3000}") long singleFlightLockTtlMs,
+			@Value("${swimpulse.cache.single-flight-wait-timeout-ms:2000}") long singleFlightWaitTimeoutMs,
+			@Value("${swimpulse.cache.single-flight-poll-ms:50}") long singleFlightPollMs
 	) {
 		this.restClient = restClientBuilder.build();
 		this.clientId = clientId;
 		this.clientSecret = clientSecret;
 		this.redisCache = redisCache;
+		this.singleFlightService = singleFlightService;
 		this.geocodeSuccessTtl = geocodeSuccessTtl;
 		this.geocodeFailureTtl = geocodeFailureTtl;
 		this.reverseGeocodeSuccessTtl = reverseGeocodeSuccessTtl;
 		this.reverseGeocodeFailureTtl = reverseGeocodeFailureTtl;
+		this.singleFlightLockTtl = Duration.ofMillis(singleFlightLockTtlMs);
+		this.singleFlightWaitTimeout = Duration.ofMillis(singleFlightWaitTimeoutMs);
+		this.singleFlightPollInterval = Duration.ofMillis(singleFlightPollMs);
 	}
 
 	public Optional<Coordinates> geocode(String address) {
-		String cacheKey = "swimpulse:cache:geocode:v1:" + redisCache.hash(normalizeCacheInput(address));
-		Optional<CachedCoordinates> cached = redisCache.get("geocode", cacheKey, CachedCoordinates.class);
-		if (cached.isPresent()) {
-			return cached.get().toCoordinates();
-		}
+		String rawKey = normalizeCacheInput(address);
+		String cacheKey = "swimpulse:cache:geocode:v1:" + redisCache.hash(rawKey);
+		log.debug("Naver maps geocode cache lookup. cache=geocode rawKey={} cacheKey={}", rawKey, cacheKey);
+		return singleFlightService.getOrLoad(
+				"geocode",
+				cacheKey,
+				CachedCoordinates.class,
+				singleFlightLockTtl,
+				singleFlightWaitTimeout,
+				singleFlightPollInterval,
+				() -> requestGeocode(address),
+				cachedCoordinates -> redisCache.put(
+						"geocode",
+						cacheKey,
+						cachedCoordinates,
+						cachedCoordinates.found() ? geocodeSuccessTtl : geocodeFailureTtl
+				)
+		).toCoordinates();
+	}
 
+	private CachedCoordinates requestGeocode(String address) {
 		log.info("Naver maps geocode requested. address={}", address);
 		URI uri = UriComponentsBuilder.fromUriString(NAVER_MAPS_GEOCODING_URL)
 				.queryParam("query", address)
@@ -72,8 +100,7 @@ public class NaverMapsGeocodingClient {
 
 		if (response == null || response.addresses() == null || response.addresses().isEmpty()) {
 			log.info("Naver maps geocode returned no coordinates. address={}", address);
-			redisCache.put("geocode", cacheKey, CachedCoordinates.miss(), geocodeFailureTtl);
-			return Optional.empty();
+			return CachedCoordinates.miss();
 		}
 
 		NaverAddress addressResult = response.addresses().getFirst();
@@ -81,20 +108,33 @@ public class NaverMapsGeocodingClient {
 				Double.parseDouble(addressResult.y()),
 				Double.parseDouble(addressResult.x())
 		);
-		redisCache.put("geocode", cacheKey, CachedCoordinates.hit(coordinates), geocodeSuccessTtl);
 		log.info("Naver maps geocode completed. address={} latitude={} longitude={}",
 				address, coordinates.latitude(), coordinates.longitude());
-		return Optional.of(coordinates);
+		return CachedCoordinates.hit(coordinates);
 	}
 
 	public Optional<String> reverseGeocode(double latitude, double longitude) {
-		String cacheKey = "swimpulse:cache:reverse-geocode:v1:"
-				+ bucket(latitude) + ":" + bucket(longitude);
-		Optional<CachedAddress> cached = redisCache.get("reverse-geocode", cacheKey, CachedAddress.class);
-		if (cached.isPresent()) {
-			return cached.get().toAddress();
-		}
+		String rawKey = bucket(latitude) + ":" + bucket(longitude);
+		String cacheKey = "swimpulse:cache:reverse-geocode:v1:" + rawKey;
+		log.debug("Naver maps reverse geocode cache lookup. cache=reverse-geocode rawKey={} cacheKey={}", rawKey, cacheKey);
+		return singleFlightService.getOrLoad(
+				"reverse-geocode",
+				cacheKey,
+				CachedAddress.class,
+				singleFlightLockTtl,
+				singleFlightWaitTimeout,
+				singleFlightPollInterval,
+				() -> requestReverseGeocode(latitude, longitude),
+				cachedAddress -> redisCache.put(
+						"reverse-geocode",
+						cacheKey,
+						cachedAddress,
+						cachedAddress.found() ? reverseGeocodeSuccessTtl : reverseGeocodeFailureTtl
+				)
+		).toAddress();
+	}
 
+	private CachedAddress requestReverseGeocode(double latitude, double longitude) {
 		log.info("Naver maps reverse geocode requested. latitude={} longitude={}", latitude, longitude);
 		URI uri = UriComponentsBuilder.fromUriString(NAVER_MAPS_REVERSE_GEOCODING_URL)
 				.queryParam("request", "coordsToaddr")
@@ -114,22 +154,19 @@ public class NaverMapsGeocodingClient {
 				.body(NaverReverseGeocodingResponse.class);
 
 		if (response == null || response.results() == null) {
-			redisCache.put("reverse-geocode", cacheKey, CachedAddress.miss(), reverseGeocodeFailureTtl);
-			return Optional.empty();
+			return CachedAddress.miss();
 		}
 
 		for (NaverReverseResult result : response.results()) {
 			String address = formatReverseGeocodedAddress(result);
 			if (hasText(address)) {
-				redisCache.put("reverse-geocode", cacheKey, CachedAddress.hit(address), reverseGeocodeSuccessTtl);
 				log.info("Naver maps reverse geocode completed. latitude={} longitude={} address={}",
 						latitude, longitude, address);
-				return Optional.of(address);
+				return CachedAddress.hit(address);
 			}
 		}
 		log.info("Naver maps reverse geocode returned no address. latitude={} longitude={}", latitude, longitude);
-		redisCache.put("reverse-geocode", cacheKey, CachedAddress.miss(), reverseGeocodeFailureTtl);
-		return Optional.empty();
+		return CachedAddress.miss();
 	}
 
 	public boolean isConfigured() {
