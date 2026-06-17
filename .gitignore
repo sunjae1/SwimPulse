@@ -32,5 +32,6 @@ backend/firebase-service-account*.json
 backend/*firebase-adminsdk*.json
 
 # k6 results
-ops/k6/results/*
+ops/k6/results/*-raw.json
+!ops/k6/results/*-summary.json
 !ops/k6/results/.gitkeep

@@ -52,10 +52,13 @@ export type LocationSearchCandidate = {
   link: string | null;
   latitude: number | null;
   longitude: number | null;
-  alreadyExists: boolean;
-  matchedPoolId: number | null;
   distanceMeters: number | null;
   homepageUrl: string | null;
+};
+
+export type PoolLocationCandidate = LocationSearchCandidate & {
+  alreadyExists: boolean;
+  matchedPoolId: number | null;
 };
 
 export type GeocodedLocation = {

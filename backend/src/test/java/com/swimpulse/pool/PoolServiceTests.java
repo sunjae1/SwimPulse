@@ -3,6 +3,7 @@ package com.swimpulse.pool;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.nullable;
@@ -14,6 +15,7 @@ import com.swimpulse.location.LocationService;
 import com.swimpulse.location.LocationSearchCandidate;
 import com.swimpulse.location.NaverLocalSearchClient;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -117,6 +119,38 @@ class PoolServiceTests {
 		assertEquals("https://old.example.com", response.homepageUrl());
 		verify(poolRepository, never()).save(any(Pool.class));
 		verify(naverLocalSearchClient, never()).search(anyString(), anyInt());
+	}
+
+	@Test
+	void findLocationCandidatesUsesExactMatchWithoutCoordinateFallback() {
+		LocationSearchCandidate candidate = LocationSearchCandidate.basic(
+				"부천국민체육센터 수영장",
+				"스포츠,오락>수영장",
+				"경기도 부천시 원미구 중동 1156",
+				"경기도 부천시 원미구 석천로 293",
+				"https://pool.example.com"
+		);
+		Pool matchedPool = org.mockito.Mockito.mock(Pool.class);
+		when(matchedPool.getId()).thenReturn(42L);
+		when(matchedPool.getNormalizedName()).thenReturn("부천국민체육센터");
+		when(matchedPool.getNormalizedRoadNameAddress()).thenReturn("경기도부천시원미구석천로293");
+		when(matchedPool.getNormalizedLotNumberAddress()).thenReturn("경기도부천시원미구중동1156");
+		when(naverMapsGeocodingClient.isConfigured()).thenReturn(true);
+		when(naverMapsGeocodingClient.reverseGeocode(37.5, 126.7))
+				.thenReturn(Optional.of("경기도 부천시 원미구 중동"));
+		when(naverLocalSearchClient.searchPoolLocationCandidates("경기도 부천시 원미구 수영장", 10)).thenReturn(List.of(candidate));
+		when(naverMapsGeocodingClient.geocode("경기도 부천시 원미구 석천로 293"))
+				.thenReturn(Optional.of(new NaverMapsGeocodingClient.Coordinates(37.5001, 126.7001)));
+		when(poolRepository.findMatchingCandidates(any(), any(), any())).thenReturn(List.of(matchedPool));
+		when(locationService.distanceMeters(37.5, 126.7, 37.5001, 126.7001)).thenReturn(15.0);
+
+		List<PoolLocationCandidateResponse> results = poolService.findLocationCandidates(37.5, 126.7, 5000, "수영장", 10);
+
+		assertEquals(1, results.size());
+		assertEquals(42L, results.getFirst().matchedPoolId());
+		assertEquals(true, results.getFirst().alreadyExists());
+		assertEquals(15.0, results.getFirst().distanceMeters());
+		verify(poolRepository, never()).findNearestWithinDistance(anyDouble(), anyDouble(), anyDouble());
 	}
 
 	@Test

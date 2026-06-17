@@ -9,6 +9,7 @@ import type {
   NearbyPool,
   NoticeScanResponse,
   Pool,
+  PoolLocationCandidate,
   RegistrationEvent,
   Subscription,
 } from "@/lib/types";
@@ -246,6 +247,23 @@ export async function searchLocations(
   return request<LocationSearchCandidate[]>(`/api/locations/search?${params.toString()}`);
 }
 
+export async function getPoolLocationCandidates(
+  latitude: number,
+  longitude: number,
+  radius = 5000,
+  query = "수영장",
+  display = 10,
+): Promise<PoolLocationCandidate[]> {
+  const params = new URLSearchParams({
+    latitude: latitude.toString(),
+    longitude: longitude.toString(),
+    radius: radius.toString(),
+    query,
+    display: display.toString(),
+  });
+  return request<PoolLocationCandidate[]>(`/api/pools/location-candidates?${params.toString()}`);
+}
+
 export async function geocodeLocation(address: string): Promise<GeocodedLocation> {
   const params = new URLSearchParams({ address });
   return request<GeocodedLocation>(`/api/locations/geocode?${params.toString()}`);
@@ -259,7 +277,7 @@ export async function reverseGeocodeLocation(latitude: number, longitude: number
   return request<GeocodedLocation>(`/api/locations/reverse-geocode?${params.toString()}`);
 }
 
-export async function createPoolFromLocationCandidate(candidate: LocationSearchCandidate): Promise<Pool> {
+export async function createPoolFromLocationCandidate(candidate: PoolLocationCandidate): Promise<Pool> {
   return request<Pool>("/api/pools/from-location-candidate", {
     method: "POST",
     body: JSON.stringify({

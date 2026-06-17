@@ -1,6 +1,7 @@
 package com.swimpulse.pool;
 
 import com.swimpulse.common.BadRequestException;
+import com.swimpulse.common.TooManyRequestsException;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -63,6 +64,9 @@ public class PoolGeocodingService {
 					});
 		}
 		catch (RestClientResponseException exception) {
+			if (exception.getStatusCode().value() == 429) {
+				throw new TooManyRequestsException("Naver Maps geocoding request failed: 429 Too Many Requests");
+			}
 			throw new BadRequestException("Naver Maps geocoding request failed: " + exception.getStatusCode());
 		}
 		catch (NumberFormatException exception) {

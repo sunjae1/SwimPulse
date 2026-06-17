@@ -2,6 +2,7 @@ package com.swimpulse.pool;
 
 import com.swimpulse.common.NotFoundException;
 import com.swimpulse.common.BadRequestException;
+import com.swimpulse.common.TooManyRequestsException;
 import com.swimpulse.location.LocationSearchCandidate;
 import com.swimpulse.location.LocationService;
 import com.swimpulse.location.NaverLocalSearchClient;
@@ -12,6 +13,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,6 +25,11 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 public class PoolService {
 	private static final Logger log = LoggerFactory.getLogger(PoolService.class);
+	private static final int DEFAULT_LOCATION_CANDIDATE_RADIUS_METERS = 5_000;
+	private static final int MAX_LOCATION_CANDIDATE_RADIUS_METERS = 20_000;
+	private static final int DEFAULT_LOCATION_CANDIDATE_DISPLAY = 10;
+	private static final int MAX_LOCATION_CANDIDATE_DISPLAY = 10;
+	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
 
 	private final PoolRepository poolRepository;
 	private final PoolNearbyQueryRepository poolNearbyQueryRepository;
@@ -79,6 +88,39 @@ public class PoolService {
 		log.info("Nearby pools lookup completed. latitude={} longitude={} resultCount={}",
 				latitude, longitude, nearbyPools.size());
 		return nearbyPools;
+	}
+
+	@Transactional(readOnly = true)
+	public List<PoolLocationCandidateResponse> findLocationCandidates(
+			Double latitude,
+			Double longitude,
+			Integer radius,
+			String query,
+			Integer display
+	) {
+		validateCoordinates(latitude, longitude);
+		int normalizedRadius = normalizeLocationCandidateRadius(radius);
+		int normalizedDisplay = normalizeLocationCandidateDisplay(display);
+		String searchQuery = buildLocationCandidateSearchQuery(latitude, longitude, query);
+		log.info("Pool location candidate search started. latitude={} longitude={} radius={} query={} display={}",
+				latitude, longitude, normalizedRadius, searchQuery, normalizedDisplay);
+
+		List<ResolvedLocationCandidate> resolvedCandidates = naverLocalSearchClient.searchPoolLocationCandidates(searchQuery, normalizedDisplay)
+				.stream()
+				.map(candidate -> resolveLocationCandidate(candidate, latitude, longitude))
+				.filter(candidate -> candidate.latitude() != null && candidate.longitude() != null)
+				.filter(candidate -> candidate.distanceMeters() <= normalizedRadius)
+				.sorted(Comparator.comparingDouble(ResolvedLocationCandidate::distanceMeters))
+				.toList();
+		PoolMatchLookup matchLookup = loadExactMatches(resolvedCandidates.stream()
+				.map(ResolvedLocationCandidate::candidate)
+				.toList());
+		List<PoolLocationCandidateResponse> candidates = resolvedCandidates.stream()
+				.map(candidate -> enrichLocationCandidate(candidate, matchLookup.find(candidate.candidate())))
+				.toList();
+		log.info("Pool location candidate search completed. query={} candidateCount={} resultCount={} exactMatchPoolCount={}",
+				searchQuery, resolvedCandidates.size(), candidates.size(), matchLookup.poolCount());
+		return candidates;
 	}
 
 	@Transactional
@@ -444,6 +486,127 @@ public class PoolService {
 		return limit;
 	}
 
+	private int normalizeLocationCandidateRadius(Integer radius) {
+		if (radius == null) {
+			return DEFAULT_LOCATION_CANDIDATE_RADIUS_METERS;
+		}
+		if (radius < 100 || radius > MAX_LOCATION_CANDIDATE_RADIUS_METERS) {
+			throw new BadRequestException("radius must be between 100 and 20000");
+		}
+		return radius;
+	}
+
+	private int normalizeLocationCandidateDisplay(Integer display) {
+		if (display == null) {
+			return DEFAULT_LOCATION_CANDIDATE_DISPLAY;
+		}
+		if (display < 1 || display > MAX_LOCATION_CANDIDATE_DISPLAY) {
+			throw new BadRequestException("display must be between 1 and 10");
+		}
+		return display;
+	}
+
+	private String buildLocationCandidateSearchQuery(Double latitude, Double longitude, String query) {
+		String searchTerm = hasText(query) ? query.trim() : "체육센터";
+		String region = resolveSearchRegion(latitude, longitude);
+		return hasText(region) ? region + " " + searchTerm : searchTerm;
+	}
+
+	private String resolveSearchRegion(Double latitude, Double longitude) {
+		if (!naverMapsGeocodingClient.isConfigured()) {
+			throw new BadRequestException("Naver Maps geocoding credentials are not configured.");
+		}
+		try {
+			return naverMapsGeocodingClient.reverseGeocode(latitude, longitude)
+					.map(this::toRegionPrefix)
+					.orElse(null);
+		} catch (RestClientResponseException exception) {
+			throwIfRateLimited("Naver Maps reverse geocoding request failed", exception);
+			throw new BadRequestException("Naver Maps reverse geocoding request failed: "
+					+ exception.getStatusCode().value() + " " + exception.getStatusText());
+		}
+	}
+
+	private String toRegionPrefix(String address) {
+		if (!hasText(address)) {
+			return null;
+		}
+		List<String> tokens = java.util.Arrays.stream(address.trim().split("\\s+"))
+				.filter(token -> !token.matches(".*\\d.*"))
+				.limit(3)
+				.toList();
+		return tokens.isEmpty() ? null : String.join(" ", tokens);
+	}
+
+	private ResolvedLocationCandidate resolveLocationCandidate(
+			LocationSearchCandidate candidate,
+			Double originLatitude,
+			Double originLongitude
+	) {
+		String address = resolveCandidateAddress(candidate);
+		if (!hasText(address)) {
+			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
+		}
+		try {
+			Coordinates coordinates = naverMapsGeocodingClient.geocode(address).orElse(null);
+			if (coordinates == null) {
+				return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
+			}
+			double distance = locationService.distanceMeters(
+					originLatitude,
+					originLongitude,
+					coordinates.latitude(),
+					coordinates.longitude()
+			);
+			return new ResolvedLocationCandidate(candidate, coordinates.latitude(), coordinates.longitude(), distance);
+		} catch (RestClientResponseException exception) {
+			throwIfRateLimited("Naver Maps geocoding request failed", exception);
+			log.warn("Pool location candidate geocode failed. title={} status={} {}",
+					candidate.title(), exception.getStatusCode().value(), exception.getStatusText());
+			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
+		}
+	}
+
+	private PoolLocationCandidateResponse enrichLocationCandidate(ResolvedLocationCandidate candidate, Pool exactMatch) {
+		return PoolLocationCandidateResponse.of(
+				candidate.candidate(),
+				candidate.latitude(),
+				candidate.longitude(),
+				exactMatch,
+				candidate.distanceMeters()
+		);
+	}
+
+	private PoolMatchLookup loadExactMatches(List<LocationSearchCandidate> candidates) {
+		if (candidates.isEmpty()) {
+			return PoolMatchLookup.empty();
+		}
+		Set<String> normalizedNames = normalizedValues(candidates, LocationSearchCandidate::title);
+		Set<String> normalizedRoadAddresses = normalizedValues(candidates, LocationSearchCandidate::roadAddress);
+		Set<String> normalizedLotAddresses = normalizedValues(candidates, LocationSearchCandidate::address);
+		List<Pool> matchedPools = poolRepository.findMatchingCandidates(
+				nonEmptyQueryValues(normalizedNames),
+				nonEmptyQueryValues(normalizedRoadAddresses),
+				nonEmptyQueryValues(normalizedLotAddresses)
+		);
+		return PoolMatchLookup.from(matchedPools);
+	}
+
+	private Set<String> normalizedValues(
+			List<LocationSearchCandidate> candidates,
+			Function<LocationSearchCandidate, String> extractor
+	) {
+		return candidates.stream()
+				.map(extractor)
+				.map(PoolSearchNormalizer::normalize)
+				.filter(this::hasText)
+				.collect(Collectors.toSet());
+	}
+
+	private Set<String> nonEmptyQueryValues(Set<String> values) {
+		return values.isEmpty() ? Set.of(IMPOSSIBLE_NORMALIZED_VALUE) : values;
+	}
+
 	private Coordinates geocodeRequired(String address) {
 		if (!naverMapsGeocodingClient.isConfigured()) {
 			throw new BadRequestException("Naver Maps geocoding credentials are not configured.");
@@ -452,6 +615,7 @@ public class PoolService {
 			return naverMapsGeocodingClient.geocode(address)
 					.orElseThrow(() -> new BadRequestException("No coordinates found for address."));
 		} catch (RestClientResponseException exception) {
+			throwIfRateLimited("Naver Maps geocoding request failed", exception);
 			throw new BadRequestException("Naver Maps geocoding request failed: "
 					+ exception.getStatusCode().value() + " " + exception.getStatusText());
 		}
@@ -481,6 +645,12 @@ public class PoolService {
 		return value != null && !value.isBlank();
 	}
 
+	private void throwIfRateLimited(String prefix, RestClientResponseException exception) {
+		if (exception.getStatusCode().value() == 429) {
+			throw new TooManyRequestsException(prefix + ": 429 Too Many Requests");
+		}
+	}
+
 	private boolean containsAny(String haystack, List<String> needles) {
 		if (!hasText(haystack)) {
 			return false;
@@ -489,5 +659,60 @@ public class PoolService {
 	}
 
 	private record ScoredHomepageCandidate(LocationSearchCandidate candidate, int score) {
+	}
+
+	private record ResolvedLocationCandidate(
+			LocationSearchCandidate candidate,
+			Double latitude,
+			Double longitude,
+			double distanceMeters
+	) {
+	}
+
+	private record PoolMatchLookup(
+			Map<String, Pool> byName,
+			Map<String, Pool> byRoadAddress,
+			Map<String, Pool> byLotAddress,
+			int poolCount
+	) {
+		private static PoolMatchLookup empty() {
+			return new PoolMatchLookup(Map.of(), Map.of(), Map.of(), 0);
+		}
+
+		private static PoolMatchLookup from(List<Pool> pools) {
+			return new PoolMatchLookup(
+					indexBy(pools, Pool::getNormalizedName),
+					indexBy(pools, Pool::getNormalizedRoadNameAddress),
+					indexBy(pools, Pool::getNormalizedLotNumberAddress),
+					pools.size()
+			);
+		}
+
+		private Pool find(LocationSearchCandidate candidate) {
+			Pool match = find(byName, PoolSearchNormalizer.normalize(candidate.title()));
+			if (match != null) {
+				return match;
+			}
+			match = find(byRoadAddress, PoolSearchNormalizer.normalize(candidate.roadAddress()));
+			if (match != null) {
+				return match;
+			}
+			return find(byLotAddress, PoolSearchNormalizer.normalize(candidate.address()));
+		}
+
+		private static Pool find(Map<String, Pool> pools, String key) {
+			return key == null || key.isBlank() ? null : pools.get(key);
+		}
+
+		private static Map<String, Pool> indexBy(List<Pool> pools, Function<Pool, String> keyExtractor) {
+			return pools.stream()
+					.filter(pool -> keyExtractor.apply(pool) != null && !keyExtractor.apply(pool).isBlank())
+					.collect(Collectors.toMap(
+							keyExtractor,
+							pool -> pool,
+							(existing, duplicate) -> existing,
+							LinkedHashMap::new
+					));
+		}
 	}
 }

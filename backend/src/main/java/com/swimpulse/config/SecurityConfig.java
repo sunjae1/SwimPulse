@@ -1,6 +1,7 @@
 package com.swimpulse.config;
 
 import com.swimpulse.auth.JwtAuthenticationFilter;
+import com.swimpulse.auth.OAuthFailureHandler;
 import com.swimpulse.auth.OAuthSuccessHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,18 +18,23 @@ public class SecurityConfig {
 	SecurityFilterChain securityFilterChain(
 			HttpSecurity http,
 			JwtAuthenticationFilter jwtAuthenticationFilter,
-			OAuthSuccessHandler oauthSuccessHandler
+			OAuthSuccessHandler oauthSuccessHandler,
+			OAuthFailureHandler oauthFailureHandler
 	) throws Exception {
 		return http
 				.csrf(AbstractHttpConfigurer::disable)
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(HttpMethod.GET, "/api/pools", "/api/pools/nearby", "/api/events").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/pools/location-candidates").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/locations/search", "/api/locations/geocode", "/api/locations/reverse-geocode").permitAll()
 						.requestMatchers("/api/**").authenticated()
 						.anyRequest().permitAll()
 				)
-				.oauth2Login(oauth2 -> oauth2.successHandler(oauthSuccessHandler))
+				.oauth2Login(oauth2 -> oauth2
+						.successHandler(oauthSuccessHandler)
+						.failureHandler(oauthFailureHandler)
+				)
 				.logout(AbstractHttpConfigurer::disable)
 				.exceptionHandling(exceptionHandling -> exceptionHandling
 						.authenticationEntryPoint((request, response, exception) -> response.sendError(401))

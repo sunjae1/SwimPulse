@@ -8,8 +8,6 @@ public record LocationSearchCandidate(
 		String link,
 		Double latitude,
 		Double longitude,
-		Boolean alreadyExists,
-		Long matchedPoolId,
 		Double distanceMeters,
 		String homepageUrl
 ) {
@@ -20,14 +18,12 @@ public record LocationSearchCandidate(
 			String roadAddress,
 			String link
 	) {
-		return new LocationSearchCandidate(title, category, address, roadAddress, link, null, null, false, null, null, link);
+		return new LocationSearchCandidate(title, category, address, roadAddress, link, null, null, null, link);
 	}
 
 	public LocationSearchCandidate withEnrichment(
 			Double latitude,
 			Double longitude,
-			boolean alreadyExists,
-			Long matchedPoolId,
 			Double distanceMeters
 	) {
 		return new LocationSearchCandidate(
@@ -38,8 +34,6 @@ public record LocationSearchCandidate(
 				link,
 				latitude,
 				longitude,
-				alreadyExists,
-				matchedPoolId,
 				distanceMeters,
 				link
 		);

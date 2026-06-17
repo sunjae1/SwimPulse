@@ -59,6 +59,19 @@ public class PoolController {
 		return poolService.findNearbyPools(latitude, longitude, limit);
 	}
 
+	@GetMapping("/location-candidates")
+	public List<PoolLocationCandidateResponse> findLocationCandidates(
+			@RequestParam Double latitude,
+			@RequestParam Double longitude,
+			@RequestParam(required = false) Integer radius,
+			@RequestParam(required = false) String query,
+			@RequestParam(required = false) Integer display
+	) {
+		log.info("Pool location candidates requested. latitude={} longitude={} radius={} query={} display={}",
+				latitude, longitude, radius, query, display);
+		return poolService.findLocationCandidates(latitude, longitude, radius, query, display);
+	}
+
 	@GetMapping("/{poolId}/events")
 	public List<EventResponse> findPoolEvents(@PathVariable Long poolId) {
 		log.info("Pool events requested. poolId={}", poolId);

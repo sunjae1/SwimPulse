@@ -27,6 +27,11 @@ public class GlobalExceptionHandler {
 		return build(HttpStatus.BAD_REQUEST, exception.getMessage(), request, exception);
 	}
 
+	@ExceptionHandler(TooManyRequestsException.class)
+	public ResponseEntity<ApiError> handleTooManyRequests(TooManyRequestsException exception, HttpServletRequest request) {
+		return build(HttpStatus.TOO_MANY_REQUESTS, exception.getMessage(), request, exception);
+	}
+
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException exception, HttpServletRequest request) {
 		String message = exception.getBindingResult()

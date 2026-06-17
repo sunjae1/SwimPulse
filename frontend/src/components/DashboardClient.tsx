@@ -37,6 +37,7 @@ import {
   getNearbyPools,
   getNotifications,
   getSubscriptions,
+  getPoolLocationCandidates,
   logout,
   markNotificationRead,
   registerDeviceToken,
@@ -60,6 +61,7 @@ import type {
   NoticeScanResponse,
   PoolNotice,
   Pool,
+  PoolLocationCandidate,
   RegistrationEvent,
   Subscription,
 } from "@/lib/types";
@@ -68,6 +70,7 @@ type DashboardClientProps = {
   initialData: DashboardInitialData;
   initialNotificationId?: string | null;
   initialLoginSuccess?: boolean;
+  initialLoginError?: boolean;
 };
 
 type EventForm = {
@@ -90,6 +93,7 @@ export function DashboardClient({
   initialData,
   initialNotificationId = null,
   initialLoginSuccess = false,
+  initialLoginError = false,
 }: DashboardClientProps) {
   const [apiReachable, setApiReachable] = useState(initialData.apiReachable);
   const [allPools, setAllPools] = useState<Pool[]>(initialData.pools);
@@ -100,9 +104,10 @@ export function DashboardClient({
   const [nearbyOriginLabel, setNearbyOriginLabel] = useState<string | null>(null);
   const [locationQuery, setLocationQuery] = useState("");
   const [locationCandidates, setLocationCandidates] = useState<LocationSearchCandidate[]>([]);
-  const [facilityCandidates, setFacilityCandidates] = useState<LocationSearchCandidate[]>([]);
+  const [facilityCandidates, setFacilityCandidates] = useState<PoolLocationCandidate[]>([]);
+  const [facilityCandidatesOpen, setFacilityCandidatesOpen] = useState(false);
   const [locationSearchBusy, setLocationSearchBusy] = useState(false);
-  const [candidateToAdd, setCandidateToAdd] = useState<LocationSearchCandidate | null>(null);
+  const [candidateToAdd, setCandidateToAdd] = useState<PoolLocationCandidate | null>(null);
   const [noticeScanResult, setNoticeScanResult] = useState<NoticeScanResponse | null>(null);
   const [events, setEvents] = useState<RegistrationEvent[]>(initialData.events);
   const [user, setUser] = useState<AppUser | null>(null);
@@ -122,6 +127,7 @@ export function DashboardClient({
   const [pushNotificationClosing, setPushNotificationClosing] = useState(false);
   const [pendingNotificationLaunchId, setPendingNotificationLaunchId] = useState<string | null>(initialNotificationId);
   const [pendingLoginSuccessNotice, setPendingLoginSuccessNotice] = useState(initialLoginSuccess);
+  const [pendingLoginErrorNotice, setPendingLoginErrorNotice] = useState(initialLoginError);
   const [form, setForm] = useState<EventForm>(() => {
     const start = new Date(Date.now() + 30 * 60 * 1000);
     const end = new Date(Date.now() + 90 * 60 * 1000);
@@ -277,6 +283,7 @@ export function DashboardClient({
     setCurrentLocation(null);
     setNearbyOriginLabel(null);
     setFacilityCandidates([]);
+    setFacilityCandidatesOpen(false);
     setNearbyMode(false);
     setNotice("전체 수영장 목록으로 돌아왔습니다.");
   }
@@ -295,6 +302,7 @@ export function DashboardClient({
       const candidates = await searchLocations(query, 5);
       setLocationCandidates(candidates);
       setFacilityCandidates([]);
+      setFacilityCandidatesOpen(false);
       setApiReachable(true);
       setNotice(candidates.length > 0 ? "검색 후보를 불러왔습니다." : "검색 후보가 없습니다.");
     } catch (error) {
@@ -321,11 +329,12 @@ export function DashboardClient({
       };
       const [nearby, facilities] = await Promise.all([
         getNearbyPools(geocoded.latitude, geocoded.longitude, 10),
-        searchLocations(buildFacilitySearchQuery(geocoded.address), 10, selectedLocation),
+        getPoolLocationCandidates(geocoded.latitude, geocoded.longitude, 5000, "체육센터", 10),
       ]);
       setLocationQuery(candidate.title);
       setLocationCandidates([]);
       setFacilityCandidates(facilities.filter((item) => !item.alreadyExists));
+      setFacilityCandidatesOpen(false);
       setPools(nearby.map((item) => item.pool));
       setNearbyDistances(toDistanceMap(nearby));
       setCurrentLocation(selectedLocation);
@@ -356,13 +365,6 @@ export function DashboardClient({
       const created = await createPoolFromLocationCandidate(candidateToAdd);
       setAllPools((items) => upsertPool(items, created));
       setPools((items) => upsertPool(items, created));
-      setLocationCandidates((items) =>
-        items.map((item) =>
-          item.title === candidateToAdd.title
-            ? { ...item, alreadyExists: true, matchedPoolId: created.id, latitude: created.latitude, longitude: created.longitude }
-            : item,
-        ),
-      );
       setFacilityCandidates((items) => items.filter((item) => item.title !== candidateToAdd.title));
       setNotice(`${created.name} 시설을 DB에 추가했습니다.`);
       setCandidateToAdd(null);
@@ -646,10 +648,29 @@ export function DashboardClient({
     if (!pendingLoginSuccessNotice || !user) {
       return;
     }
-    setNotice(`${user.displayName} 계정으로 로그인됐습니다.`);
     clearSearchParam("login");
-    setPendingLoginSuccessNotice(false);
+    const timeoutId = window.setTimeout(() => {
+      setNotice(`${user.displayName} 계정으로 로그인됐습니다.`);
+      setPendingLoginSuccessNotice(false);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [pendingLoginSuccessNotice, user]);
+
+  useEffect(() => {
+    if (!pendingLoginErrorNotice) {
+      return;
+    }
+    clearSearchParam("login");
+    const timeoutId = window.setTimeout(() => {
+      setNotice("Google 로그인에 실패했습니다. ngrok 주소로 접속했는지 확인한 뒤 다시 시도하세요.");
+      setPendingLoginErrorNotice(false);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [pendingLoginErrorNotice]);
 
   useEffect(() => {
     if (!notice) {
@@ -676,26 +697,34 @@ export function DashboardClient({
     const notificationId = Number(pendingNotificationLaunchId);
     if (!Number.isInteger(notificationId) || notificationId <= 0) {
       clearSearchParam("notificationId");
-      setPendingNotificationLaunchId(null);
+      window.setTimeout(() => {
+        setPendingNotificationLaunchId(null);
+      }, 0);
       return;
     }
 
     if (!user) {
-      setNotice("로그인 후 알림 내용을 확인할 수 있습니다.");
       clearSearchParam("notificationId");
-      setPendingNotificationLaunchId(null);
+      window.setTimeout(() => {
+        setNotice("로그인 후 알림 내용을 확인할 수 있습니다.");
+        setPendingNotificationLaunchId(null);
+      }, 0);
       return;
     }
 
     const target = notifications.find((item) => item.id === notificationId);
     if (!target) {
-      setNotice("해당 알림을 찾지 못했습니다.");
       clearSearchParam("notificationId");
-      setPendingNotificationLaunchId(null);
+      window.setTimeout(() => {
+        setNotice("해당 알림을 찾지 못했습니다.");
+        setPendingNotificationLaunchId(null);
+      }, 0);
       return;
     }
 
-    setPushNotificationModal(target);
+    window.setTimeout(() => {
+      setPushNotificationModal(target);
+    }, 0);
   }, [notifications, notificationsLoaded, pendingNotificationLaunchId, user]);
 
   async function submitEvent(event: FormEvent<HTMLFormElement>) {
@@ -881,6 +910,7 @@ export function DashboardClient({
                     setLocationQuery(event.target.value);
                     setLocationCandidates([]);
                     setFacilityCandidates([]);
+                    setFacilityCandidatesOpen(false);
                   }}
                   placeholder="화성남부국민체육센터"
                 />
@@ -919,46 +949,55 @@ export function DashboardClient({
               ) : null}
               {facilityCandidates.length > 0 ? (
                 <div className="mt-4 space-y-3">
-                  <div>
-                    <h3 className="text-sm font-semibold">선택 위치 기준 추가 후보</h3>
-                    <p className="text-xs text-[#66746d]">DB에 아직 없는 체육센터 후보입니다.</p>
-                  </div>
-                  <div className="grid gap-2">
-                    {facilityCandidates.map((candidate, index) => {
-                      const address = candidate.roadAddress ?? candidate.address ?? "주소 없음";
-                      return (
-                        <div
-                          key={`facility-${candidate.title}-${address}-${index}`}
-                          className="grid gap-3 rounded-lg border border-[#d8ddd5] bg-[#fbfcf8] px-3 py-3 sm:grid-cols-[1fr_auto]"
-                        >
-                          <button className="grid gap-1 text-left" onClick={() => selectLocationCandidate(candidate)} disabled={busy} type="button">
-                            <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#17201d]">
-                              {candidate.title}
-                              <span className="rounded-md bg-[#fff2e2] px-2 py-1 text-xs font-semibold text-[#946123]">
-                                추가 가능
-                              </span>
-                              {candidate.distanceMeters !== null ? (
-                                <span className="rounded-md bg-[#f0f1ef] px-2 py-1 text-xs text-[#66746d]">
-                                  {formatDistance(candidate.distanceMeters)}
+                  <button
+                    className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-3 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e]"
+                    onClick={() => setFacilityCandidatesOpen((open) => !open)}
+                    type="button"
+                  >
+                    <List size={16} aria-hidden />
+                    {(nearbyOriginLabel ?? "선택 위치")} 기준 수영장 후보 {facilityCandidatesOpen ? "숨기기" : "보기"}
+                  </button>
+                  {facilityCandidatesOpen ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-[#66746d]">DB에 아직 없는 체육센터 후보입니다.</p>
+                      <div className="grid gap-2">
+                        {facilityCandidates.map((candidate, index) => {
+                          const address = candidate.roadAddress ?? candidate.address ?? "주소 없음";
+                          return (
+                            <div
+                              key={`facility-${candidate.title}-${address}-${index}`}
+                              className="grid gap-3 rounded-lg border border-[#d8ddd5] bg-[#fbfcf8] px-3 py-3 sm:grid-cols-[1fr_auto]"
+                            >
+                              <button className="grid gap-1 text-left" onClick={() => selectLocationCandidate(candidate)} disabled={busy} type="button">
+                                <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#17201d]">
+                                  {candidate.title}
+                                  <span className="rounded-md bg-[#fff2e2] px-2 py-1 text-xs font-semibold text-[#946123]">
+                                    추가 가능
+                                  </span>
+                                  {candidate.distanceMeters !== null ? (
+                                    <span className="rounded-md bg-[#f0f1ef] px-2 py-1 text-xs text-[#66746d]">
+                                      {formatDistance(candidate.distanceMeters)}
+                                    </span>
+                                  ) : null}
                                 </span>
-                              ) : null}
-                            </span>
-                            <span className="text-xs text-[#66746d]">{address}</span>
-                            {candidate.category ? <span className="text-xs text-[#0f766e]">{candidate.category}</span> : null}
-                          </button>
-                          <button
-                            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#0f766e] px-3 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
-                            onClick={() => setCandidateToAdd(candidate)}
-                            disabled={busy || !user}
-                            type="button"
-                          >
-                            <Plus size={15} aria-hidden />
-                            이 시설 추가
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                                <span className="text-xs text-[#66746d]">{address}</span>
+                                {candidate.category ? <span className="text-xs text-[#0f766e]">{candidate.category}</span> : null}
+                              </button>
+                              <button
+                                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#0f766e] px-3 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
+                                onClick={() => setCandidateToAdd(candidate)}
+                                disabled={busy || !user}
+                                type="button"
+                              >
+                                <Plus size={15} aria-hidden />
+                                이 시설 추가
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -1479,7 +1518,7 @@ function CandidateConfirmModal({
   onClose,
   busy,
 }: {
-  candidate: LocationSearchCandidate;
+  candidate: PoolLocationCandidate;
   onConfirm: () => void;
   onClose: () => void;
   busy: boolean;
@@ -2020,15 +2059,6 @@ function formatDistance(distanceMeters: number) {
     return `${Math.round(distanceMeters)}m`;
   }
   return `${(distanceMeters / 1000).toFixed(1)}km`;
-}
-
-function buildFacilitySearchQuery(address: string) {
-  const tokens = address.trim().split(/\s+/).filter(Boolean);
-  const regionTokens = tokens.slice(0, 3).filter((token) => !/[0-9]/.test(token));
-  if (regionTokens.length === 0) {
-    return "체육센터";
-  }
-  return `${regionTokens.join(" ")} 체육센터`;
 }
 
 function getGeolocationErrorMessage(error: unknown) {

@@ -1,25 +1,20 @@
 package com.swimpulse.location;
 
 import com.swimpulse.common.BadRequestException;
-import io.micrometer.core.instrument.Counter;
+import com.swimpulse.common.TooManyRequestsException;
+import com.swimpulse.pool.NaverMapsGeocodingClient;
+import com.swimpulse.pool.Pool;
+import com.swimpulse.pool.PoolRepository;
+import com.swimpulse.pool.PoolSearchNormalizer;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import com.swimpulse.pool.NaverMapsGeocodingClient;
-import com.swimpulse.pool.NearbyPoolMatchRow;
-import com.swimpulse.pool.NearbySearchOrigin;
-import com.swimpulse.pool.Pool;
-import com.swimpulse.pool.PoolNearbyQueryRepository;
-import com.swimpulse.pool.PoolRepository;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.IntStream;
 import java.util.stream.Collectors;
-import com.swimpulse.pool.PoolSearchNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -30,26 +25,22 @@ public class LocationService {
 	private static final Logger log = LoggerFactory.getLogger(LocationService.class);
 	private static final int DEFAULT_DISPLAY = 5;
 	private static final int MAX_DISPLAY = 10;
-	private static final double DUPLICATE_DISTANCE_METERS = 80;
 	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
 
 	private final NaverLocalSearchClient naverLocalSearchClient;
 	private final NaverMapsGeocodingClient naverMapsGeocodingClient;
 	private final PoolRepository poolRepository;
-	private final PoolNearbyQueryRepository poolNearbyQueryRepository;
 	private final MeterRegistry meterRegistry;
 
 	public LocationService(
 			NaverLocalSearchClient naverLocalSearchClient,
 			NaverMapsGeocodingClient naverMapsGeocodingClient,
 			PoolRepository poolRepository,
-			PoolNearbyQueryRepository poolNearbyQueryRepository,
 			MeterRegistry meterRegistry
 	) {
 		this.naverLocalSearchClient = naverLocalSearchClient;
 		this.naverMapsGeocodingClient = naverMapsGeocodingClient;
 		this.poolRepository = poolRepository;
-		this.poolNearbyQueryRepository = poolNearbyQueryRepository;
 		this.meterRegistry = meterRegistry;
 	}
 
@@ -59,29 +50,11 @@ public class LocationService {
 		int normalizedDisplay = normalizeDisplay(display);
 		log.info("Location search started. query={} display={} hasOrigin={}",
 				normalizedQuery, normalizedDisplay, latitude != null && longitude != null);
-		List<NormalizedCandidate> normalizedCandidates = recordStep("naver_local_search", () ->
+		List<LocationSearchCandidate> candidates = recordStep("naver_local_search", () ->
 				naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
-						.stream()
-						.map(this::normalizeCandidate)
-						.toList()
-		);
-		PoolMatchLookup matchLookup = recordStep("exact_match_lookup", () -> loadExactMatches(normalizedCandidates));
-		List<PreparedCandidate> preparedCandidates = recordStep("prepare_candidates", () ->
-				normalizedCandidates.stream()
-						.map(candidate -> prepareCandidate(candidate, matchLookup))
-						.toList()
-		);
-		Map<Integer, Pool> coordinateMatches = recordStep("coordinate_match_lookup", () -> loadCoordinateMatches(preparedCandidates));
-		List<LocationSearchCandidate> candidates = recordStep("enrich_sort", () ->
-				IntStream.range(0, preparedCandidates.size())
-						.mapToObj(index -> enrich(preparedCandidates.get(index), coordinateMatches.get(index), latitude, longitude))
-						.sorted(compareByDistanceWhenAvailable())
-						.toList()
 		);
 		meterRegistry.summary("swimpulse.location.search.result_count").record(candidates.size());
-		meterRegistry.summary("swimpulse.location.search.candidate_count").record(normalizedCandidates.size());
-		log.info("Location search completed. query={} resultCount={} exactMatchPoolCount={}",
-				normalizedQuery, candidates.size(), matchLookup.poolCount());
+		log.info("Location search completed. query={} resultCount={}", normalizedQuery, candidates.size());
 		return candidates;
 	}
 
@@ -103,6 +76,7 @@ public class LocationService {
 					normalizedAddress, response.latitude(), response.longitude());
 			return response;
 		} catch (RestClientResponseException exception) {
+			throwIfRateLimited("Naver Maps geocoding request failed", exception);
 			throw new BadRequestException("Naver Maps geocoding request failed: "
 					+ exception.getStatusCode().value() + " " + exception.getStatusText());
 		}
@@ -120,9 +94,40 @@ public class LocationService {
 			log.info("Coordinates reverse geocoded. latitude={} longitude={} address={}", latitude, longitude, address);
 			return new GeocodedLocationResponse(address, latitude, longitude);
 		} catch (RestClientResponseException exception) {
+			throwIfRateLimited("Naver Maps reverse geocoding request failed", exception);
 			throw new BadRequestException("Naver Maps reverse geocoding request failed: "
 					+ exception.getStatusCode().value() + " " + exception.getStatusText());
 		}
+	}
+
+	public Pool findMatchingPool(
+			String title,
+			String roadAddress,
+			String address,
+			Double latitude,
+			Double longitude
+	) {
+		NormalizedCandidate candidate = new NormalizedCandidate(
+				normalizeComparable(title),
+				normalizeComparable(roadAddress),
+				normalizeComparable(address)
+		);
+		return loadExactMatches(List.of(candidate)).find(candidate);
+	}
+
+	public double distanceMeters(double latitude1, double longitude1, double latitude2, double longitude2) {
+		double earthRadiusMeters = 6_371_000;
+		double deltaLatitude = Math.toRadians(latitude2 - latitude1);
+		double deltaLongitude = Math.toRadians(longitude2 - longitude1);
+		double a = Math.sin(deltaLatitude / 2) * Math.sin(deltaLatitude / 2)
+				+ Math.cos(Math.toRadians(latitude1)) * Math.cos(Math.toRadians(latitude2))
+				* Math.sin(deltaLongitude / 2) * Math.sin(deltaLongitude / 2);
+		double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+		return earthRadiusMeters * c;
+	}
+
+	public String normalizeComparable(String value) {
+		return PoolSearchNormalizer.normalize(value);
 	}
 
 	private String normalizeRequired(String value, String fieldName) {
@@ -142,104 +147,6 @@ public class LocationService {
 		return display;
 	}
 
-	private LocationSearchCandidate enrich(
-			PreparedCandidate preparedCandidate,
-			Pool coordinateMatch,
-			Double originLatitude,
-			Double originLongitude
-	) {
-		LocationSearchCandidate candidate = preparedCandidate.normalizedCandidate().candidate();
-		Pool matchedPool = preparedCandidate.exactMatch() == null ? coordinateMatch : preparedCandidate.exactMatch();
-		Double latitude = preparedCandidate.latitude();
-		Double longitude = preparedCandidate.longitude();
-		Double distance = null;
-		if (originLatitude != null && originLongitude != null && latitude != null && longitude != null) {
-			distance = distanceMeters(originLatitude, originLongitude, latitude, longitude);
-		}
-		return candidate.withEnrichment(latitude, longitude, matchedPool != null, matchedPool == null ? null : matchedPool.getId(), distance);
-	}
-
-	private PreparedCandidate prepareCandidate(NormalizedCandidate normalizedCandidate, PoolMatchLookup matchLookup) {
-		LocationSearchCandidate candidate = normalizedCandidate.candidate();
-		Pool exactMatch = matchLookup.find(normalizedCandidate);
-		Double latitude = exactMatch == null ? null : exactMatch.getLatitude();
-		Double longitude = exactMatch == null ? null : exactMatch.getLongitude();
-		String resolutionSource = exactMatch == null ? "unresolved" : "exact_match";
-		String address = resolveAddress(candidate);
-		if ((latitude == null || longitude == null) && hasText(address) && naverMapsGeocodingClient.isConfigured()) {
-			try {
-				NaverMapsGeocodingClient.Coordinates coordinates = geocodeCandidateAddress(address).orElse(null);
-				if (coordinates != null) {
-					latitude = coordinates.latitude();
-					longitude = coordinates.longitude();
-					resolutionSource = "candidate_geocode";
-				} else if (exactMatch != null) {
-					resolutionSource = "exact_match";
-				}
-			} catch (RestClientResponseException exception) {
-				log.warn("Candidate geocode failed. title={} status={} {}",
-						candidate.title(), exception.getStatusCode().value(), exception.getStatusText());
-				latitude = null;
-				longitude = null;
-				resolutionSource = exactMatch != null ? "exact_match" : "unresolved";
-			}
-		}
-		recordCandidateResolution(resolutionSource);
-		return new PreparedCandidate(normalizedCandidate, exactMatch, latitude, longitude);
-	}
-
-	private java.util.Optional<NaverMapsGeocodingClient.Coordinates> geocodeCandidateAddress(String address) {
-		Timer.Sample sample = Timer.start(meterRegistry);
-		String result = "error";
-		try {
-			java.util.Optional<NaverMapsGeocodingClient.Coordinates> coordinates = naverMapsGeocodingClient.geocode(address);
-			result = coordinates.isPresent() ? "hit" : "miss";
-			return coordinates;
-		} finally {
-			sample.stop(Timer.builder("swimpulse.location.search.candidate_geocode")
-					.description("Location search candidate geocode latency")
-					.tag("result", result)
-					.register(meterRegistry));
-		}
-	}
-
-	public Pool findMatchingPool(
-			String title,
-			String roadAddress,
-			String address,
-			Double latitude,
-			Double longitude
-	) {
-		NormalizedCandidate candidate = new NormalizedCandidate(
-				null,
-				normalizeComparable(title),
-				normalizeComparable(roadAddress),
-				normalizeComparable(address)
-		);
-		Pool exactMatch = loadExactMatches(List.of(candidate)).find(candidate);
-		if (exactMatch != null) {
-			return exactMatch;
-		}
-		return latitude == null || longitude == null ? null : findCoordinateMatch(latitude, longitude);
-	}
-
-	public double distanceMeters(double latitude1, double longitude1, double latitude2, double longitude2) {
-		double earthRadiusMeters = 6_371_000;
-		double deltaLatitude = Math.toRadians(latitude2 - latitude1);
-		double deltaLongitude = Math.toRadians(longitude2 - longitude1);
-		double a = Math.sin(deltaLatitude / 2) * Math.sin(deltaLatitude / 2)
-				+ Math.cos(Math.toRadians(latitude1)) * Math.cos(Math.toRadians(latitude2))
-				* Math.sin(deltaLongitude / 2) * Math.sin(deltaLongitude / 2);
-		double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-		return earthRadiusMeters * c;
-	}
-
-	private Comparator<LocationSearchCandidate> compareByDistanceWhenAvailable() {
-		return Comparator
-				.comparing((LocationSearchCandidate candidate) -> candidate.distanceMeters() == null ? 1 : 0)
-				.thenComparing(candidate -> candidate.distanceMeters() == null ? Double.MAX_VALUE : candidate.distanceMeters());
-	}
-
 	private void validateOptionalCoordinates(Double latitude, Double longitude) {
 		if (latitude == null && longitude == null) {
 			return;
@@ -256,28 +163,14 @@ public class LocationService {
 		}
 	}
 
-	private String resolveAddress(LocationSearchCandidate candidate) {
-		if (hasText(candidate.roadAddress())) {
-			return candidate.roadAddress();
-		}
-		return candidate.address();
-	}
-
 	private boolean hasText(String value) {
 		return value != null && !value.isBlank();
 	}
 
-	public String normalizeComparable(String value) {
-		return PoolSearchNormalizer.normalize(value);
-	}
-
-	private NormalizedCandidate normalizeCandidate(LocationSearchCandidate candidate) {
-		return new NormalizedCandidate(
-				candidate,
-				normalizeComparable(candidate.title()),
-				normalizeComparable(candidate.roadAddress()),
-				normalizeComparable(candidate.address())
-		);
+	private void throwIfRateLimited(String prefix, RestClientResponseException exception) {
+		if (exception.getStatusCode().value() == 429) {
+			throw new TooManyRequestsException(prefix + ": 429 Too Many Requests");
+		}
 	}
 
 	private PoolMatchLookup loadExactMatches(List<NormalizedCandidate> candidates) {
@@ -309,56 +202,10 @@ public class LocationService {
 		return values.isEmpty() ? Set.of(IMPOSSIBLE_NORMALIZED_VALUE) : values;
 	}
 
-	private Pool findCoordinateMatch(double latitude, double longitude) {
-		return poolRepository.findNearestWithinDistance(latitude, longitude, DUPLICATE_DISTANCE_METERS)
-				.orElse(null);
-	}
-
-	private Map<Integer, Pool> loadCoordinateMatches(List<PreparedCandidate> candidates) {
-		List<NearbySearchOrigin> origins = IntStream.range(0, candidates.size())
-				.filter(index -> candidates.get(index).exactMatch() == null)
-				.filter(index -> candidates.get(index).latitude() != null && candidates.get(index).longitude() != null)
-				.mapToObj(index -> new NearbySearchOrigin(
-						index,
-						candidates.get(index).latitude(),
-						candidates.get(index).longitude()
-				))
-				.toList();
-		if (origins.isEmpty()) {
-			return Map.of();
-		}
-		List<NearbyPoolMatchRow> matchRows = poolNearbyQueryRepository.findNearestMatches(
-				origins,
-				DUPLICATE_DISTANCE_METERS
-		);
-		if (matchRows.isEmpty()) {
-			return Map.of();
-		}
-		Map<Long, Pool> poolsById = poolRepository.findAllById(
-						matchRows.stream().map(NearbyPoolMatchRow::poolId).collect(Collectors.toSet())
-				).stream()
-				.collect(Collectors.toMap(Pool::getId, pool -> pool));
-		return matchRows.stream()
-				.filter(row -> poolsById.containsKey(row.poolId()))
-				.collect(Collectors.toMap(
-						NearbyPoolMatchRow::candidateIndex,
-						row -> poolsById.get(row.poolId())
-				));
-	}
-
 	private record NormalizedCandidate(
-			LocationSearchCandidate candidate,
 			String normalizedName,
 			String normalizedRoadAddress,
 			String normalizedLotAddress
-	) {
-	}
-
-	private record PreparedCandidate(
-			NormalizedCandidate normalizedCandidate,
-			Pool exactMatch,
-			Double latitude,
-			Double longitude
 	) {
 	}
 
@@ -419,13 +266,5 @@ public class LocationService {
 					.tag("step", step)
 					.register(meterRegistry));
 		}
-	}
-
-	private void recordCandidateResolution(String source) {
-		Counter.builder("swimpulse.location.search.candidate_resolution")
-				.description("Location search candidate resolution source")
-				.tag("source", source)
-				.register(meterRegistry)
-				.increment();
 	}
 }

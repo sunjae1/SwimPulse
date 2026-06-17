@@ -16,6 +16,7 @@ export default async function Home({ searchParams }: HomeProps) {
     <DashboardClient
       initialData={initialData}
       initialLoginSuccess={resolvedSearchParams?.login === "success"}
+      initialLoginError={resolvedSearchParams?.login === "error"}
       initialNotificationId={resolvedSearchParams?.notificationId ?? null}
     />
   );

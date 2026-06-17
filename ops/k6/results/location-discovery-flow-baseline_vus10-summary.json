@@ -1,0 +1,229 @@
+{
+    "root_group": {
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "flow location search status is 200": {
+                    "id": "87604e53e8dd304326812d4c17aa381f",
+                    "passes": 328,
+                    "fails": 24,
+                    "name": "flow location search status is 200",
+                    "path": "::flow location search status is 200"
+                },
+                "flow location search has selectable candidate": {
+                    "fails": 24,
+                    "name": "flow location search has selectable candidate",
+                    "path": "::flow location search has selectable candidate",
+                    "id": "ce99e753f5515876d764ba3e1300f43b",
+                    "passes": 328
+                },
+                "flow geocode status is 200": {
+                    "name": "flow geocode status is 200",
+                    "path": "::flow geocode status is 200",
+                    "id": "1daae1ca472464f01eae9dd7fe5a3a84",
+                    "passes": 328,
+                    "fails": 0
+                },
+                "flow geocode has coordinates": {
+                    "id": "677696e9d4149c6061986f711328f0fe",
+                    "passes": 328,
+                    "fails": 0,
+                    "name": "flow geocode has coordinates",
+                    "path": "::flow geocode has coordinates"
+                },
+                "flow nearby status is 200": {
+                    "name": "flow nearby status is 200",
+                    "path": "::flow nearby status is 200",
+                    "id": "63abf27b10fbfd1b37a75c34c66c3821",
+                    "passes": 328,
+                    "fails": 0
+                },
+                "flow nearby response is array": {
+                    "fails": 0,
+                    "name": "flow nearby response is array",
+                    "path": "::flow nearby response is array",
+                    "id": "c580c9f659f8cba62799012f90ef26b3",
+                    "passes": 328
+                },
+                "flow pool candidates status is 200": {
+                    "passes": 282,
+                    "fails": 46,
+                    "name": "flow pool candidates status is 200",
+                    "path": "::flow pool candidates status is 200",
+                    "id": "bf72b401e70821d502c870bb6a4449e4"
+                },
+                "flow pool candidates response is array": {
+                    "name": "flow pool candidates response is array",
+                    "path": "::flow pool candidates response is array",
+                    "id": "3b80cc14d7386058224182ef2de9125e",
+                    "passes": 282,
+                    "fails": 46
+                }
+            },
+        "name": ""
+    },
+    "metrics": {
+        "http_req_duration{expected_response:true}": {
+            "med": 142.181384,
+            "max": 1737.616979,
+            "p(90)": 602.0253335,
+            "p(95)": 1353.2361735,
+            "p(99)": 1545.36885645,
+            "avg": 283.88396441153253,
+            "min": 6.426046
+        },
+        "http_req_connecting": {
+            "max": 2.918103,
+            "p(90)": 0,
+            "p(95)": 0.13826025,
+            "p(99)": 0.8827189000000009,
+            "avg": 0.03037301422155688,
+            "min": 0,
+            "med": 0
+        },
+        "http_req_receiving": {
+            "p(99)": 0.9664414500000036,
+            "avg": 0.1834272911676647,
+            "min": 0.034305,
+            "med": 0.112265,
+            "max": 2.134006,
+            "p(90)": 0.333827,
+            "p(95)": 0.504497
+        },
+        "vus_max": {
+            "value": 10,
+            "min": 10,
+            "max": 10
+        },
+        "http_req_failed": {
+            "passes": 70,
+            "fails": 1266,
+            "thresholds": {
+                "rate<0.01": true
+            },
+            "value": 0.05239520958083832
+        },
+        "location_discovery_flow_completed": {
+            "passes": 282,
+            "fails": 70,
+            "thresholds": {
+                "rate>0.99": true
+            },
+            "value": 0.8011363636363636
+        },
+        "data_sent": {
+            "count": 251920,
+            "rate": 4058.205403034806
+        },
+        "iterations": {
+            "count": 352,
+            "rate": 5.670404500906048
+        },
+        "http_reqs": {
+            "rate": 21.521762537529774,
+            "count": 1336
+        },
+        "http_req_sending": {
+            "p(99)": 0.4036742000000036,
+            "avg": 0.04179786452095806,
+            "min": 0.007,
+            "med": 0.017701500000000002,
+            "max": 1.567425,
+            "p(90)": 0.088755,
+            "p(95)": 0.15936250000000002
+        },
+        "location_discovery_step_duration": {
+            "p(90)": 1025.1321444999999,
+            "p(95)": 1336.3275975,
+            "p(99)": 1542.8974945500006,
+            "avg": 323.88982089670685,
+            "min": 6.426046,
+            "med": 260.89599450000003,
+            "max": 1737.616979
+        },
+        "http_req_blocked": {
+            "med": 0.0035,
+            "max": 3.438536,
+            "p(90)": 0.0176515,
+            "p(95)": 0.21134,
+            "p(99)": 1.4555408500000013,
+            "avg": 0.055756099550898164,
+            "min": 0.0014
+        },
+        "checks": {
+            "passes": 2532,
+            "fails": 140,
+            "value": 0.9476047904191617
+        },
+        "http_req_waiting": {
+            "p(99)": 1542.7147496000007,
+            "avg": 323.66459574101833,
+            "min": 6.187429,
+            "med": 260.7544275,
+            "max": 1737.525372,
+            "p(90)": 1023.9544880000001,
+            "p(95)": 1336.23438225
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "data_received": {
+            "count": 4961507,
+            "rate": 79925.43075021837
+        },
+        "vus": {
+            "min": 2,
+            "max": 10,
+            "value": 2
+        },
+        "http_req_duration": {
+            "med": 260.89599450000003,
+            "max": 1737.616979,
+            "p(90)": 1025.1321444999999,
+            "p(95)": 1336.3275975,
+            "p(99)": 1542.8974945500006,
+            "avg": 323.88982089670685,
+            "min": 6.426046,
+            "thresholds": {
+                "p(95)<5000": false
+            }
+        },
+        "location_discovery_result_count": {
+            "med": 5,
+            "max": 10,
+            "p(90)": 10,
+            "p(95)": 10,
+            "p(99)": 10,
+            "avg": 5.259083728278041,
+            "min": 1
+        },
+        "iteration_duration": {
+            "avg": 1731.867155454547,
+            "min": 1083.507792,
+            "med": 1531.8637175,
+            "max": 2927.698026,
+            "p(90)": 2381.9650604,
+            "p(95)": 2549.33689495,
+            "p(99)": 2819.2640384799997
+        },
+        "location_discovery_failed_steps": {
+            "count": 70,
+            "rate": 1.1276372587029073
+        },
+        "location_discovery_step_valid_response": {
+            "passes": 1266,
+            "fails": 70,
+            "thresholds": {
+                "rate>0.99": true
+            },
+            "value": 0.9476047904191617
+        }
+    }
+}
