@@ -173,6 +173,8 @@ public class NotificationService {
 								"notificationId", notification.getId().toString(),
 								"eventId", notification.getEvent().getId().toString(),
 								"poolId", notification.getPool().getId().toString(),
+								"poolName", notification.getPool().getName(),
+								"eventTitle", notification.getEvent().getTitle(),
 								"type", notification.getType().name()
 						)
 				)));

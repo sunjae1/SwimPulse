@@ -566,6 +566,7 @@ export function DashboardClient({
 
     setBusy(true);
     try {
+      await registerCurrentDeviceForPush(user);
       const queued = await sendTestNotification();
       setNotifications((items) => [queued, ...items]);
       setNotice("테스트 알림을 Redis 큐에 넣었습니다. 실제 브라우저 푸시는 Firebase 설정이 연결되어 있어야 도착합니다.");
@@ -1257,6 +1258,7 @@ export function DashboardClient({
       {noticeScanResult ? (
         <NoticeResultModal
           result={noticeScanResult}
+          onResultUpdate={setNoticeScanResult}
           onClose={() => {
             setNoticeScanResult(null);
             setNoticeSubscriptionMode(false);
@@ -1650,6 +1652,7 @@ function PastPeriodSubscriptionModal({
 
 function NoticeResultModal({
   result,
+  onResultUpdate,
   onClose,
   subscriptionMode,
   subscriptions,
@@ -1659,6 +1662,7 @@ function NoticeResultModal({
   onUnsubscribe,
 }: {
   result: NoticeScanResponse;
+  onResultUpdate: (result: NoticeScanResponse) => void;
   onClose: () => void;
   subscriptionMode: boolean;
   subscriptions: Subscription[];
@@ -1668,6 +1672,42 @@ function NoticeResultModal({
   onUnsubscribe: (subscription: Subscription) => void;
 }) {
   const trace = result.trace ?? [];
+  const hasOcrInProgress = result.notices.some((notice) => isOcrInProgress(notice.ocrStatus));
+  const [ocrPollingTimedOutPoolId, setOcrPollingTimedOutPoolId] = useState<number | null>(null);
+  const ocrPollingTimedOut = ocrPollingTimedOutPoolId === result.poolId;
+
+  useEffect(() => {
+    if (!hasOcrInProgress) {
+      return;
+    }
+
+    let cancelled = false;
+    let elapsedMs = 0;
+    const maxPollingMs = 30_000;
+    const pollIntervalMs = 2_500;
+
+    const timerId = window.setInterval(async () => {
+      elapsedMs += pollIntervalMs;
+      if (elapsedMs > maxPollingMs) {
+        setOcrPollingTimedOutPoolId(result.poolId);
+        window.clearInterval(timerId);
+        return;
+      }
+      try {
+        const updated = await scanPoolNotices(result.poolId);
+        if (!cancelled) {
+          onResultUpdate(updated);
+        }
+      } catch {
+        // Keep the current result visible. The next tick can retry until timeout.
+      }
+    }, pollIntervalMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timerId);
+    };
+  }, [hasOcrInProgress, onResultUpdate, result.poolId]);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 px-4" role="dialog" aria-modal="true">
@@ -1691,6 +1731,13 @@ function NoticeResultModal({
           {result.latestCheckFailed ? (
             <div className="border-l-4 border-[#c2410c] bg-[#fff7ed] px-5 py-3 text-sm font-medium text-[#9a3412]">
               {result.message}
+            </div>
+          ) : null}
+          {hasOcrInProgress ? (
+            <div className="border-l-4 border-[#0f766e] bg-[#eefaf5] px-5 py-3 text-sm font-medium text-[#12645d]">
+              {ocrPollingTimedOut
+                ? "이미지 공지 분석이 지연되고 있습니다. 원문을 확인하거나 잠시 후 다시 시도해 주세요."
+                : "이미지 공지를 분석 중입니다. 완료되면 이 창에서 자동으로 갱신됩니다."}
             </div>
           ) : null}
           {result.notices.length === 0 ? (
@@ -1720,6 +1767,11 @@ function NoticeResultModal({
                     <span className={`rounded-md px-2 py-1 text-xs font-semibold ${noticeStatusClass(notice.extractionStatus)}`}>
                       {noticeStatusLabel(notice.extractionStatus)}
                     </span>
+                    {notice.ocrStatus && notice.ocrStatus !== "NOT_REQUIRED" ? (
+                      <span className={`rounded-md px-2 py-1 text-xs font-semibold ${noticeOcrStatusClass(notice.ocrStatus)}`}>
+                        {noticeOcrStatusLabel(notice.ocrStatus)}
+                      </span>
+                    ) : null}
                     <h3 className="font-semibold">{notice.title}</h3>
                   </div>
                   {registrationPeriods.length > 0 ? (
@@ -1742,11 +1794,7 @@ function NoticeResultModal({
                       </div>
                     </div>
                   ) : (
-                    <p className="text-sm text-[#66746d]">
-                      {subscriptionMode
-                        ? "구독할 수 있는 구조화 기간이 없습니다. 원문 링크를 확인하세요."
-                        : "구독할 수 있는 구조화 기간이 없습니다. 원문 링크를 확인하세요."}
-                    </p>
+                    <p className="text-sm text-[#66746d]">{noticeOcrEmptyPeriodMessage(notice.ocrStatus, subscriptionMode)}</p>
                   )}
                   {notice.reason ? <p className="text-xs text-[#7c8982]">{notice.reason}</p> : null}
                   <a
@@ -2135,4 +2183,47 @@ function noticeStatusClass(status: NoticeScanResponse["notices"][number]["extrac
     FAILED: "bg-[#fff0ed] text-[#bf4b3e]",
   };
   return classes[status];
+}
+
+function isOcrInProgress(status: PoolNotice["ocrStatus"]) {
+  return status === "PENDING" || status === "PROCESSING";
+}
+
+function noticeOcrStatusLabel(status: NonNullable<PoolNotice["ocrStatus"]>) {
+  const labels = {
+    NOT_REQUIRED: "이미지 분석 불필요",
+    PENDING: "이미지 분석 대기",
+    PROCESSING: "이미지 분석 중",
+    COMPLETED: "이미지 분석 완료",
+    NO_PERIOD: "이미지 기간 없음",
+    FAILED: "이미지 분석 실패",
+  };
+  return labels[status];
+}
+
+function noticeOcrStatusClass(status: NonNullable<PoolNotice["ocrStatus"]>) {
+  const classes = {
+    NOT_REQUIRED: "bg-[#edf7f5] text-[#0f766e]",
+    PENDING: "bg-[#eefaf5] text-[#12645d]",
+    PROCESSING: "bg-[#e8f3ff] text-[#1d4f8f]",
+    COMPLETED: "bg-[#edf7f5] text-[#0f766e]",
+    NO_PERIOD: "bg-[#fff2e2] text-[#946123]",
+    FAILED: "bg-[#fff0ed] text-[#bf4b3e]",
+  };
+  return classes[status];
+}
+
+function noticeOcrEmptyPeriodMessage(status: PoolNotice["ocrStatus"], subscriptionMode: boolean) {
+  if (status === "PENDING" || status === "PROCESSING") {
+    return "이미지 공지를 분석 중입니다. 완료되면 이 창에서 자동으로 갱신됩니다.";
+  }
+  if (status === "NO_PERIOD") {
+    return "이미지 공지를 분석했지만 모집 기간을 찾지 못했습니다. 원문을 확인해 주세요.";
+  }
+  if (status === "FAILED") {
+    return "이미지 공지 분석에 실패했습니다. 원문을 확인해 주세요.";
+  }
+  return subscriptionMode
+    ? "구독할 수 있는 구조화 기간이 없습니다. 원문 링크를 확인하세요."
+    : "구독할 수 있는 구조화 기간이 없습니다. 원문 링크를 확인하세요.";
 }

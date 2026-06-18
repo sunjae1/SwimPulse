@@ -68,6 +68,7 @@ export type GeocodedLocation = {
 };
 
 export type NoticeExtractionStatus = "EXTRACTED" | "LINK_ONLY" | "FAILED";
+export type NoticeOcrStatus = "NOT_REQUIRED" | "PENDING" | "PROCESSING" | "COMPLETED" | "NO_PERIOD" | "FAILED";
 
 export type NoticeRegistrationPeriod = {
   id: number | null;
@@ -87,6 +88,10 @@ export type PoolNotice = {
   publishedAt: string | null;
   extractionStatus: NoticeExtractionStatus;
   confidence: number | null;
+  ocrStatus?: NoticeOcrStatus;
+  ocrRequestedAt?: string | null;
+  ocrStartedAt?: string | null;
+  ocrCompletedAt?: string | null;
   registrationStartsAt: string | null;
   registrationEndsAt: string | null;
   registrationPeriods?: NoticeRegistrationPeriod[];

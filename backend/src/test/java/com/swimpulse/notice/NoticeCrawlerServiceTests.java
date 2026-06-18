@@ -412,6 +412,53 @@ class NoticeCrawlerServiceTests {
 	}
 
 	@Test
+	void imageOcrRetryParsesMaedalMonthlyRangesWithTimes() throws Exception {
+		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("""
+				-기존회원 재접수 (온라인,방문) : 매달 17일~23일
+				-기존회원 반 변경 : 매달 24일~25일
+				-신규접수 : (온라인) 매달 26일 9시 ~ 말일 21시 까지 / (연장) 매달 27일 9시 ~ 말일 21시 까지 (평일만 가능)
+				""");
+		NoticeCrawlerService service = new NoticeCrawlerService(
+				null,
+				null,
+				null,
+				null,
+				new ObjectMapper(),
+				ocrService,
+				false
+		);
+		Document document = Jsoup.parse("""
+				<html>
+					<body>
+						<p>G.X 프로그램 수강생 모집</p>
+						<img src="https://example.com/gx-front.png">
+					</body>
+				</html>
+				""");
+
+		NoticeTextExtractionOutcomeView outcome = extractNoticeDetail(
+				service,
+				"[G.X프로그램] 26년 6월 G.X 프로그램 수강생 모집",
+				"https://example.com/notices/gx",
+				"G.X 프로그램 수강생 모집\n회원모집 안내",
+				document,
+				List.of("https://example.com/gx-front.png")
+		);
+
+		assertEquals(1, ocrService.callCount());
+		assertTrue(outcome.result().hasPeriod());
+		assertEquals(4, outcome.result().registrationPeriods().size());
+		assertTrue(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> "매달 17일~23일".equals(period.periodText())));
+		assertTrue(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> "매달 24일~25일".equals(period.periodText())));
+		assertTrue(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> "매달 26일 9시 ~ 말일 21시".equals(period.periodText())));
+		assertTrue(outcome.result().registrationPeriods().stream()
+				.anyMatch(period -> "매달 27일 9시 ~ 말일 21시".equals(period.periodText())));
+	}
+
+	@Test
 	void imageOcrRetryParsesTimedDateRangesByLineSegments() throws Exception {
 		FakeNoticeImageOcrService ocrService = new FakeNoticeImageOcrService("""
 				2026년 7월 종목별 강습반 모집 안내

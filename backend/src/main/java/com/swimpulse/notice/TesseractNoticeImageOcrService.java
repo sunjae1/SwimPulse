@@ -1,6 +1,9 @@
 package com.swimpulse.notice;
 
+import com.swimpulse.common.RedisJsonCacheService;
 import com.swimpulse.common.BadRequestException;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -14,7 +17,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
@@ -40,6 +46,9 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 	private final int maxImages;
 	private final Duration timeout;
 	private final boolean insecureSslFallbackEnabled;
+	private final RedisJsonCacheService redisCache;
+	private final MeterRegistry meterRegistry;
+	private final Duration cacheTtl;
 
 	TesseractNoticeImageOcrService(
 			boolean enabled,
@@ -49,6 +58,20 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 			Duration timeout,
 			boolean insecureSslFallbackEnabled
 	) {
+		this(enabled, command, languages, maxImages, timeout, insecureSslFallbackEnabled, null, null, Duration.ofDays(90));
+	}
+
+	TesseractNoticeImageOcrService(
+			boolean enabled,
+			String command,
+			String languages,
+			int maxImages,
+			Duration timeout,
+			boolean insecureSslFallbackEnabled,
+			RedisJsonCacheService redisCache,
+			MeterRegistry meterRegistry,
+			Duration cacheTtl
+	) {
 		this.enabled = enabled;
 		this.command = command;
 		this.languages = languages;
@@ -57,6 +80,9 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 				? Duration.ofSeconds(1)
 				: timeout;
 		this.insecureSslFallbackEnabled = insecureSslFallbackEnabled;
+		this.redisCache = redisCache;
+		this.meterRegistry = meterRegistry;
+		this.cacheTtl = cacheTtl == null ? Duration.ofDays(90) : cacheTtl;
 	}
 
 	@Autowired
@@ -66,9 +92,22 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 			@Value("${swimpulse.notice.ocr.languages:kor+eng}") String languages,
 			@Value("${swimpulse.notice.ocr.max-images:3}") int maxImages,
 			@Value("${swimpulse.notice.ocr.timeout-ms:15000}") long timeoutMs,
-			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled
+			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled,
+			RedisJsonCacheService redisCache,
+			MeterRegistry meterRegistry,
+			@Value("${swimpulse.notice.ocr.cache-ttl:P90D}") Duration cacheTtl
 	) {
-		this(enabled, command, languages, maxImages, Duration.ofMillis(timeoutMs), insecureSslFallbackEnabled);
+		this(
+				enabled,
+				command,
+				languages,
+				maxImages,
+				Duration.ofMillis(timeoutMs),
+				insecureSslFallbackEnabled,
+				redisCache,
+				meterRegistry,
+				cacheTtl
+		);
 	}
 
 	@Override
@@ -90,20 +129,16 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 		int extractedImages = 0;
 		for (String imageUrl : targets) {
 			try {
-				log.info("Notice OCR downloading image. url={}", imageUrl);
-				byte[] imageBytes = downloadImage(imageUrl);
-				log.info("Notice OCR image downloaded. url={} bytes={}", imageUrl, imageBytes.length);
-				if (imageBytes.length == 0) {
-					failures.add("Downloaded image was empty: " + imageUrl);
-					continue;
+				CachedOcrImageText cachedText = readCachedImageText(imageUrl);
+				if (cachedText == null) {
+					cachedText = extractImageText(imageUrl);
+					writeCachedImageText(imageUrl, cachedText);
 				}
-				String text = runTesseract(imageBytes, imageUrl);
-				log.info("Notice OCR image processed. url={} textLength={}", imageUrl, text == null ? 0 : text.length());
-				if (hasText(text)) {
-					extractedTexts.add(text.trim());
+				if (cachedText.found() && hasText(cachedText.text())) {
+					extractedTexts.add(cachedText.text().trim());
 					extractedImages++;
 				} else {
-					failures.add("OCR text was empty: " + imageUrl);
+					failures.add(firstText(cachedText.reason(), "OCR text was empty") + ": " + imageUrl);
 				}
 			} catch (RuntimeException exception) {
 				failures.add(imageUrl + " - " + exception.getMessage());
@@ -122,6 +157,68 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 		log.info("Notice OCR completed. attemptedImages={} extractedImages={} textLength={}",
 				targets.size(), extractedImages, combined.length());
 		return new NoticeImageOcrResult(combined, targets.size(), extractedImages, reason);
+	}
+
+	private CachedOcrImageText extractImageText(String imageUrl) {
+		log.info("Notice OCR downloading image. url={}", imageUrl);
+		byte[] imageBytes = timeOcrPhase("download", () -> downloadImage(imageUrl));
+		log.info("Notice OCR image downloaded. url={} bytes={}", imageUrl, imageBytes.length);
+		if (imageBytes.length == 0) {
+			return CachedOcrImageText.miss("Downloaded image was empty");
+		}
+		String text = timeOcrPhase("process", () -> runTesseract(imageBytes, imageUrl));
+		log.info("Notice OCR image processed. url={} textLength={}", imageUrl, text == null ? 0 : text.length());
+		if (!hasText(text)) {
+			return CachedOcrImageText.miss("OCR text was empty");
+		}
+		return CachedOcrImageText.hit(text);
+	}
+
+	private CachedOcrImageText readCachedImageText(String imageUrl) {
+		if (redisCache == null) {
+			return null;
+		}
+		return redisCache.get("notice-ocr", ocrCacheKey(imageUrl), CachedOcrImageText.class)
+				.map(cached -> {
+					log.debug("Notice OCR cache hit. url={}", imageUrl);
+					return cached;
+				})
+				.orElse(null);
+	}
+
+	private void writeCachedImageText(String imageUrl, CachedOcrImageText value) {
+		if (redisCache == null || value == null) {
+			return;
+		}
+		redisCache.put("notice-ocr", ocrCacheKey(imageUrl), value, cacheTtl);
+	}
+
+	private String ocrCacheKey(String imageUrl) {
+		String normalized = imageUrl == null ? "" : imageUrl.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+		return "swimpulse:cache:notice-ocr:v1:" + redisCache.hash(normalized);
+	}
+
+	private <T> T timeOcrPhase(String phase, Supplier<T> supplier) {
+		long startedAt = System.nanoTime();
+		String outcome = "success";
+		try {
+			return supplier.get();
+		} catch (RuntimeException exception) {
+			outcome = "failure";
+			throw exception;
+		} finally {
+			long elapsedNanos = System.nanoTime() - startedAt;
+			log.info("Notice OCR phase completed. phase={} outcome={} elapsedMs={}",
+					phase, outcome, TimeUnit.NANOSECONDS.toMillis(elapsedNanos));
+			if (meterRegistry != null) {
+				Timer.builder("swimpulse.notice.ocr.phase.duration")
+						.description("Notice OCR phase duration")
+						.tag("phase", phase)
+						.tag("outcome", outcome)
+						.register(meterRegistry)
+						.record(elapsedNanos, TimeUnit.NANOSECONDS);
+			}
+		}
 	}
 
 	List<String> normalizeTargets(List<String> imageUrls) {
@@ -312,6 +409,20 @@ public class TesseractNoticeImageOcrService implements NoticeImageOcrService {
 		return value != null && !value.isBlank();
 	}
 
+	private String firstText(String value, String fallback) {
+		return hasText(value) ? value.trim() : fallback;
+	}
+
 	record TempCleanupResult(int deletedEntries, List<String> failures) {
+	}
+
+	private record CachedOcrImageText(boolean found, String text, String reason) {
+		private static CachedOcrImageText hit(String text) {
+			return new CachedOcrImageText(true, text, "OCR text extracted");
+		}
+
+		private static CachedOcrImageText miss(String reason) {
+			return new CachedOcrImageText(false, null, reason);
+		}
 	}
 }

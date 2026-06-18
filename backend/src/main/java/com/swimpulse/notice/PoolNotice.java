@@ -60,6 +60,16 @@ public class PoolNotice {
 
 	private Instant lastAnalyzedAt;
 
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 30)
+	private NoticeOcrStatus ocrStatus = NoticeOcrStatus.NOT_REQUIRED;
+
+	private Instant ocrRequestedAt;
+
+	private Instant ocrStartedAt;
+
+	private Instant ocrCompletedAt;
+
 	@OneToMany(mappedBy = "notice", fetch = FetchType.LAZY)
 	private List<NoticeRegistrationPeriodEntity> registrationPeriods = new ArrayList<>();
 
@@ -114,6 +124,7 @@ public class PoolNotice {
 		this.reason = reason;
 		this.registrationPeriodsJson = registrationPeriodsJson;
 		this.parserVersion = 0;
+		this.ocrStatus = NoticeOcrStatus.NOT_REQUIRED;
 		this.createdAt = Instant.now();
 	}
 
@@ -144,6 +155,42 @@ public class PoolNotice {
 	public void markAnalyzed(int parserVersion) {
 		this.parserVersion = parserVersion;
 		this.lastAnalyzedAt = Instant.now();
+	}
+
+	public void markOcrNotRequired() {
+		this.ocrStatus = NoticeOcrStatus.NOT_REQUIRED;
+		this.ocrRequestedAt = null;
+		this.ocrStartedAt = null;
+		this.ocrCompletedAt = null;
+	}
+
+	public void markOcrPending() {
+		this.ocrStatus = NoticeOcrStatus.PENDING;
+		this.ocrRequestedAt = Instant.now();
+		this.ocrStartedAt = null;
+		this.ocrCompletedAt = null;
+	}
+
+	public void markOcrProcessing() {
+		this.ocrStatus = NoticeOcrStatus.PROCESSING;
+		this.ocrStartedAt = Instant.now();
+		this.ocrCompletedAt = null;
+	}
+
+	public void markOcrCompleted() {
+		this.ocrStatus = NoticeOcrStatus.COMPLETED;
+		this.ocrCompletedAt = Instant.now();
+	}
+
+	public void markOcrNoPeriod() {
+		this.ocrStatus = NoticeOcrStatus.NO_PERIOD;
+		this.ocrCompletedAt = Instant.now();
+	}
+
+	public void markOcrFailed(String message) {
+		this.ocrStatus = NoticeOcrStatus.FAILED;
+		this.ocrCompletedAt = Instant.now();
+		this.reason = truncate(message, 500);
 	}
 
 	public void markPeriodsMigrated() {
@@ -196,12 +243,32 @@ public class PoolNotice {
 		return registrationPeriodsJson;
 	}
 
+	public String getRawText() {
+		return rawText;
+	}
+
 	public int getParserVersion() {
 		return parserVersion;
 	}
 
 	public Instant getLastAnalyzedAt() {
 		return lastAnalyzedAt;
+	}
+
+	public NoticeOcrStatus getOcrStatus() {
+		return ocrStatus == null ? NoticeOcrStatus.NOT_REQUIRED : ocrStatus;
+	}
+
+	public Instant getOcrRequestedAt() {
+		return ocrRequestedAt;
+	}
+
+	public Instant getOcrStartedAt() {
+		return ocrStartedAt;
+	}
+
+	public Instant getOcrCompletedAt() {
+		return ocrCompletedAt;
 	}
 
 	public List<NoticeRegistrationPeriodEntity> getRegistrationPeriods() {

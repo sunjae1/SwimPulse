@@ -8,6 +8,8 @@ import com.swimpulse.common.NotFoundException;
 import com.swimpulse.common.RedisLockService;
 import com.swimpulse.pool.Pool;
 import com.swimpulse.pool.PoolRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -28,6 +30,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -53,20 +57,22 @@ import org.springframework.transaction.annotation.Transactional;
 public class NoticeCrawlerService {
 	private static final Logger log = LoggerFactory.getLogger(NoticeCrawlerService.class);
 	private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
-	static final int CURRENT_PARSER_VERSION = 4;
+	static final int CURRENT_PARSER_VERSION = 5;
 	private static final String OCR_TEXT_MARKER = "[OCR IMAGE TEXT]";
 	private static final Pattern PERIOD = Pattern.compile("(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*[./월]\\s*(\\d{1,2})\\s*[일.]?\\s*(?:\\([^)]*\\))?");
 	private static final Pattern MONTH_TO_DAY_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
 	private static final Pattern MONTH_TO_MONTH_END_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*말일");
 	private static final Pattern MONTH_SINGLE_DAY = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일(?!\\s*[~\\-–])");
 	private static final Pattern DAY_ONLY_PERIOD = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*\\.\\s*(?:\\([^)]*\\))?\\s*[~\\-–]\\s*(\\d{1,2})\\s*\\.\\s*(?:\\([^)]*\\))?(?!\\s*\\d)");
-	private static final Pattern MONTHLY_DAY_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
-	private static final Pattern MONTHLY_TO_NEXT_MONTH_DAY_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*익월\\s*(\\d{1,2})\\s*일");
-	private static final Pattern MONTHLY_TO_MONTH_END_PERIOD = Pattern.compile("매월\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*말일");
-	private static final Pattern MONTHLY_SINGLE_DAY = Pattern.compile("매월\\s*(\\d{1,2})\\s*일(?!\\s*[~\\-–])");
+	private static final String MONTHLY_PREFIX_PATTERN = "(?:매월|매달)";
+	private static final String OPTIONAL_KOREAN_TIME_PATTERN = "(?:\\s*\\d{1,2}\\s*(?:시\\s*(?:\\d{1,2}\\s*분?)?|[:：]\\s*\\d{2}))?";
+	private static final Pattern MONTHLY_DAY_PERIOD = Pattern.compile(MONTHLY_PREFIX_PATTERN + "\\s*(\\d{1,2})\\s*일?" + OPTIONAL_KOREAN_TIME_PATTERN + "\\s*[~\\-–]\\s*(\\d{1,2})\\s*일" + OPTIONAL_KOREAN_TIME_PATTERN);
+	private static final Pattern MONTHLY_TO_NEXT_MONTH_DAY_PERIOD = Pattern.compile(MONTHLY_PREFIX_PATTERN + "\\s*(\\d{1,2})\\s*일?" + OPTIONAL_KOREAN_TIME_PATTERN + "\\s*[~\\-–]\\s*익월\\s*(\\d{1,2})\\s*일" + OPTIONAL_KOREAN_TIME_PATTERN);
+	private static final Pattern MONTHLY_TO_MONTH_END_PERIOD = Pattern.compile(MONTHLY_PREFIX_PATTERN + "\\s*(\\d{1,2})\\s*일?" + OPTIONAL_KOREAN_TIME_PATTERN + "\\s*[~\\-–]\\s*말일" + OPTIONAL_KOREAN_TIME_PATTERN);
+	private static final Pattern MONTHLY_SINGLE_DAY = Pattern.compile(MONTHLY_PREFIX_PATTERN + "\\s*(\\d{1,2})\\s*일" + OPTIONAL_KOREAN_TIME_PATTERN + "(?!\\s*[~\\-–])");
 	private static final Pattern QUARTERLY_DAY_PERIOD = Pattern.compile("분기별\\s*\\[([^]]+)]\\s*(\\d{1,2})\\s*일?\\s*[~\\-–]\\s*(\\d{1,2})\\s*일");
 	private static final Pattern FN_VIEW = Pattern.compile("fn_view\\s*\\(\\s*(\\d+)\\s*\\)");
-	private static final Pattern OCR_EXPLICIT_DATE = Pattern.compile("(\\d{1,2}\\s*월\\s*\\d{1,2}\\s*일|매월\\s*\\d{1,2}\\s*일)");
+	private static final Pattern OCR_EXPLICIT_DATE = Pattern.compile("(\\d{1,2}\\s*월\\s*\\d{1,2}\\s*일|" + MONTHLY_PREFIX_PATTERN + "\\s*\\d{1,2}\\s*일)");
 	private static final Pattern OCR_DATE_TIME_RANGE = Pattern.compile(
 			"((?:\\d{1,2}\\s*월\\s*)?\\d{1,2}\\s*일(?:\\([^\\n)]{0,10}\\))?)\\s+\\d{1,2}:\\d{2}\\s*[~\\-–]\\s*((?:\\d{1,2}\\s*월\\s*)?\\d{1,2}\\s*일(?:\\([^\\n)]{0,10}\\))?)\\s+\\d{1,2}:\\d{2}"
 	);
@@ -141,6 +147,8 @@ public class NoticeCrawlerService {
 	private final NoticeImageOcrService noticeImageOcrService;
 	private final ObjectMapper objectMapper;
 	private final NoticeRegistrationPeriodService registrationPeriodService;
+	private final NoticeOcrQueuePublisher noticeOcrQueuePublisher;
+	private final MeterRegistry meterRegistry;
 	private final boolean insecureSslFallbackEnabled;
 	private final RedisLockService redisLockService;
 	private final StringRedisTemplate redisTemplate;
@@ -190,6 +198,8 @@ public class NoticeCrawlerService {
 				objectMapper,
 				noticeImageOcrService,
 				null,
+				null,
+				null,
 				insecureSslFallbackEnabled,
 				null,
 				null,
@@ -214,6 +224,8 @@ public class NoticeCrawlerService {
 			ObjectMapper objectMapper,
 			NoticeImageOcrService noticeImageOcrService,
 			NoticeRegistrationPeriodService registrationPeriodService,
+			NoticeOcrQueuePublisher noticeOcrQueuePublisher,
+			MeterRegistry meterRegistry,
 			@Value("${swimpulse.notice.insecure-ssl-fallback:false}") boolean insecureSslFallbackEnabled,
 			RedisLockService redisLockService,
 			StringRedisTemplate redisTemplate,
@@ -234,6 +246,8 @@ public class NoticeCrawlerService {
 		this.noticeImageOcrService = noticeImageOcrService == null ? NoticeImageOcrService.NO_OP : noticeImageOcrService;
 		this.objectMapper = objectMapper;
 		this.registrationPeriodService = registrationPeriodService;
+		this.noticeOcrQueuePublisher = noticeOcrQueuePublisher;
+		this.meterRegistry = meterRegistry;
 		this.insecureSslFallbackEnabled = insecureSslFallbackEnabled;
 		this.redisLockService = redisLockService;
 		this.redisTemplate = redisTemplate;
@@ -287,6 +301,65 @@ public class NoticeCrawlerService {
 				response.inactiveSources(),
 				response.failedSources());
 		return response;
+	}
+
+	@Transactional
+	public void enrichNoticeWithOcr(Long noticeId) {
+		PoolNotice notice = noticeRepository.findById(noticeId).orElse(null);
+		if (notice == null) {
+			log.info("Notice OCR enrichment skipped. noticeId={} reason=not-found", noticeId);
+			return;
+		}
+		if (notice.getExtractionStatus() == NoticeExtractionStatus.EXTRACTED) {
+			notice.markOcrCompleted();
+			log.info("Notice OCR enrichment skipped. noticeId={} reason=already-extracted", noticeId);
+			return;
+		}
+		notice.markOcrProcessing();
+
+		Pool pool = notice.getPool();
+		NoticeDetailCandidate candidate = new NoticeDetailCandidate(
+				notice.getUrl(),
+				notice.getTitle(),
+				"background OCR"
+		);
+		try {
+			ScannedNoticeDetail detail = timeNoticePhase(
+					"background_ocr_enrich",
+					pool.getId(),
+					notice.getUrl(),
+					() -> analyzeNoticeDetail(pool, candidate, true)
+			);
+			notice.updateExtraction(
+					detail.title(),
+					detail.rawText(),
+					detail.extractionStatus(),
+					detail.confidence(),
+					detail.registrationStartsAt(),
+					detail.registrationEndsAt(),
+					detail.reason(),
+					detail.registrationPeriodsJson()
+			);
+			notice.normalizeUrl();
+			notice.markAnalyzed(CURRENT_PARSER_VERSION);
+			if (detail.extractionStatus() == NoticeExtractionStatus.EXTRACTED && !detail.registrationPeriods().isEmpty()) {
+				notice.markOcrCompleted();
+			} else {
+				notice.markOcrNoPeriod();
+			}
+			synchronizeRegistrationPeriods(notice, detail.registrationPeriods());
+			log.info("Notice OCR enrichment completed. poolId={} noticeId={} status={} confidence={} periods={} url={}",
+					pool.getId(),
+					notice.getId(),
+					notice.getExtractionStatus(),
+					notice.getConfidence(),
+					detail.registrationPeriods().size(),
+					notice.getUrl());
+		} catch (RuntimeException exception) {
+			notice.markOcrFailed("이미지 공지 분석에 실패했습니다: " + exception.getMessage());
+			log.warn("Notice OCR enrichment failed. poolId={} noticeId={} url={} message={}",
+					pool.getId(), notice.getId(), notice.getUrl(), exception.getMessage());
+		}
 	}
 
 	private NoticeSourceReverificationResult reverifyPoolSources(Pool pool, Instant now) {
@@ -712,7 +785,7 @@ public class NoticeCrawlerService {
 	) {
 		String sourceUrl = source.getSourceUrl();
 		try {
-			Document document = fetch(sourceUrl);
+			Document document = timeNoticePhase("source_fetch", pool.getId(), sourceUrl, () -> fetch(sourceUrl));
 			List<NoticeDetailCandidate> found = discoverDetailNoticeUrls(rootUrl, sourceUrl, document);
 			boolean verified = !found.isEmpty() || isLikelyNoticeSource(document, sourceUrl);
 			if (verified) {
@@ -1177,6 +1250,7 @@ public class NoticeCrawlerService {
 			notice.markAnalyzed(CURRENT_PARSER_VERSION);
 			PoolNotice saved = noticeRepository.save(notice);
 			synchronizeRegistrationPeriods(saved, detail.registrationPeriods());
+			queueNoticeOcr(saved, detail);
 			log.info("Notice detail saved. poolId={} noticeId={} status={} confidence={} url={}",
 					pool.getId(), saved.getId(), saved.getExtractionStatus(), saved.getConfidence(), candidate.url());
 			return saved;
@@ -1216,6 +1290,7 @@ public class NoticeCrawlerService {
 			existing.normalizeUrl();
 			existing.markAnalyzed(CURRENT_PARSER_VERSION);
 			synchronizeRegistrationPeriods(existing, detail.registrationPeriods());
+			queueNoticeOcr(existing, detail);
 			log.info("Notice detail refreshed. poolId={} noticeId={} status={} confidence={} url={}",
 					pool.getId(), existing.getId(), existing.getExtractionStatus(), existing.getConfidence(), candidate.url());
 			return existing;
@@ -1238,7 +1313,11 @@ public class NoticeCrawlerService {
 	}
 
 	private ScannedNoticeDetail analyzeNoticeDetail(Pool pool, NoticeDetailCandidate candidate) {
-		Document document = fetch(candidate.url());
+		return analyzeNoticeDetail(pool, candidate, false);
+	}
+
+	private ScannedNoticeDetail analyzeNoticeDetail(Pool pool, NoticeDetailCandidate candidate, boolean allowOcr) {
+		Document document = timeNoticePhase("detail_fetch", pool.getId(), candidate.url(), () -> fetch(candidate.url()));
 		String pageTitle = firstText(document.title(), pool.getName() + " 공지");
 		String title = firstText(candidate.title(), pageTitle);
 		String text = buildNoticeBodyText(title, document);
@@ -1247,11 +1326,17 @@ public class NoticeCrawlerService {
 			log.info("Notice OCR candidate images selected. url={} imageCount={} imageUrls={}",
 					candidate.url(), imageUrls.size(), imageUrls);
 		}
-		NoticeTextExtractionOutcome extractionOutcome = extractNoticeDetail(title, candidate.url(), text, document, imageUrls);
+		NoticeTextExtractionOutcome extractionOutcome = timeNoticePhase(
+				allowOcr ? "detail_parse_with_ocr" : "detail_rule_parse",
+				pool.getId(),
+				candidate.url(),
+				() -> extractNoticeDetail(title, candidate.url(), text, document, imageUrls, allowOcr)
+		);
 		NoticeExtractionResult result = extractionOutcome.result();
 		NoticeExtractionStatus status = result.hasPeriod() && result.confidence() >= 0.65
 				? NoticeExtractionStatus.EXTRACTED
 				: NoticeExtractionStatus.LINK_ONLY;
+		boolean ocrPending = !allowOcr && !result.hasPeriod() && imageUrls != null && !imageUrls.isEmpty();
 		log.info("Notice detail analyzed. poolId={} status={} confidence={} periods={} url={}",
 				pool.getId(), status, result.confidence(), result.registrationPeriods().size(), candidate.url());
 		return new ScannedNoticeDetail(
@@ -1263,7 +1348,8 @@ public class NoticeCrawlerService {
 				result.registrationEndsAt(),
 				truncate(result.reason(), 500),
 				serializeRegistrationPeriods(result.registrationPeriods()),
-				result.registrationPeriods()
+				result.registrationPeriods(),
+				ocrPending
 		);
 	}
 
@@ -1274,16 +1360,43 @@ public class NoticeCrawlerService {
 			Document document,
 			List<String> imageUrls
 	) {
+		return extractNoticeDetail(title, url, text, document, imageUrls, true);
+	}
+
+	private NoticeTextExtractionOutcome extractNoticeDetail(
+			String title,
+			String url,
+			String text,
+			Document document,
+			List<String> imageUrls,
+			boolean allowOcr
+	) {
 		NoticeExtractionResult initialResult = extractByRule(title, url, text, document);
 		if (initialResult.hasPeriod() || imageUrls == null || imageUrls.isEmpty()) {
 			return new NoticeTextExtractionOutcome(text, initialResult);
+		}
+
+		if (!allowOcr) {
+			log.info("Notice detail HTML extraction missed period. OCR queued for background enrichment. url={} imageCount={}",
+					url, imageUrls.size());
+			NoticeExtractionResult queuedResult = new NoticeExtractionResult(
+					initialResult.title(),
+					initialResult.registrationStartsAt(),
+					initialResult.registrationEndsAt(),
+					initialResult.confidence(),
+					firstText(initialResult.reason(), "Rule-based period pattern not found.")
+							+ " OCR queued for background enrichment.",
+					initialResult.sourceUrl(),
+					initialResult.registrationPeriods()
+			);
+			return new NoticeTextExtractionOutcome(text, queuedResult);
 		}
 
 		log.info("Notice detail HTML extraction missed period. Running OCR retry. url={} imageCount={}",
 				url, imageUrls.size());
 		NoticeImageOcrService.NoticeImageOcrResult ocrResult;
 		try {
-			ocrResult = noticeImageOcrService.extractText(imageUrls);
+			ocrResult = timeNoticePhase("ocr_extract", null, url, () -> noticeImageOcrService.extractText(imageUrls));
 		} catch (RuntimeException exception) {
 			log.warn("Notice OCR retry failed unexpectedly. url={} message={}", url, exception.getMessage());
 			return new NoticeTextExtractionOutcome(text, initialResult);
@@ -1743,7 +1856,7 @@ public class NoticeCrawlerService {
 	}
 
 	private List<MatchedPeriod> findMonthlyDayPeriodsInValue(String text, String label, String source) {
-		if (!containsAny(normalizeForSearch(text), List.of("모집", "접수", "기간", "회원", "수강", "매월"))) {
+		if (!containsAny(normalizeForSearch(text), List.of("모집", "접수", "기간", "회원", "수강", "매월", "매달"))) {
 			return List.of();
 		}
 		List<MatchedPeriod> periods = new ArrayList<>();
@@ -2345,6 +2458,26 @@ public class NoticeCrawlerService {
 		}
 	}
 
+	private void queueNoticeOcr(PoolNotice notice, ScannedNoticeDetail detail) {
+		if (!detail.ocrPending() || noticeOcrQueuePublisher == null) {
+			notice.markOcrNotRequired();
+			return;
+		}
+		notice.markOcrPending();
+		noticeOcrQueuePublisher.publishAfterCommit(notice.getId());
+		if (meterRegistry != null) {
+			meterRegistry.counter(
+					"swimpulse.notice.ocr.queued",
+					"pool_id",
+					notice.getPool() == null || notice.getPool().getId() == null
+							? "unknown"
+							: notice.getPool().getId().toString()
+			).increment();
+		}
+		log.info("Notice OCR enrichment queued. poolId={} noticeId={} url={}",
+				notice.getPool() == null ? null : notice.getPool().getId(), notice.getId(), notice.getUrl());
+	}
+
 	private String serializeRegistrationPeriods(List<NoticeRegistrationPeriod> registrationPeriods) {
 		try {
 			return objectMapper.writeValueAsString(registrationPeriods == null ? List.of() : registrationPeriods);
@@ -2392,6 +2525,30 @@ public class NoticeCrawlerService {
 				}
 			}
 			throw new BadRequestException("Notice page fetch failed: " + exception.getMessage());
+		}
+	}
+
+	private <T> T timeNoticePhase(String phase, Long poolId, String url, Supplier<T> supplier) {
+		long startedAt = System.nanoTime();
+		String outcome = "success";
+		try {
+			return supplier.get();
+		} catch (RuntimeException exception) {
+			outcome = "failure";
+			throw exception;
+		} finally {
+			long elapsedNanos = System.nanoTime() - startedAt;
+			log.info("Notice phase completed. phase={} outcome={} poolId={} elapsedMs={} url={}",
+					phase, outcome, poolId, TimeUnit.NANOSECONDS.toMillis(elapsedNanos), url);
+			if (meterRegistry != null) {
+				Timer.builder("swimpulse.notice.phase.duration")
+						.description("Notice crawler phase duration")
+						.tag("phase", phase)
+						.tag("outcome", outcome)
+						.tag("pool_id", poolId == null ? "unknown" : poolId.toString())
+						.register(meterRegistry)
+						.record(elapsedNanos, TimeUnit.NANOSECONDS);
+			}
 		}
 	}
 
@@ -2586,7 +2743,8 @@ public class NoticeCrawlerService {
 			Instant registrationEndsAt,
 			String reason,
 			String registrationPeriodsJson,
-			List<NoticeRegistrationPeriod> registrationPeriods
+			List<NoticeRegistrationPeriod> registrationPeriods,
+			boolean ocrPending
 	) {
 	}
 }
