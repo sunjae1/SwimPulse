@@ -28,7 +28,7 @@ public class NoticeOcrWorker {
 		this.batchSize = Math.max(1, batchSize);
 	}
 
-	@Scheduled(fixedDelayString = "${swimpulse.notice.ocr.worker-delay-ms:2000}")
+	@Scheduled(fixedDelayString = "${swimpulse.notice.ocr.worker-delay-ms:2000}", scheduler = "noticeOcrTaskScheduler")
 	public void process() {
 		for (int index = 0; index < batchSize; index++) {
 			String rawId = redisTemplate.opsForList().leftPop(queueKey);

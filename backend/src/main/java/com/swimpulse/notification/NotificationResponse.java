@@ -1,5 +1,6 @@
 package com.swimpulse.notification;
 
+import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
 import java.time.Instant;
 
 public record NotificationResponse(
@@ -9,6 +10,7 @@ public record NotificationResponse(
 		String poolName,
 		Long eventId,
 		String eventTitle,
+		String noticeUrl,
 		NotificationType type,
 		NotificationStatus status,
 		String title,
@@ -27,6 +29,7 @@ public record NotificationResponse(
 				notification.getPool().getName(),
 				notification.getEvent().getId(),
 				notification.getEvent().getTitle(),
+				noticeUrl(notification),
 				notification.getType(),
 				notification.getStatus(),
 				notification.getTitle(),
@@ -37,5 +40,13 @@ public record NotificationResponse(
 				notification.getSentAt(),
 				notification.getReadAt()
 		);
+	}
+
+	private static String noticeUrl(Notification notification) {
+		NoticeRegistrationPeriodEntity period = notification.getEvent().getNoticeRegistrationPeriod();
+		if (period == null || period.getNotice() == null) {
+			return null;
+		}
+		return period.getNotice().getUrl();
 	}
 }

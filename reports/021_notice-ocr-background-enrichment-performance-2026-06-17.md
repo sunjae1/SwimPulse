@@ -56,6 +56,39 @@
 | baseline single pool 23 | 12 | 0% | 100% | 1.56s | 146.47ms | 7.80s | 15.25s | 17.11s |
 | after multi | 292 | 0% | 100% | 117.50ms | 107.82ms | 275.29ms | 406.07ms | 859.34ms |
 
+## cold reset 후 재측정
+
+`pool_notices`, `notice_registration_periods`, `registration_events`, `subscriptions`, `notifications`를 삭제한 뒤 같은 OCR k6 스크립트를 다시 실행했다.
+
+- 스크립트: `ops/k6/scripts/notice-scan-ocr-load.js`
+- 결과 파일: `ops/k6/results/notice-scan-ocr-cold-summary.json`
+- pool ids: `10,13,16,22,23,28,30,32,33,36`
+- VUs: `3`
+- duration: `1m`
+- sleep: `0.5s`
+
+| 측정 | 요청 수 | 실패율 | valid | 평균 | 중앙값 | p95 | p99 | 최대 | 처리량 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline multi | 213 | 0.93% | 99.06% | 349.66ms | 129.28ms | 301.63ms | 13.37s | 16.65s | 3.52 req/s |
+| cold reset after | 252 | 0% | 100% | 218.68ms | 174.82ms | 573.47ms | 1.52s | 2.23s | 4.15 req/s |
+
+baseline multi 대비:
+
+| 지표 | 변화 | 해석 |
+|---|---:|---|
+| 평균 응답 시간 | 349.66ms → 218.68ms, 약 37.5% 감소 | 전체 평균은 개선됐다. |
+| p95 | 301.63ms → 573.47ms, 약 90.1% 증가 | cold reset 직후 실제 공지 탐색/DB 적재가 다시 발생해서 중간 꼬리는 더 무거워졌다. |
+| p99 | 13.37s → 1.52s, 약 88.6% 감소 | OCR이 요청 스레드를 오래 붙잡던 긴 꼬리 지연은 크게 줄었다. |
+| 최대 응답 시간 | 16.65s → 2.23s, 약 86.6% 감소 | 최악 응답 시간이 초 단위 초반으로 제한됐다. |
+| 처리량 | 3.52 req/s → 4.15 req/s, 약 17.9% 증가 | 같은 조건에서 더 많은 요청을 처리했다. |
+| 실패 응답 | 2건 → 0건 | 요청 안정성이 좋아졌다. |
+
+이번 cold reset 측정은 warm 상태의 `after multi`보다 느린 것이 정상이다. 첫 요청들이 DB를 다시 채우고, 같은 pool에 대한 동시 요청 일부는 진행 중인 스캔을 기다렸다가 공유 결과를 받는다.
+
+`notice_scan_ocr_shared_responses=57`, `notice_scan_ocr_waited_responses=57`이 그 흔적이다. 즉 252번의 요청이 모두 독립적인 cold crawl을 한 것이 아니라, 일부는 첫 요청의 결과를 공유했고 이후 요청은 DB에 저장된 `pool_notices`를 재사용했다.
+
+`notice_scan_ocr_extracted_notices=236`, `notice_scan_ocr_link_only_notices=165`는 DB row 개수가 아니라 응답에 포함된 notice들을 매 요청마다 누적한 값이다. 따라서 `pool_notices` row 수와 일치하지 않는다.
+
 ## 개선 폭
 
 baseline multi 대비:

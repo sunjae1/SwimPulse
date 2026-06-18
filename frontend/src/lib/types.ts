@@ -150,6 +150,7 @@ export type InAppNotification = {
   poolName: string;
   eventId: number;
   eventTitle: string;
+  noticeUrl: string | null;
   type: NotificationType;
   status: NotificationStatus;
   title: string;

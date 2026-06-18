@@ -28,7 +28,7 @@ public class NotificationWorker {
 		this.batchSize = batchSize;
 	}
 
-	@Scheduled(fixedDelayString = "${swimpulse.notification.worker-delay-ms:1000}")
+	@Scheduled(fixedDelayString = "${swimpulse.notification.worker-delay-ms:1000}", scheduler = "notificationTaskScheduler")
 	public void process() {
 		for (int i = 0; i < batchSize; i++) {
 			String rawId = redisTemplate.opsForList().leftPop(queueKey);

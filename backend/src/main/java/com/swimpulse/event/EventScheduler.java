@@ -29,7 +29,7 @@ public class EventScheduler {
 		this.schedulerLockTtl = Duration.ofMillis(schedulerLockTtlMs);
 	}
 
-	@Scheduled(fixedDelayString = "${swimpulse.event.scheduler-delay-ms:30000}")
+	@Scheduled(fixedDelayString = "${swimpulse.event.scheduler-delay-ms:30000}", scheduler = "eventTaskScheduler")
 	public void tick() {
 		RedisLockService.LockToken lockToken = redisLockService.acquire(schedulerLockKey, schedulerLockTtl).orElse(null);
 		if (lockToken == null) {

@@ -1513,14 +1513,27 @@ function PushNotificationModal({
             <p className="mt-1">{notification.eventTitle}</p>
             <p className="mt-3 text-xs text-[#7c8982]">도착 {formatDateTime(notification.createdAt)}</p>
           </div>
-          <button
-            className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
-            onClick={onClose}
-            disabled={busy}
-            type="button"
-          >
-            {busy ? "읽음 처리 중..." : "확인"}
-          </button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {notification.noticeUrl ? (
+              <a
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[#d8ddd5] bg-white px-4 text-sm font-semibold text-[#17201d] transition hover:border-[#17201d]"
+                href={notification.noticeUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                원문 보기
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </a>
+            ) : null}
+            <button
+              className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+              onClick={onClose}
+              disabled={busy}
+              type="button"
+            >
+              {busy ? "읽음 처리 중..." : "확인"}
+            </button>
+          </div>
           <p className="text-center text-xs text-[#7c8982]">바깥 영역을 눌러도 닫히며 읽음 처리됩니다.</p>
         </div>
       </div>

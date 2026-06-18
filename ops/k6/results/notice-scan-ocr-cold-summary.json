@@ -1,0 +1,227 @@
+{
+    "root_group": {
+        "groups": {},
+        "checks": {
+                "notice scan OCR status is 200": {
+                    "fails": 0,
+                    "name": "notice scan OCR status is 200",
+                    "path": "::notice scan OCR status is 200",
+                    "id": "a4882c2fd9d5cad4583f746ff613f922",
+                    "passes": 252
+                },
+                "notice scan OCR response has notices": {
+                    "name": "notice scan OCR response has notices",
+                    "path": "::notice scan OCR response has notices",
+                    "id": "c5539a5838f6ae8f300674bd095e962f",
+                    "passes": 252,
+                    "fails": 0
+                },
+                "notice scan OCR response has trace": {
+                    "path": "::notice scan OCR response has trace",
+                    "id": "39e0e9005fdadf43b3f152eff5b440db",
+                    "passes": 252,
+                    "fails": 0,
+                    "name": "notice scan OCR response has trace"
+                },
+                "notice scan OCR response matches pool": {
+                    "name": "notice scan OCR response matches pool",
+                    "path": "::notice scan OCR response matches pool",
+                    "id": "2b29fab756a57e85d1b6d796b64e1888",
+                    "passes": 252,
+                    "fails": 0
+                }
+            },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "metrics": {
+        "notice_scan_ocr_scanned_link_count": {
+            "avg": 1.5912698412698412,
+            "min": 0,
+            "med": 1,
+            "max": 6,
+            "p(90)": 6,
+            "p(95)": 6,
+            "p(99)": 6
+        },
+        "data_sent": {
+            "count": 89964,
+            "rate": 1481.766914642645
+        },
+        "http_req_sending": {
+            "p(99)": 0.09215707000000012,
+            "avg": 0.035266123015873035,
+            "min": 0.014685,
+            "med": 0.0318315,
+            "max": 0.110243,
+            "p(90)": 0.0566839,
+            "p(95)": 0.06570149999999998
+        },
+        "http_req_connecting": {
+            "med": 0,
+            "max": 0.32732,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0.13067026000000243,
+            "avg": 0.0035746150793650793,
+            "min": 0
+        },
+        "http_req_blocked": {
+            "p(99)": 1.1671094400000208,
+            "avg": 0.034223444444444445,
+            "min": 0.003449,
+            "med": 0.004974,
+            "max": 2.437851,
+            "p(90)": 0.0070034,
+            "p(95)": 0.008188349999999994
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 252,
+            "thresholds": {
+                "rate<0.05": false
+            },
+            "value": 0
+        },
+        "iteration_duration": {
+            "max": 2728.305979,
+            "p(90)": 1018.6001684,
+            "p(95)": 1075.4510002,
+            "p(99)": 2023.12081758,
+            "avg": 719.7206261984134,
+            "min": 510.277197,
+            "med": 675.7157625
+        },
+        "notice_scan_ocr_duration": {
+            "med": 174.81827149999998,
+            "max": 2232.076583,
+            "p(90)": 519.4364927,
+            "p(95)": 573.4688282499999,
+            "p(99)": 1522.15331109,
+            "avg": 218.678316765873,
+            "min": 9.175117
+        },
+        "notice_scan_ocr_notice_count": {
+            "p(95)": 6,
+            "p(99)": 6,
+            "avg": 1.5912698412698412,
+            "min": 0,
+            "med": 1,
+            "max": 6,
+            "p(90)": 6
+        },
+        "notice_scan_ocr_latest_check_failures": {
+            "count": 121,
+            "rate": 1.9929504765435067
+        },
+        "iterations": {
+            "count": 252,
+            "rate": 4.1506076040410225
+        },
+        "notice_scan_ocr_waited_responses": {
+            "rate": 0.9388279104378503,
+            "count": 57
+        },
+        "http_req_duration": {
+            "p(99)": 1522.15331109,
+            "avg": 218.678316765873,
+            "min": 9.175117,
+            "med": 174.81827149999998,
+            "max": 2232.076583,
+            "p(90)": 519.4364927,
+            "p(95)": 573.4688282499999,
+            "thresholds": {
+                "p(95)<20000": false
+            }
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(99)": 1522.15331109,
+            "avg": 218.678316765873,
+            "min": 9.175117,
+            "med": 174.81827149999998,
+            "max": 2232.076583,
+            "p(90)": 519.4364927,
+            "p(95)": 573.4688282499999
+        },
+        "vus_max": {
+            "value": 3,
+            "min": 3,
+            "max": 3
+        },
+        "vus": {
+            "value": 3,
+            "min": 3,
+            "max": 3
+        },
+        "http_req_waiting": {
+            "p(95)": 573.0266762,
+            "p(99)": 1521.9953102700001,
+            "avg": 218.450407654762,
+            "min": 8.951761,
+            "med": 174.5973295,
+            "max": 2231.871791,
+            "p(90)": 519.2877721000001
+        },
+        "notice_scan_ocr_link_only_notices": {
+            "count": 165,
+            "rate": 2.7176597407411456
+        },
+        "notice_scan_ocr_extracted_notices": {
+            "count": 236,
+            "rate": 3.887076962514608
+        },
+        "http_reqs": {
+            "count": 252,
+            "rate": 4.1506076040410225
+        },
+        "notice_scan_ocr_period_count": {
+            "med": 1,
+            "max": 13,
+            "p(90)": 11,
+            "p(95)": 13,
+            "p(99)": 13,
+            "avg": 2.1507936507936507,
+            "min": 0
+        },
+        "notice_scan_ocr_valid_response": {
+            "passes": 252,
+            "fails": 0,
+            "thresholds": {
+                "rate>0.95": false
+            },
+            "value": 1
+        },
+        "notice_scan_ocr_shared_responses": {
+            "count": 57,
+            "rate": 0.9388279104378503
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0
+        },
+        "http_req_receiving": {
+            "min": 0.074653,
+            "med": 0.1477525,
+            "max": 0.970526,
+            "p(90)": 0.3676458000000001,
+            "p(95)": 0.5574104999999999,
+            "p(99)": 0.80319547,
+            "avg": 0.1926429880952381
+        },
+        "checks": {
+            "passes": 1008,
+            "fails": 0,
+            "value": 1
+        },
+        "data_received": {
+            "count": 759771,
+            "rate": 12513.933690197824
+        }
+    }
+}
