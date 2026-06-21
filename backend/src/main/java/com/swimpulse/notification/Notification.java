@@ -55,11 +55,18 @@ public class Notification {
 	@Column(length = 500)
 	private String failureReason;
 
+	@Column(length = 120)
+	private String dedupeKey;
+
 	@Column(nullable = false)
 	private int attempts;
 
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
+
+	private Instant queuedAt;
+
+	private Instant processingStartedAt;
 
 	private Instant sentAt;
 
@@ -69,18 +76,30 @@ public class Notification {
 	}
 
 	public Notification(AppUser user, Pool pool, RegistrationEvent event, NotificationType type, String title, String message) {
+		this(user, pool, event, type, title, message, null);
+	}
+
+	public Notification(AppUser user, Pool pool, RegistrationEvent event, NotificationType type, String title, String message, String dedupeKey) {
 		this.user = user;
 		this.pool = pool;
 		this.event = event;
 		this.type = type;
 		this.title = title;
 		this.message = message;
+		this.dedupeKey = dedupeKey;
 		this.status = NotificationStatus.QUEUED;
 		this.createdAt = Instant.now();
+		this.queuedAt = this.createdAt;
 	}
 
-	public void recordAttempt() {
+	public boolean markSending() {
+		if (this.status != NotificationStatus.QUEUED) {
+			return false;
+		}
+		this.status = NotificationStatus.SENDING;
 		this.attempts++;
+		this.processingStartedAt = Instant.now();
+		return true;
 	}
 
 	public void markSent(String fcmMessageId) {
@@ -88,15 +107,19 @@ public class Notification {
 		this.fcmMessageId = fcmMessageId;
 		this.failureReason = null;
 		this.sentAt = Instant.now();
+		this.processingStartedAt = null;
 	}
 
 	public void markFailed(String failureReason) {
 		this.status = NotificationStatus.FAILED;
 		this.failureReason = failureReason;
+		this.processingStartedAt = null;
 	}
 
 	public void markQueued() {
 		this.status = NotificationStatus.QUEUED;
+		this.queuedAt = Instant.now();
+		this.processingStartedAt = null;
 	}
 
 	public void markRead() {
@@ -139,12 +162,24 @@ public class Notification {
 		return failureReason;
 	}
 
+	public String getDedupeKey() {
+		return dedupeKey;
+	}
+
 	public int getAttempts() {
 		return attempts;
 	}
 
 	public Instant getCreatedAt() {
 		return createdAt;
+	}
+
+	public Instant getQueuedAt() {
+		return queuedAt;
+	}
+
+	public Instant getProcessingStartedAt() {
+		return processingStartedAt;
 	}
 
 	public Instant getSentAt() {

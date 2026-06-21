@@ -37,6 +37,18 @@ cd frontend
 npm run dev
 ```
 
+프론트 dev server, Docker 서비스, ngrok을 한 번에 띄우려면 루트에서 아래 스크립트를 실행합니다.
+
+```powershell
+.\scripts\dev.ps1
+```
+
+백엔드 이미지를 다시 빌드하지 않아도 되는 경우:
+
+```powershell
+.\scripts\dev.ps1 -SkipBuild
+```
+
 - Backend API: http://localhost:8080
 - Frontend: http://localhost:3000
 - MySQL: localhost:3306

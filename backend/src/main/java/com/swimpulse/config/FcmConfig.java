@@ -21,7 +21,14 @@ public class FcmConfig {
 	private static final Logger log = LoggerFactory.getLogger(FcmConfig.class);
 
 	@Bean
-	FcmClient fcmClient(@Value("${swimpulse.firebase.service-account-path:}") String serviceAccountPath) throws IOException {
+	FcmClient fcmClient(
+			@Value("${swimpulse.firebase.mock:false}") boolean mockEnabled,
+			@Value("${swimpulse.firebase.service-account-path:}") String serviceAccountPath
+	) throws IOException {
+		if (mockEnabled) {
+			log.info("Firebase mock mode is enabled. Using MockFcmClient.");
+			return new MockFcmClient();
+		}
 		if (!StringUtils.hasText(serviceAccountPath)) {
 			log.info("Firebase service account is not configured. Using MockFcmClient.");
 			return new MockFcmClient();

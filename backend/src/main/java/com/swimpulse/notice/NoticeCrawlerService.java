@@ -671,7 +671,7 @@ public class NoticeCrawlerService {
 			} else {
 				successfulFetches++;
 			}
-			pathAvailable = pathAvailable || inspection.verified();
+			pathAvailable = pathAvailable || inspection.detailCandidateCount() > 0;
 		}
 		return new StoredSourceScanResult(sources.size(), successfulFetches, failedFetches, pathAvailable);
 	}
@@ -798,19 +798,19 @@ public class NoticeCrawlerService {
 				}
 				log.info("Notice source verified. poolId={} sourceUrl={} detailCandidates={}",
 						pool.getId(), sourceUrl, found.size());
-				return new SourceInspection(true, false);
+				return new SourceInspection(true, false, found.size());
 			}
 			source.markInactive();
 			trace.add(contextLabel + " 관련 없음 처리: " + sourceUrl);
 			log.info("Notice source marked inactive. poolId={} sourceUrl={}", pool.getId(), sourceUrl);
-			return new SourceInspection(false, false);
+			return new SourceInspection(false, false, 0);
 		} catch (RuntimeException exception) {
 			source.markFailure(exception.getMessage(), sourceFailureThreshold);
 			trace.add(contextLabel + " 접근 실패(" + source.getFailureCount() + "/" + sourceFailureThreshold + "): "
 					+ sourceUrl + " / " + exception.getMessage());
 			log.warn("Notice source access failed. poolId={} sourceUrl={} failureCount={} status={} message={}",
 					pool.getId(), sourceUrl, source.getFailureCount(), source.getStatus(), exception.getMessage());
-			return new SourceInspection(false, true);
+			return new SourceInspection(false, true, 0);
 		}
 	}
 
@@ -992,11 +992,14 @@ public class NoticeCrawlerService {
 			return false;
 		}
 		boolean strongKeyword = containsAny(signal, VERIFIED_SOURCE_KEYWORDS);
+		boolean explicitNoticeListUrl = signal.contains("bbsid=notice")
+				|| (signal.contains("bbsarticle/list") && signal.contains("notice"))
+				|| signal.contains("notice/list");
 		boolean boardStructure = !content.select(
 				"table tbody tr, [class*=board] a[href], [id*=board] a[href], "
 						+ "[class*=notice] a[href], [id*=notice] a[href]"
 		).isEmpty();
-		return strongKeyword && boardStructure;
+		return explicitNoticeListUrl || strongKeyword && boardStructure;
 	}
 
 	private boolean isDetailNoticeCandidate(String anchorText, String href) {
@@ -2708,7 +2711,7 @@ public class NoticeCrawlerService {
 	private record NoticeDetailCandidate(String url, String title, String source) {
 	}
 
-	private record SourceInspection(boolean verified, boolean accessFailed) {
+	private record SourceInspection(boolean verified, boolean accessFailed, int detailCandidateCount) {
 	}
 
 	private record StoredSourceScanResult(

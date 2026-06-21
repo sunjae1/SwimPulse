@@ -7,12 +7,12 @@ import com.swimpulse.event.RegistrationEventResolver;
 import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
 import com.swimpulse.notice.NoticeRegistrationPeriodRepository;
 import com.swimpulse.notice.NoticeRegistrationPeriodStatus;
-import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
 import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,17 +24,20 @@ public class SubscriptionService {
 	private final AppUserRepository userRepository;
 	private final RegistrationEventResolver eventResolver;
 	private final NoticeRegistrationPeriodRepository periodRepository;
+	private final SubscriptionInsertService insertService;
 
 	public SubscriptionService(
 			SubscriptionRepository subscriptionRepository,
 			AppUserRepository userRepository,
 			RegistrationEventResolver eventResolver,
-			NoticeRegistrationPeriodRepository periodRepository
+			NoticeRegistrationPeriodRepository periodRepository,
+			SubscriptionInsertService insertService
 	) {
 		this.subscriptionRepository = subscriptionRepository;
 		this.userRepository = userRepository;
 		this.eventResolver = eventResolver;
 		this.periodRepository = periodRepository;
+		this.insertService = insertService;
 	}
 
 	@Transactional(readOnly = true)
@@ -46,28 +49,37 @@ public class SubscriptionService {
 				.toList();
 	}
 
-	@Transactional
 	public SubscriptionResponse subscribe(Long userId, CreateSubscriptionRequest request) {
-		AppUser user = userRepository.findById(userId)
-				.orElseThrow(() -> new NotFoundException("User not found: " + userId));
+		if (!userRepository.existsById(userId)) {
+			throw new NotFoundException("User not found: " + userId);
+		}
 		String title = normalizeTitle(request.title());
 		RegistrationEvent event = resolveEvent(request, title);
-		return subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
+		Long eventId = event.getId();
+		return insertService.findExistingResponse(userId, eventId)
 				.map(subscription -> {
-					log.info("Subscription already exists. userId={} eventId={} poolId={}", userId, event.getId(), request.poolId());
-					return SubscriptionResponse.from(subscription);
+					log.info("Subscription already exists. userId={} eventId={} poolId={}", userId, eventId, request.poolId());
+					return subscription;
 				})
 				.orElseGet(() -> {
-					Subscription saved = subscriptionRepository.save(new Subscription(user, event));
-					log.info("Subscription created. userId={} poolId={} eventId={} subscriptionId={}",
-							userId, request.poolId(), event.getId(), saved.getId());
-					return SubscriptionResponse.from(saved);
+					try {
+						Subscription saved = insertService.insert(userId, eventId, request.poolId());
+						log.info("Subscription created. userId={} poolId={} eventId={} subscriptionId={}",
+								userId, request.poolId(), eventId, saved.getId());
+						return insertService.findExistingResponse(userId, eventId)
+								.orElseThrow(() -> new NotFoundException("Subscription not found after creation."));
+					} catch (DataIntegrityViolationException exception) {
+						log.info("Concurrent subscription insert detected. Reusing existing row. userId={} eventId={}",
+								userId, eventId);
+						return insertService.findExistingResponse(userId, eventId)
+								.orElseThrow(() -> exception);
+					}
 				});
 	}
 
 	private RegistrationEvent resolveEvent(CreateSubscriptionRequest request, String title) {
 		if (request.noticeRegistrationPeriodId() != null) {
-			NoticeRegistrationPeriodEntity period = periodRepository.findByIdAndStatus(
+			NoticeRegistrationPeriodEntity period = periodRepository.findByIdAndStatusWithNoticeAndPool(
 							request.noticeRegistrationPeriodId(),
 							NoticeRegistrationPeriodStatus.ACTIVE
 					)
@@ -136,10 +148,12 @@ public class SubscriptionService {
 
 	@Transactional
 	public void unsubscribe(Long userId, Long eventId) {
-		Subscription subscription = subscriptionRepository.findByUser_IdAndEvent_Id(userId, eventId)
-				.orElseThrow(() -> new NotFoundException("Subscription not found."));
-		subscriptionRepository.delete(subscription);
-		log.info("Subscription deleted. userId={} eventId={} subscriptionId={}", userId, eventId, subscription.getId());
+		int deleted = subscriptionRepository.deleteByUserIdAndEventId(userId, eventId);
+		if (deleted == 0) {
+			log.info("Unsubscription ignored because subscription is already absent. userId={} eventId={}", userId, eventId);
+			return;
+		}
+		log.info("Subscription deleted. userId={} eventId={} deletedRows={}", userId, eventId, deleted);
 	}
 
 	private void ensureUserExists(Long userId) {

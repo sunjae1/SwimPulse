@@ -7,13 +7,20 @@ import com.swimpulse.subscription.Subscription;
 import com.swimpulse.subscription.SubscriptionRepository;
 import com.swimpulse.user.AppUser;
 import com.swimpulse.user.AppUserRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -26,6 +33,8 @@ public class NotificationService {
 	private final UserDeviceRepository userDeviceRepository;
 	private final NotificationQueuePublisher queuePublisher;
 	private final FcmClient fcmClient;
+	private final MeterRegistry meterRegistry;
+	private final TransactionTemplate transactionTemplate;
 	private final int maxAttempts;
 
 	public NotificationService(
@@ -35,6 +44,8 @@ public class NotificationService {
 			UserDeviceRepository userDeviceRepository,
 			NotificationQueuePublisher queuePublisher,
 			FcmClient fcmClient,
+			MeterRegistry meterRegistry,
+			TransactionTemplate transactionTemplate,
 			@Value("${swimpulse.notification.max-attempts:3}") int maxAttempts
 	) {
 		this.notificationRepository = notificationRepository;
@@ -43,19 +54,31 @@ public class NotificationService {
 		this.userDeviceRepository = userDeviceRepository;
 		this.queuePublisher = queuePublisher;
 		this.fcmClient = fcmClient;
+		this.meterRegistry = meterRegistry;
+		this.transactionTemplate = transactionTemplate;
 		this.maxAttempts = maxAttempts;
 	}
 
 	@Transactional
 	public int createAndQueueForEvent(RegistrationEvent event, NotificationType type) {
 		List<Subscription> subscriptions = subscriptionRepository.findByEvent_Id(event.getId());
+		int created = 0;
+		int skipped = 0;
 		for (Subscription subscription : subscriptions) {
-			Notification notification = notificationRepository.save(createNotification(subscription.getUser(), event, type));
-			queuePublisher.publish(notification.getId());
+			String dedupeKey = scheduledDedupeKey(subscription.getUser().getId(), event.getId(), type);
+			Optional<Notification> existing = notificationRepository.findByDedupeKey(dedupeKey);
+			if (existing.isPresent()) {
+				skipped++;
+				continue;
+			}
+			Notification notification = notificationRepository.save(createNotification(subscription.getUser(), event, type, dedupeKey));
+			queuePublisher.publishAfterCommit(notification.getId());
+			meterRegistry.counter("swimpulse.notification.queue.published", "type", type.name()).increment();
+			created++;
 		}
-		log.info("Notifications created for event subscriptions. eventId={} poolId={} type={} count={}",
-				event.getId(), event.getPool().getId(), type, subscriptions.size());
-		return subscriptions.size();
+		log.info("Notifications created for event subscriptions. eventId={} poolId={} type={} created={} skippedDuplicates={}",
+				event.getId(), event.getPool().getId(), type, created, skipped);
+		return created;
 	}
 
 	@Transactional(readOnly = true)
@@ -132,50 +155,37 @@ public class NotificationService {
 				"SwimPulse 테스트 푸시",
 				subscription.getPool().getName() + " 테스트 알림입니다. 실제 FCM 설정이 연결되어 있으면 브라우저 푸시로 도착합니다."
 		));
-		queuePublisher.publish(notification.getId());
+		queuePublisher.publishAfterCommit(notification.getId());
+		meterRegistry.counter("swimpulse.notification.queue.published", "type", notification.getType().name()).increment();
 		log.info("Test notification queued. notificationId={} userId={} poolId={}",
 				notification.getId(), userId, subscription.getPool().getId());
 		return NotificationResponse.from(notification);
 	}
 
-	@Transactional
 	public boolean deliver(Long notificationId) {
-		Notification notification = notificationRepository.findById(notificationId)
-				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
-		if (notification.getStatus() == NotificationStatus.SENT) {
-			log.info("Notification delivery skipped because already sent. notificationId={}", notificationId);
+		DeliveryWork work = Objects.requireNonNull(transactionTemplate.execute(status -> startDelivery(notificationId)));
+		if (work.skip()) {
 			return false;
 		}
-
-		notification.recordAttempt();
-		log.info("Notification delivery started. notificationId={} attempt={}",
-				notificationId, notification.getAttempts());
-		List<UserDevice> devices = userDeviceRepository.findByUser_IdAndEnabledTrue(notification.getUser().getId())
-				.stream()
-				.filter(device -> StringUtils.hasText(device.getFcmToken()))
-				.toList();
-		if (devices.isEmpty()) {
-			notification.markFailed("FCM token is not registered.");
-			log.warn("Notification delivery failed because no enabled FCM devices exist. notificationId={} userId={}",
-					notificationId, notification.getUser().getId());
+		if (work.deviceTokens().isEmpty()) {
 			return false;
 		}
 
 		List<String> messageIds = new java.util.ArrayList<>();
 		List<String> failures = new java.util.ArrayList<>();
-		for (UserDevice device : devices) {
+		for (String fcmToken : work.deviceTokens()) {
 			try {
 				messageIds.add(fcmClient.send(new FcmMessage(
-						device.getFcmToken(),
-						notification.getTitle(),
-						notification.getMessage(),
+						fcmToken,
+						work.title(),
+						work.message(),
 						Map.of(
-								"notificationId", notification.getId().toString(),
-								"eventId", notification.getEvent().getId().toString(),
-								"poolId", notification.getPool().getId().toString(),
-								"poolName", notification.getPool().getName(),
-								"eventTitle", notification.getEvent().getTitle(),
-								"type", notification.getType().name()
+								"notificationId", work.notificationId().toString(),
+								"eventId", work.eventId().toString(),
+								"poolId", work.poolId().toString(),
+								"poolName", work.poolName(),
+								"eventTitle", work.eventTitle(),
+								"type", work.type().name()
 						)
 				)));
 			} catch (RuntimeException exception) {
@@ -186,15 +196,78 @@ public class NotificationService {
 		}
 
 		if (!messageIds.isEmpty()) {
-			notification.markSent(messageIds.size() + " device(s): " + messageIds.get(0));
-			log.info("Notification delivery succeeded. notificationId={} deliveredDevices={} failedDevices={}",
-					notificationId, messageIds.size(), failures.size());
+			transactionTemplate.executeWithoutResult(status ->
+					markDeliverySent(notificationId, messageIds.size() + " device(s): " + messageIds.get(0), failures.size()));
 			return false;
 		}
 
-		notification.markFailed(String.join("; ", failures));
+		Boolean shouldRetry = transactionTemplate.execute(status ->
+				markDeliveryFailed(notificationId, String.join("; ", failures), failures.size()));
+		return Boolean.TRUE.equals(shouldRetry);
+	}
+
+	private DeliveryWork startDelivery(Long notificationId) {
+		Notification notification = notificationRepository.findById(notificationId)
+				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
+		if (notification.getStatus() == NotificationStatus.SENT) {
+			log.info("Notification delivery skipped because already sent. notificationId={}", notificationId);
+			return DeliveryWork.skip(notificationId);
+		}
+		if (!notification.markSending()) {
+			log.info("Notification delivery skipped because status is not queued. notificationId={} status={}",
+					notificationId, notification.getStatus());
+			return DeliveryWork.skip(notificationId);
+		}
+
+		log.info("Notification delivery started. notificationId={} attempt={}",
+				notificationId, notification.getAttempts());
+		List<String> deviceTokens = userDeviceRepository.findByUser_IdAndEnabledTrue(notification.getUser().getId())
+				.stream()
+				.filter(device -> StringUtils.hasText(device.getFcmToken()))
+				.map(UserDevice::getFcmToken)
+				.toList();
+		if (deviceTokens.isEmpty()) {
+			notification.markFailed("FCM token is not registered.");
+			meterRegistry.counter("swimpulse.notification.delivery", "result", "failed", "type", notification.getType().name()).increment();
+			log.warn("Notification delivery failed because no enabled FCM devices exist. notificationId={} userId={}",
+					notificationId, notification.getUser().getId());
+			return DeliveryWork.skip(notificationId);
+		}
+
+		return new DeliveryWork(
+				notification.getId(),
+				notification.getPool().getId(),
+				notification.getPool().getName(),
+				notification.getEvent().getId(),
+				notification.getEvent().getTitle(),
+				notification.getType(),
+				notification.getTitle(),
+				notification.getMessage(),
+				deviceTokens,
+				false
+		);
+	}
+
+	private void markDeliverySent(Long notificationId, String fcmMessageId, int failedDevices) {
+		Notification notification = notificationRepository.findById(notificationId)
+				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
+		if (notification.getStatus() == NotificationStatus.SENT) {
+			return;
+		}
+		notification.markSent(fcmMessageId);
+		recordDeliveryLag(notification);
+		meterRegistry.counter("swimpulse.notification.delivery", "result", "sent", "type", notification.getType().name()).increment();
+		log.info("Notification delivery succeeded. notificationId={} failedDevices={}",
+				notificationId, failedDevices);
+	}
+
+	private boolean markDeliveryFailed(Long notificationId, String failureReason, int failedDevices) {
+		Notification notification = notificationRepository.findById(notificationId)
+				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
+		notification.markFailed(failureReason);
+		meterRegistry.counter("swimpulse.notification.delivery", "result", "failed", "type", notification.getType().name()).increment();
 		log.warn("Notification delivery failed for all devices. notificationId={} failedDevices={} shouldRetry={}",
-				notificationId, failures.size(), notification.getAttempts() < maxAttempts);
+				notificationId, failedDevices, notification.getAttempts() < maxAttempts);
 		return notification.getAttempts() < maxAttempts;
 	}
 
@@ -203,11 +276,28 @@ public class NotificationService {
 		Notification notification = notificationRepository.findById(notificationId)
 				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
 		notification.markQueued();
-		queuePublisher.publish(notificationId);
+		queuePublisher.publishAfterCommit(notificationId);
+		meterRegistry.counter("swimpulse.notification.queue.requeued", "reason", "retry").increment();
 		log.info("Notification requeued. notificationId={} attempts={}", notificationId, notification.getAttempts());
 	}
 
-	private Notification createNotification(AppUser user, RegistrationEvent event, NotificationType type) {
+	@Transactional
+	public int requeueStaleSending(Duration staleTimeout) {
+		Instant cutoff = Instant.now().minus(staleTimeout);
+		List<Notification> staleNotifications = notificationRepository
+				.findTop50ByStatusAndProcessingStartedAtBeforeOrderByProcessingStartedAtAsc(NotificationStatus.SENDING, cutoff);
+		for (Notification notification : staleNotifications) {
+			Instant processingStartedAt = notification.getProcessingStartedAt();
+			notification.markQueued();
+			queuePublisher.publishAfterCommit(notification.getId());
+			meterRegistry.counter("swimpulse.notification.queue.requeued", "reason", "stale_sending").increment();
+			log.warn("Stale sending notification requeued. notificationId={} processingStartedAt={} attempts={}",
+					notification.getId(), processingStartedAt, notification.getAttempts());
+		}
+		return staleNotifications.size();
+	}
+
+	private Notification createNotification(AppUser user, RegistrationEvent event, NotificationType type, String dedupeKey) {
 		String title = switch (type) {
 			case REGISTRATION_REMINDER -> "수영장 접수 시작이 곧 다가옵니다";
 			case REGISTRATION_OPEN -> "지금 수영장 접수가 시작됐습니다";
@@ -216,12 +306,44 @@ public class NotificationService {
 			case REGISTRATION_REMINDER -> event.getPool().getName() + " " + event.getTitle() + " 접수가 곧 시작됩니다.";
 			case REGISTRATION_OPEN -> event.getPool().getName() + " " + event.getTitle() + " 접수가 시작됐습니다. 지금 확인하세요.";
 		};
-		return new Notification(user, event.getPool(), event, type, title, message);
+		return new Notification(user, event.getPool(), event, type, title, message, dedupeKey);
+	}
+
+	private String scheduledDedupeKey(Long userId, Long eventId, NotificationType type) {
+		return userId + ":" + eventId + ":" + type.name();
+	}
+
+	private void recordDeliveryLag(Notification notification) {
+		if (notification.getCreatedAt() == null || notification.getSentAt() == null) {
+			return;
+		}
+		Timer.builder("swimpulse.notification.delivery.lag")
+				.description("Elapsed time between notification creation and successful FCM delivery")
+				.tag("type", notification.getType().name())
+				.register(meterRegistry)
+				.record(Duration.between(notification.getCreatedAt(), notification.getSentAt()));
 	}
 
 	private void ensureUserExists(Long userId) {
 		if (!userRepository.existsById(userId)) {
 			throw new NotFoundException("User not found: " + userId);
+		}
+	}
+
+	public record DeliveryWork(
+			Long notificationId,
+			Long poolId,
+			String poolName,
+			Long eventId,
+			String eventTitle,
+			NotificationType type,
+			String title,
+			String message,
+			List<String> deviceTokens,
+			boolean skip
+	) {
+		public static DeliveryWork skip(Long notificationId) {
+			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, List.of(), true);
 		}
 	}
 }

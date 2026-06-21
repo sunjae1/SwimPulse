@@ -30,7 +30,6 @@ public class RegistrationEventResolver {
 		this.poolRepository = poolRepository;
 	}
 
-	@Transactional(readOnly = true)
 	public RegistrationEvent getOrCreate(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt) {
 		ensurePoolExists(poolId);
 		return findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
@@ -61,7 +60,7 @@ public class RegistrationEventResolver {
 		} catch (DataIntegrityViolationException exception) {
 			log.info("Concurrent registration event insert detected. Reusing existing row. poolId={} title={} startsAt={} endsAt={}",
 					poolId, title, registrationStartsAt, registrationEndsAt);
-			return findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
+			return insertService.findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
 					.orElseThrow(() -> exception);
 		}
 	}
@@ -82,8 +81,8 @@ public class RegistrationEventResolver {
 		} catch (DataIntegrityViolationException exception) {
 			log.info("Concurrent notice period event insert detected. Reusing existing row. periodId={} poolId={}",
 					period.getId(), poolId);
-			return eventRepository.findByNoticeRegistrationPeriod_Id(period.getId())
-					.or(() -> findExisting(poolId, title, period.getStartsAt(), period.getEndsAt()))
+			return insertService.findByNoticeRegistrationPeriodId(period.getId())
+					.or(() -> insertService.findExisting(poolId, title, period.getStartsAt(), period.getEndsAt()))
 					.map(existing -> assignPeriod(existing, period))
 					.orElseThrow(() -> exception);
 		}

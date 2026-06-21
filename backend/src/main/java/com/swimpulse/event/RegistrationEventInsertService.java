@@ -4,6 +4,7 @@ import com.swimpulse.pool.Pool;
 import com.swimpulse.notice.NoticeRegistrationPeriodEntity;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,21 @@ public class RegistrationEventInsertService {
 		log.info("Registration event created. eventId={} poolId={} status={} startsAt={} endsAt={}",
 				saved.getId(), poolId, saved.getStatus(), saved.getRegistrationStartsAt(), saved.getRegistrationEndsAt());
 		return saved;
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+	public Optional<RegistrationEvent> findExisting(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt) {
+		return eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
+				poolId,
+				title,
+				registrationStartsAt,
+				registrationEndsAt
+		);
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+	public Optional<RegistrationEvent> findByNoticeRegistrationPeriodId(Long noticeRegistrationPeriodId) {
+		return eventRepository.findByNoticeRegistrationPeriod_Id(noticeRegistrationPeriodId);
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)

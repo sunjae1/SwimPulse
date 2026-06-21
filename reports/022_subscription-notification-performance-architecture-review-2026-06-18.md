@@ -42,16 +42,16 @@ RabbitMQ 전환은 지금 당장 필수는 아니다. 먼저 Redis queue의 안�
 | 구독 API 부하 테스트 | 전용 k6 스크립트 없음 | 동시 구독 시 latency, duplicate 처리, DB lock/unique 충돌 빈도를 모름 |
 | 알림 생성 부하 테스트 | 전용 k6/시드 테스트 없음 | 구독자 수가 많을 때 notifications insert + Redis queue push 속도를 모름 |
 | 알림 발송 처리량 테스트 | 전용 테스트 없음 | `worker-batch-size`, FCM 지연, Redis pop 속도 기준 처리량을 모름 |
-| 알림 지연 관측 | queue length, delivery lag metric 없음 | 알림이 밀리는지 Grafana에서 바로 보기 어렵다 |
+| 알림 지연 관측 | queue length, delivery lag metric 추가됨 | 대시보드 패널 구성은 별도 작업 필요 |
 | 실패/재시도 관측 | 성공/실패/retry counter 부족 | 장애가 나도 어느 단계에서 막혔는지 바로 구분하기 어렵다 |
 
 ## 주요 리스크
 
 | 우선순위 | 리스크 | 설명 | 개선 방향 |
 |---:|---|---|---|
-| 1 | 알림 Redis publish가 DB commit 전에 실행됨 | `NotificationService.createAndQueueForEvent`는 notification 저장 트랜잭션 안에서 바로 Redis에 push한다. 트랜잭션 commit 전에 worker가 pop하면 DB row가 아직 안 보일 수 있다. | OCR 큐처럼 `publishAfterCommit` 방식으로 변경 |
-| 2 | Redis list pop 이후 worker 장애 시 유실 가능 | `leftPop`은 꺼내는 순간 queue에서 제거된다. worker가 pop 후 crash하면 notification row는 남지만 queue item은 사라질 수 있다. | stale `QUEUED` notification 재큐잉 job 또는 Redis reliable queue 패턴 도입 |
-| 3 | 알림 중복 row 방어 부족 | event의 `reminderQueued`, `startQueued`가 일반 경로를 막지만, race나 재시도 상황에서 `(user_id, event_id, type)` 중복 알림 row를 DB가 직접 막지는 않는다. | `notifications(user_id, event_id, type)` 유니크 제약 검토 |
+| 1 | 알림 Redis publish가 DB commit 전에 실행됨 | 기존에는 notification 저장 트랜잭션 안에서 바로 Redis에 push했다. 트랜잭션 commit 전에 worker가 pop하면 DB row가 아직 안 보일 수 있었다. | `publishAfterCommit` 방식으로 변경 완료 |
+| 2 | Redis list pop 이후 worker 장애 시 유실 가능 | `leftPop`은 꺼내는 순간 queue에서 제거된다. worker가 pop 후 crash하면 notification row는 남지만 queue item은 사라질 수 있다. | `QUEUED -> SENDING` 상태 전이와 stale `SENDING` 재큐잉 추가 완료 |
+| 3 | 알림 중복 row 방어 부족 | event의 `reminderQueued`, `startQueued`가 일반 경로를 막지만, race나 재시도 상황에서 중복 알림 row가 생길 수 있었다. | 스케줄러 생성 알림에 `dedupe_key`를 부여하고 unique index 추가 완료 |
 | 4 | 구독 동시 요청 duplicate save 예외 가능 | 같은 사용자가 같은 event를 거의 동시에 구독하면 find 후 둘 다 save로 들어가고 한쪽은 유니크 충돌이 날 수 있다. 현재는 이 예외를 idempotent 응답으로 바꾸지 않는다. | duplicate key catch 후 기존 subscription 재조회 |
 | 5 | 스케줄러 조회가 전체 이벤트 기반 | `refreshStatuses()`는 `registration_events` 전체를 읽고, 알림 큐잉도 `UPCOMING`, `OPEN` 전체를 읽는다. 이벤트가 많아지면 느려진다. | due 대상만 조회하는 쿼리와 복합 인덱스 추가 |
 | 6 | 알림 목록 조회 pagination 없음 | `/api/notifications`, 마이페이지 알림이 사용자 전체 알림을 모두 내려준다. | limit/page 또는 cursor pagination 추가 |
@@ -65,8 +65,8 @@ RabbitMQ 전환은 지금 당장 필수는 아니다. 먼저 Redis queue의 안�
 |---|---|---|
 | `registration_events` | `(status, registration_starts_at)` | `findByStatusInOrderByRegistrationStartsAtAsc`와 due event 조회 최적화 |
 | `notifications` | `(user_id, created_at)` | 사용자 알림 목록 최신순 조회 최적화 |
-| `notifications` | `(status, created_at)` | stale `QUEUED` 재큐잉 job 추가 시 필요 |
-| `notifications` | unique `(user_id, event_id, type)` | 같은 이벤트/타입 알림 중복 생성 방어 |
+| `notifications` | `(status, processing_started_at)` | stale `SENDING` 재큐잉 job에 사용 |
+| `notifications` | unique `(dedupe_key)` | 같은 이벤트/타입 알림 중복 생성 방어. 테스트 푸시는 반복 발송 가능하도록 null 허용 |
 | `user_devices` | `(user_id, enabled)` | 발송 대상 device 조회와 active device count 최적화 |
 | `subscriptions` | `(user_id, created_at)` | 내 구독 목록 최신순 조회 최적화 |
 
@@ -115,8 +115,23 @@ RabbitMQ 전환을 검토할 조건은 다음과 같다.
 | 알림 워커 thread | 전용 scheduler pool 1개 | 필요 시 `SWIMPULSE_NOTIFICATION_SCHEDULER_POOL_SIZE` 증가 |
 | OCR 워커 thread | 전용 scheduler pool 1개 | OCR 처리량이 부족하면 별도 executor 또는 worker service 분리 |
 | 이벤트 스케줄러 | 30초마다 상태 갱신 + 알림 큐잉 | due event만 조회하도록 쿼리 최적화 |
-| queue pop | Redis `leftPop` | reliable queue 또는 stale queued recovery |
-| queue publish | 알림은 commit 전 publish | `afterCommit` publish로 변경 |
+| queue pop | Redis `leftPop` | `SENDING` 상태 기록 후 stale recovery로 보강 |
+| queue publish | 기존 commit 전 publish | `afterCommit` publish로 변경 완료 |
+
+## 2026-06-18 보강 내용
+
+| 항목 | 변경 |
+|---|---|
+| 구독 FK | `subscriptions.event_id`를 `NOT NULL`로 변경. 기존 null 구독은 연결할 event가 없으므로 마이그레이션에서 제거 |
+| 알림 publish 시점 | `NotificationQueuePublisher.publishAfterCommit()` 추가. notification row 커밋 이후 Redis list에 push |
+| 알림 처리 상태 | `SENDING` 상태 추가. worker가 pop한 알림은 FCM 발송 전에 `QUEUED -> SENDING`으로 변경 |
+| pop 이후 장애 복구 | `processing_started_at`이 stale timeout보다 오래된 `SENDING` 알림을 다시 `QUEUED`로 바꾸고 Redis에 재큐잉 |
+| 중복 알림 row | 스케줄러 알림에는 `dedupe_key=userId:eventId:type`을 저장하고 unique index로 중복 생성 방어 |
+| 테스트 푸시 | 테스트 푸시는 `dedupe_key`를 null로 둬서 같은 event에도 반복 테스트 가능 |
+| delivery lag | `swimpulse.notification.delivery.lag` metric 추가. notification 생성부터 FCM 성공까지 걸린 시간 기록 |
+| delivery result | `swimpulse.notification.delivery{result,type}` counter 추가. FCM 성공/실패 수 기록 |
+| queue length | `swimpulse.notification.queue.length` gauge 추가. Redis list 길이를 Prometheus/Grafana에서 관측 가능 |
+| 재큐잉 metric | `swimpulse.notification.queue.requeued{reason}` counter 추가. retry와 stale recovery를 구분 |
 
 스케줄러 thread는 분리됐지만 CPU, DB connection, Redis, 네트워크는 여전히 공유 자원이다. 따라서 OCR이 CPU를 많이 쓰면 간접 영향은 남을 수 있다.
 
@@ -136,11 +151,12 @@ RabbitMQ 전환을 검토할 조건은 다음과 같다.
 
 | metric | 의미 |
 |---|---|
-| `swimpulse_notification_queued_total` | 알림 queue push 수 |
-| `swimpulse_notification_delivery_total{result}` | FCM 발송 성공/실패/retry 수 |
+| `swimpulse_notification_queue_published_total` | 알림 queue push 수 |
+| `swimpulse_notification_delivery_total{result,type}` | FCM 발송 성공/실패 수 |
 | `swimpulse_notification_worker_duration_seconds` | worker batch 처리 시간 |
-| `swimpulse_notification_queue_size` | Redis `swimpulse:notifications` list 길이 |
+| `swimpulse_notification_queue_length` | Redis `swimpulse:notifications` list 길이 |
 | `swimpulse_notification_delivery_lag_seconds` | notification created_at부터 sent_at까지 걸린 시간 |
+| `swimpulse_notification_queue_requeued_total{reason}` | retry/stale recovery로 재큐잉한 수 |
 | `swimpulse_event_scheduler_duration_seconds` | 이벤트 스케줄러 tick 소요 시간 |
 | `swimpulse_subscription_created_total` | 구독 생성 수 |
 | `swimpulse_subscription_duplicate_total` | 중복 구독 재사용/충돌 수 |
@@ -151,12 +167,12 @@ RabbitMQ 전환을 검토할 조건은 다음과 같다.
 
 | 순위 | 작업 | 이유 |
 |---:|---|---|
-| 1 | 알림 queue publish를 transaction afterCommit으로 변경 | DB commit 전 queue 소비 위험 제거 |
-| 2 | notification delivery metric과 Redis queue length metric 추가 | 알림이 밀리는지 Grafana에서 바로 확인 |
+| 1 | 알림 queue publish를 transaction afterCommit으로 변경 | 완료 |
+| 2 | notification delivery metric과 Redis queue length metric 추가 | 완료 |
 | 3 | 구독/알림 k6 스크립트 추가 | 현재 미검증 영역을 수치화 |
 | 4 | `notifications(user_id, created_at)`, `registration_events(status, registration_starts_at)` 인덱스 추가 | 조회와 스케줄러 성능 안정화 |
-| 5 | duplicate notification 유니크 제약 검토 | 중복 발송 방어 |
-| 6 | stale `QUEUED` notification recovery job 추가 | Redis pop 이후 장애 대비 |
+| 5 | duplicate notification 유니크 제약 검토 | `dedupe_key` 방식으로 완료 |
+| 6 | stale `SENDING` notification recovery job 추가 | 완료 |
 | 7 | 알림 목록 pagination 추가 | 장기 사용 시 응답 크기 증가 방지 |
 | 8 | RabbitMQ 검토 | 위 보강 후에도 queue 신뢰성/운영성이 부족할 때 전환 |
 

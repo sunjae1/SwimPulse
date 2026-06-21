@@ -44,6 +44,9 @@ class SubscriptionServiceTests {
 	@Mock
 	private NoticeRegistrationPeriodRepository periodRepository;
 
+	@Mock
+	private SubscriptionInsertService insertService;
+
 	private SubscriptionService subscriptionService;
 
 	@BeforeEach
@@ -52,7 +55,8 @@ class SubscriptionServiceTests {
 				subscriptionRepository,
 				userRepository,
 				eventResolver,
-				periodRepository
+				periodRepository,
+				insertService
 		);
 	}
 
@@ -144,14 +148,15 @@ class SubscriptionServiceTests {
 		);
 		setField(event, "id", 71L);
 
-		when(userRepository.findById(7L)).thenReturn(Optional.of(user));
-		when(periodRepository.findByIdAndStatus(61L, NoticeRegistrationPeriodStatus.ACTIVE))
+		when(userRepository.existsById(7L)).thenReturn(true);
+		when(periodRepository.findByIdAndStatusWithNoticeAndPool(61L, NoticeRegistrationPeriodStatus.ACTIVE))
 				.thenReturn(Optional.of(period));
 		when(eventResolver.getOrCreateForNoticePeriod(period, "신규 회원 - 7월 신규 회원 모집"))
 				.thenReturn(event);
-		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 71L)).thenReturn(Optional.empty());
-		when(subscriptionRepository.save(org.mockito.ArgumentMatchers.any(Subscription.class)))
-				.thenAnswer(invocation -> invocation.getArgument(0));
+		when(insertService.findExistingResponse(7L, 71L)).thenReturn(Optional.empty())
+				.thenReturn(Optional.of(SubscriptionResponse.from(new Subscription(user, event))));
+		when(insertService.insert(7L, 71L, 101L))
+				.thenReturn(new Subscription(user, event));
 
 		SubscriptionResponse response = subscriptionService.subscribe(
 				7L,
@@ -186,11 +191,12 @@ class SubscriptionServiceTests {
 		);
 		setField(event, "id", 72L);
 
-		when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+		when(userRepository.existsById(7L)).thenReturn(true);
 		when(eventResolver.getOrCreate(44L, title, startsAt, endsAt)).thenReturn(event);
-		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 72L)).thenReturn(Optional.empty());
-		when(subscriptionRepository.save(org.mockito.ArgumentMatchers.any(Subscription.class)))
-				.thenAnswer(invocation -> invocation.getArgument(0));
+		when(insertService.findExistingResponse(7L, 72L)).thenReturn(Optional.empty())
+				.thenReturn(Optional.of(SubscriptionResponse.from(new Subscription(user, event))));
+		when(insertService.insert(7L, 72L, 44L))
+				.thenReturn(new Subscription(user, event));
 
 		SubscriptionResponse response = subscriptionService.subscribe(
 				7L,
@@ -201,7 +207,7 @@ class SubscriptionServiceTests {
 		assertEquals(startsAt, response.event().registrationStartsAt());
 		assertEquals(endsAt, response.event().registrationEndsAt());
 		verify(eventResolver).getOrCreate(44L, title, startsAt, endsAt);
-		verify(periodRepository, never()).findByIdAndStatus(
+		verify(periodRepository, never()).findByIdAndStatusWithNoticeAndPool(
 				org.mockito.ArgumentMatchers.anyLong(),
 				org.mockito.ArgumentMatchers.any(NoticeRegistrationPeriodStatus.class)
 		);

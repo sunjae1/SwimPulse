@@ -32,8 +32,8 @@ public class Subscription {
 	@JoinColumn(name = "pool_id", nullable = false)
 	private Pool pool;
 
-	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "event_id")
+	@ManyToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "event_id", nullable = false)
 	private RegistrationEvent event;
 
 	private Instant createdAt;
@@ -42,9 +42,13 @@ public class Subscription {
 	}
 
 	public Subscription(AppUser user, RegistrationEvent event) {
+		this(user, event, event.getPool());
+	}
+
+	public Subscription(AppUser user, RegistrationEvent event, Pool pool) {
 		this.user = user;
 		this.event = event;
-		this.pool = event.getPool();
+		this.pool = pool;
 		this.createdAt = Instant.now();
 	}
 
