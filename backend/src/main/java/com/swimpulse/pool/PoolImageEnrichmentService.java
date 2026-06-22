@@ -27,6 +27,23 @@ public class PoolImageEnrichmentService {
 			"spinner",
 			"blank",
 			"loading",
+			"banner",
+			"/ban_",
+			"ban_",
+			"_banner",
+			"popup",
+			"quick",
+			"btn_",
+			"/btn",
+			"youtube.com",
+			"youtu.be",
+			"ytimg.com",
+			"img.youtube.com",
+			"facebook.com",
+			"instagram.com",
+			"kakao",
+			"naverblog",
+			"blog",
 			"qrcode",
 			"qr-code"
 	);
@@ -134,9 +151,6 @@ public class PoolImageEnrichmentService {
 		for (Element link : document.select("link[rel=image_src][href]")) {
 			addCandidate(candidates, document, link.attr("href"), "link:image_src");
 		}
-		for (Element image : document.select("main img[src], article img[src], .visual img[src], .main img[src], .content img[src]")) {
-			addCandidate(candidates, document, image.attr("src"), "body:img");
-		}
 		return candidates.stream()
 				.sorted((left, right) -> Integer.compare(score(right), score(left)))
 				.toList();
@@ -207,16 +221,16 @@ public class PoolImageEnrichmentService {
 			case "itemprop:image" -> 70;
 			case "link:image_src" -> 65;
 			case "favicon:apple-touch-icon", "favicon:apple-touch-icon-precomposed" -> 60;
-			case "favicon:apple-touch-icon-default" -> 55;
-			case "favicon:icon", "favicon:shortcut icon" -> 50;
-			case "favicon:default" -> 45;
+			case "favicon:icon", "favicon:shortcut icon" -> 55;
+			case "favicon:apple-touch-icon-default" -> 35;
+			case "favicon:default" -> 30;
 			default -> 20;
 		};
 		String lower = candidate.url().toLowerCase(Locale.ROOT);
 		if (PREFERRED_IMAGE_EXTENSIONS.stream().anyMatch(lower::contains)) {
 			score += 10;
 		}
-		if (lower.contains("banner") || lower.contains("visual") || lower.contains("main")) {
+		if (lower.contains("visual") || lower.contains("main")) {
 			score += 5;
 		}
 		return score;

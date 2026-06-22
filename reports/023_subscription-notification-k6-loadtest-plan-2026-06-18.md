@@ -170,6 +170,54 @@ docker compose --profile loadtest run --rm `
 
 현재 알림 목록은 pagination이 없다. 오래 돌리면 사용자 알림 row가 계속 늘어나서 목록 조회가 점점 불리해질 수 있다.
 
+## 테스트 6. scheduler due event 대량 알림 생성/큐잉
+
+실제 scheduler 흐름을 테스트한다. k6 `setup()`에서 due 상태의 `registration_event`, 다수 테스트 사용자, 구독, mock device token을 만든 뒤 scheduler tick을 호출한다.
+
+이 테스트는 `/api/notifications/test`처럼 알림을 직접 넣는 것이 아니라 아래 흐름을 본다.
+
+```text
+EventScheduler tick
+→ due registration_event 조회
+→ event 구독자 전체 조회
+→ 사용자별 notification row 생성
+→ Redis queue push
+→ worker가 MockFcmClient로 처리
+```
+
+```powershell
+docker compose --profile loadtest run --rm `
+  -e RUN_LABEL=scheduler-due-notification `
+  -e USER_COUNT=100 `
+  -e VUS=1 `
+  -e ITERATIONS=1 `
+  -e POOL_ID=1 `
+  -e TITLE="k6 scheduler due notification" `
+  -e START_OFFSET_SECONDS=-5 `
+  -e EVENT_DURATION_MINUTES=60 `
+  -e REGISTER_DEVICES=true `
+  -e WAIT_FOR_DELIVERY=true `
+  -e POLL_TIMEOUT_SECONDS=30 `
+  k6 run /scripts/scheduler-notification-load.js `
+  --summary-export /results/scheduler-notification-summary.json `
+  --out json=/results/scheduler-notification-raw.json
+```
+
+중점 지표:
+
+| 지표 | 의미 |
+|---|---|
+| `scheduler_notification_valid_response` | expected notification 생성과 처리 완료 여부 |
+| `scheduler_notification_tick_duration` | scheduler tick API 응답 시간 |
+| `scheduler_notification_count` | 해당 event에 생성된 notification 수 |
+| `scheduler_notification_sent_count` | worker가 SENT 처리한 notification 수 |
+| `scheduler_notification_failed_count` | FAILED 처리된 notification 수 |
+| `scheduler_notification_redis_queue_length` | Redis queue에 남은 대기량 |
+
+주의:
+
+`USER_COUNT`를 크게 올리면 실제 다수 사용자 구독 이벤트와 유사해진다. 부하 테스트에서는 `SWIMPULSE_FIREBASE_MOCK=true`로 실제 FCM 발송을 막고 서버 내부 처리량을 보는 것을 권장한다.
+
 ## 결과 해석 기준
 
 | 기준 | 판단 |

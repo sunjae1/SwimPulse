@@ -172,6 +172,10 @@ SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=https://unnamable-preset-contact.ngrok-free.
 | GET | `/api/locations/geocode?address=경기 화성시 우정읍 조암리 385` | 주소 좌표 변환 |
 | POST | `/api/pools/from-location-candidate` | 검색 후보를 수영장으로 추가 |
 | POST | `/api/pools/homepages/enrich?limit=50` | 네이버 지역 검색으로 홈페이지 URL 보강 |
+| POST | `/api/pools/images/enrich?limit=100` | 공식 홈페이지 `og:image`/메타 이미지, favicon, 기본 이미지 순서로 수영장 대표 이미지 보강 |
+| POST | `/api/pools/{poolId}/image/enrich` | 단일 수영장 대표 이미지 보강 |
+| POST | `/api/pools/images/favicon-enrich?limit=100` | 아직 대표 이미지가 없는 수영장에 favicon 또는 기본 이미지 보강 |
+| POST | `/api/pools/{poolId}/favicon/enrich` | 단일 수영장 favicon 또는 기본 이미지 보강 |
 | POST | `/api/pools/{poolId}/notices/scan` | 홈페이지 공지 후보 수집과 모집 기간 추출 |
 | POST | `/api/pools/notice-sources/reverify?limit=20` | 공지 경로 후보를 최대 20개 시설씩 배치 재검증 |
 | POST | `/api/pools/notices/periods/migrate?limit=50` | 기존 `registration_periods_json`을 기간 행으로 이관 |
@@ -190,6 +194,33 @@ SWIMPULSE_AUTH_SUCCESS_REDIRECT_URI=https://unnamable-preset-contact.ngrok-free.
 
 ```text
 /oauth2/authorization/google
+```
+
+수영장 대표 이미지 보강은 로그인한 브라우저 개발자 도구에서 다음처럼 호출할 수 있습니다.
+
+```javascript
+await fetch("/api/pools/images/enrich?limit=100", {
+  method: "POST",
+  credentials: "include",
+}).then((response) => response.json());
+```
+
+`og:image` 등 대표 이미지 보강을 한 번 돌린 뒤, 아직 이미지가 비어 있는 수영장만 favicon 또는 기본 이미지로 채우려면 다음 API를 사용합니다.
+
+```javascript
+await fetch("/api/pools/images/favicon-enrich?limit=100", {
+  method: "POST",
+  credentials: "include",
+}).then((response) => response.json());
+```
+
+단일 수영장만 다시 확인할 때:
+
+```javascript
+await fetch("/api/pools/22/image/enrich", {
+  method: "POST",
+  credentials: "include",
+}).then((response) => response.json());
 ```
 
 공지 경로 배치 재검증은 로그인한 브라우저 개발자 도구에서 다음처럼 호출할 수 있습니다.

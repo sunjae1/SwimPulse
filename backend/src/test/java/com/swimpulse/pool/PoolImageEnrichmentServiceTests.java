@@ -83,6 +83,62 @@ class PoolImageEnrichmentServiceTests {
 	}
 
 	@Test
+	void enrichSkipsHomepageBannerImagesAndUsesFavicon() {
+		FakePoolImagePageClient client = new FakePoolImagePageClient("""
+				<html>
+				  <head><link rel="icon" href="/favicon.ico"></head>
+				  <body>
+				    <main>
+				      <img src="/design/homepage/bucheon/image/ban_public02_01.png">
+				    </main>
+				  </body>
+				</html>
+				""", Map.of(
+				"https://center.example.com/favicon.ico",
+				PoolImagePageClient.ImageProbe.image("image/x-icon", 512)
+		));
+		PoolImageEnrichmentService service = new PoolImageEnrichmentService(client);
+		Pool pool = new Pool("테스트 수영장", "테스트구", "테스트 시설");
+		pool.updateHomepageUrl("https://center.example.com/main");
+
+		PoolImageEnrichmentResult result = service.enrich(pool);
+
+		assertEquals(PoolImageEnrichmentStatus.UPDATED, result.status());
+		assertEquals("https://center.example.com/favicon.ico", result.imageUrl());
+		assertEquals("favicon:icon", result.source());
+		assertEquals(List.of("https://center.example.com/favicon.ico"), client.probedUrls);
+	}
+
+	@Test
+	void enrichSkipsYoutubeThumbnailsAndUsesFavicon() {
+		FakePoolImagePageClient client = new FakePoolImagePageClient("""
+				<html>
+				  <head><link rel="icon" href="/favicon.ico"></head>
+				  <body>
+				    <main>
+				      <a title="(새창열림) 유튜브 : 송내국민체육센터 필라테스 추첨영상" href="https://www.youtube.com/watch?v=PpaRGLzSCnQ">
+				        <img src="https://img.youtube.com/vi/PpaRGLzSCnQ/0.jpg" alt="유튜브 : 송내국민체육센터 필라테스 추첨영상">
+				      </a>
+				    </main>
+				  </body>
+				</html>
+				""", Map.of(
+				"https://center.example.com/favicon.ico",
+				PoolImagePageClient.ImageProbe.image("image/x-icon", 512)
+		));
+		PoolImageEnrichmentService service = new PoolImageEnrichmentService(client);
+		Pool pool = new Pool("송내국민체육센터", "테스트구", "테스트 시설");
+		pool.updateHomepageUrl("https://center.example.com/main");
+
+		PoolImageEnrichmentResult result = service.enrich(pool);
+
+		assertEquals(PoolImageEnrichmentStatus.UPDATED, result.status());
+		assertEquals("https://center.example.com/favicon.ico", result.imageUrl());
+		assertEquals("favicon:icon", result.source());
+		assertEquals(List.of("https://center.example.com/favicon.ico"), client.probedUrls);
+	}
+
+	@Test
 	void enrichUsesDefaultImageWhenFaviconIsMissing() {
 		FakePoolImagePageClient client = new FakePoolImagePageClient("""
 				<html>

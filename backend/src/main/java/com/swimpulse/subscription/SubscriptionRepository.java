@@ -14,6 +14,8 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
 
 	List<Subscription> findByEvent_Id(Long eventId);
 
+	long countByEvent_Id(Long eventId);
+
 	Optional<Subscription> findByUser_IdAndEvent_Id(Long userId, Long eventId);
 
 	Optional<Subscription> findByIdAndUser_Id(Long id, Long userId);

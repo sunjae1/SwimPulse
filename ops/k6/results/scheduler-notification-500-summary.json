@@ -1,0 +1,243 @@
+{
+    "root_group": {
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {},
+                "name": "setup"
+            }
+        },
+        "checks": {
+            "scheduler tick status is 200": {
+                "id": "c3525ebabf5a5607eded0ae5cea22adc",
+                "passes": 1,
+                "fails": 0,
+                "name": "scheduler tick status is 200",
+                "path": "::scheduler tick status is 200"
+            },
+            "scheduler tick response has event": {
+                "passes": 1,
+                "fails": 0,
+                "name": "scheduler tick response has event",
+                "path": "::scheduler tick response has event",
+                "id": "4175279c6e95ca4bebd79757fd575ca6"
+            },
+            "scheduler status is 200": {
+                "id": "03daec0b29cb329a1b30b7ee887956b1",
+                "passes": 32,
+                "fails": 0,
+                "name": "scheduler status is 200",
+                "path": "::scheduler status is 200"
+            },
+            "scheduler status response has event": {
+                "fails": 0,
+                "name": "scheduler status response has event",
+                "path": "::scheduler status response has event",
+                "id": "85656300a892e5edeaa132bbc99072aa",
+                "passes": 32
+            },
+            "scheduler created expected notifications": {
+                "name": "scheduler created expected notifications",
+                "path": "::scheduler created expected notifications",
+                "id": "cafbc2701ef1792dfec6b56756f4ba3b",
+                "passes": 1,
+                "fails": 0
+            },
+            "scheduler delivered expected notifications": {
+                "name": "scheduler delivered expected notifications",
+                "path": "::scheduler delivered expected notifications",
+                "id": "167680023e911b799e0e39b8010226ed",
+                "passes": 1,
+                "fails": 0
+            }
+        },
+        "name": "",
+        "path": ""
+    },
+    "metrics": {
+        "http_req_connecting": {
+            "min": 0,
+            "med": 0,
+            "max": 0.227017,
+            "p(90)": 0,
+            "p(95)": 0.05992454999999964,
+            "p(99)": 0.2086016800000001,
+            "avg": 0.011712647058823529
+        },
+        "checks": {
+            "passes": 68,
+            "fails": 0,
+            "value": 1
+        },
+        "scheduler_notification_failed_count": {
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "avg": 0,
+            "min": 0
+        },
+        "http_req_receiving": {
+            "min": 0.062503,
+            "med": 0.080506,
+            "max": 0.163912,
+            "p(90)": 0.13678909999999997,
+            "p(95)": 0.15029025,
+            "p(99)": 0.16001635000000003,
+            "avg": 0.09165299999999997
+        },
+        "data_received": {
+            "count": 17672,
+            "rate": 459.2184480142419
+        },
+        "iteration_duration": {
+            "avg": 19242.720591,
+            "min": 4191.257681,
+            "med": 19242.720591,
+            "max": 34294.183501,
+            "p(90)": 31283.890919,
+            "p(95)": 32789.03721,
+            "p(99)": 33993.1542428
+        },
+        "http_req_duration": {
+            "min": 11.991552,
+            "med": 18.2665875,
+            "max": 4189.978084,
+            "p(90)": 41.1281885,
+            "p(95)": 582.3227097999968,
+            "p(99)": 3329.3869434700046,
+            "avg": 189.82152488235303,
+            "thresholds": {
+                "p(95)<5000": false
+            }
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 34,
+            "thresholds": {
+                "rate<0.05": false
+            },
+            "value": 0
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "scheduler_notification_sent_count": {
+            "max": 500,
+            "p(90)": 456,
+            "p(95)": 475.2,
+            "p(99)": 493.6,
+            "avg": 248.1818181818182,
+            "min": 0,
+            "med": 240
+        },
+        "http_req_blocked": {
+            "avg": 0.042964941176470595,
+            "min": 0.0031,
+            "med": 0.004500499999999999,
+            "max": 1.042779,
+            "p(90)": 0.0193713,
+            "p(95)": 0.0856215499999996,
+            "p(99)": 0.7661518800000013
+        },
+        "scheduler_notification_count": {
+            "max": 500,
+            "p(90)": 500,
+            "p(95)": 500,
+            "p(99)": 500,
+            "avg": 500,
+            "min": 500,
+            "med": 500
+        },
+        "vus": {
+            "value": 1,
+            "min": 0,
+            "max": 1
+        },
+        "http_req_sending": {
+            "p(95)": 0.2539295499999997,
+            "p(99)": 0.35456563,
+            "avg": 0.06066282352941178,
+            "min": 0.022701,
+            "med": 0.031202,
+            "max": 0.362317,
+            "p(90)": 0.08973669999999999
+        },
+        "http_req_waiting": {
+            "min": 11.904848,
+            "med": 18.154228500000002,
+            "max": 4189.813671,
+            "p(90)": 40.897884499999996,
+            "p(95)": 582.1475922499967,
+            "p(99)": 3329.2395271200044,
+            "avg": 189.66920905882355
+        },
+        "http_reqs": {
+            "count": 34,
+            "rate": 0.8835121792940372
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(99)": 3329.3869434700046,
+            "avg": 189.82152488235303,
+            "min": 11.991552,
+            "med": 18.2665875,
+            "max": 4189.978084,
+            "p(90)": 41.1281885,
+            "p(95)": 582.3227097999968
+        },
+        "scheduler_notification_valid_response": {
+            "passes": 1,
+            "fails": 0,
+            "thresholds": {
+                "rate>0.95": false
+            },
+            "value": 1
+        },
+        "vus_max": {
+            "min": 1,
+            "max": 1,
+            "value": 1
+        },
+        "data_sent": {
+            "count": 4888,
+            "rate": 127.01786859968394
+        },
+        "scheduler_notification_redis_queue_length": {
+            "avg": 251.4848484848485,
+            "min": 0,
+            "med": 260,
+            "max": 500,
+            "p(90)": 456,
+            "p(95)": 476.4,
+            "p(99)": 493.6
+        },
+        "scheduler_notification_tick_duration": {
+            "p(90)": 1582.126143,
+            "p(95)": 1582.126143,
+            "p(99)": 1582.126143,
+            "avg": 1582.126143,
+            "min": 1582.126143,
+            "med": 1582.126143,
+            "max": 1582.126143
+        },
+        "iterations": {
+            "count": 1,
+            "rate": 0.025985652332177565
+        }
+    },
+    "setup_data": {
+        "eventId": 3399,
+        "expectedNotifications": 500,
+        "title": "k6 scheduler due notification 1782020212254"
+    }
+}

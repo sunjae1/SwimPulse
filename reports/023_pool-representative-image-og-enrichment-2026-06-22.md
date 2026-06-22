@@ -8,7 +8,7 @@
 
 | 순서 | 전략 | 설명 |
 |---:|---|---|
-| 1 | 공식 홈페이지 대표 이미지 | `og:image`, `twitter:image`, `image_src`, 본문 이미지 후보를 검사 |
+| 1 | 공식 홈페이지 대표 이미지 | `og:image`, `twitter:image`, `image_src` 같은 메타 이미지 후보를 검사 |
 | 2 | favicon / apple-touch-icon | 대표 이미지가 없으면 공식 홈페이지의 아이콘을 후보로 사용 |
 | 3 | 기본 상어 수영 로고 | favicon도 없거나 홈페이지가 없어도 `/swimpulse-pool-shark.png`를 저장 |
 
@@ -55,7 +55,7 @@ https://example.or.kr/favicon.ico
 | 4 | `meta[name=twitter:image:src]` |
 | 5 | `meta[itemprop=image]` |
 | 6 | `link[rel=image_src]` |
-| 7 | `main`, `article`, `.visual`, `.main`, `.content` 안의 `img[src]` |
+본문의 일반 `img[src]`는 대표 이미지 후보에서 제외한다. 공지 배너, 유튜브 썸네일, 사칭 주의 안내 이미지처럼 시설 대표 사진이 아닌 이미지가 너무 쉽게 섞이기 때문이다.
 
 대표 이미지 후보가 없거나 부적합하면 favicon 후보를 본다.
 

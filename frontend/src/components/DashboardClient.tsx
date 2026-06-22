@@ -1458,9 +1458,11 @@ function PoolImage({ pool }: { pool: Pool }) {
     }
     if (isIconLikePoolImage(pool.imageUrl)) {
       return (
-        <div className="grid h-24 place-items-center rounded-lg border border-[#d8ddd5] bg-gradient-to-br from-[#eef8f5] to-[#d7ece8] p-4 md:h-28">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="max-h-full max-w-full object-contain" src={pool.imageUrl} alt={`${pool.name} 대표 아이콘`} />
+        <div className="grid h-24 min-w-0 place-items-center overflow-hidden rounded-lg border border-[#d8ddd5] bg-gradient-to-br from-[#eef8f5] to-[#d7ece8] px-3 md:h-28">
+          <div className="grid size-14 place-items-center rounded-2xl border border-white/80 bg-white/85 shadow-sm md:size-16">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="block size-10 object-contain md:size-11" src={pool.imageUrl} alt={`${pool.name} 대표 아이콘`} />
+          </div>
         </div>
       );
     }
