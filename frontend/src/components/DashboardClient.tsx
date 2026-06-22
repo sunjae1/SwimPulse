@@ -826,7 +826,16 @@ export function DashboardClient({
       </div>
       <NoticeToast message={notice} />
 
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-6 lg:grid-cols-[1fr_360px]">
+      <WelcomeHero
+        user={user}
+        upcomingEvents={upcomingEvents}
+        unreadNotifications={unreadNotifications}
+        onLogin={loginWithGoogle}
+        onEnablePush={enablePush}
+        busy={busy}
+      />
+
+      <div id="pool-workspace" className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-6 lg:grid-cols-[1fr_360px]">
         <section className="space-y-5">
           <div className="grid gap-3 sm:grid-cols-3">
             <Metric icon={CalendarClock} label="예정 이벤트" value={upcomingEvents.toString()} tone="teal" />
@@ -1307,6 +1316,129 @@ function NoticeToast({ message }: { message: string | null }) {
       <div className="flex max-w-xl items-center gap-2 rounded-lg border border-[#d8ddd5] bg-white px-4 py-3 text-sm text-[#31413b] shadow-lg">
         <CircleAlert className="shrink-0" size={17} aria-hidden />
         <span className="min-w-0">{message}</span>
+      </div>
+    </div>
+  );
+}
+
+function WelcomeHero({
+  user,
+  upcomingEvents,
+  unreadNotifications,
+  onLogin,
+  onEnablePush,
+  busy,
+}: {
+  user: AppUser | null;
+  upcomingEvents: number;
+  unreadNotifications: number;
+  onLogin: () => void;
+  onEnablePush: () => void;
+  busy: boolean;
+}) {
+  return (
+    <section className="relative overflow-hidden border-b border-[#d8ddd5] bg-[#f2f7f3]">
+      <div className="absolute left-1/2 top-[-180px] h-[380px] w-[620px] -translate-x-1/2 rounded-full bg-[#bfe7df]/60 blur-3xl" aria-hidden />
+      <div className="absolute right-[-110px] top-20 h-64 w-64 rounded-full bg-[#f7c978]/35 blur-2xl" aria-hidden />
+      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:py-12">
+        <div className="relative space-y-6">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[#c7ddd6] bg-white/80 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-[#0f766e]">
+            <span className="size-2 rounded-full bg-[#0f766e]" aria-hidden />
+            SwimPulse Guide
+          </div>
+          <div className="max-w-3xl space-y-4">
+            <h2 className="text-3xl font-black tracking-[-0.04em] text-[#17201d] sm:text-5xl">
+              수영장 모집 공지,
+              <span className="block text-[#0f766e]">놓치기 전에 먼저 알려드릴게요.</span>
+            </h2>
+            <p className="max-w-2xl text-base leading-7 text-[#47564f] sm:text-lg">
+              관심 수영장을 찾고, 공지에서 접수 기간을 확인한 뒤, 원하는 기간을 구독하세요.
+              SwimPulse가 모집 시작 타이밍을 브라우저 푸시와 앱 알림으로 챙겨줍니다.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {user ? (
+              <button
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#17201d] px-5 text-sm font-bold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                onClick={onEnablePush}
+                disabled={busy}
+                type="button"
+              >
+                <Bell size={17} aria-hidden />
+                푸시 알림 켜기
+              </button>
+            ) : (
+              <button
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#17201d] px-5 text-sm font-bold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                onClick={onLogin}
+                disabled={busy}
+                type="button"
+              >
+                <LogIn size={17} aria-hidden />
+                Google로 시작하기
+              </button>
+            )}
+            <a
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-[#c7d2cb] bg-white/80 px-5 text-sm font-bold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
+              href="#pool-workspace"
+            >
+              <Search size={17} aria-hidden />
+              수영장 찾으러 가기
+            </a>
+          </div>
+        </div>
+
+        <div className="relative rounded-[28px] border border-white/70 bg-white/75 p-4 shadow-[0_24px_70px_rgba(23,32,29,0.12)] backdrop-blur">
+          <div className="grid gap-3">
+            <GuideStep
+              icon={Search}
+              title="1. 위치나 수영장 검색"
+              description="내 주변 수영장과 아직 DB에 없는 후보 시설까지 함께 확인합니다."
+            />
+            <GuideStep
+              icon={FileSearch}
+              title="2. 공지 확인"
+              description="공식 홈페이지 공지를 읽고 모집 기간을 자동으로 정리합니다."
+            />
+            <GuideStep
+              icon={Bell}
+              title="3. 기간 구독"
+              description="접수 시작 전 알림을 받고, 마이페이지에서 읽음/구독 상태를 관리합니다."
+            />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-[#0f766e] px-4 py-4 text-white">
+              <p className="text-xs font-semibold opacity-80">예정 이벤트</p>
+              <p className="mt-1 text-2xl font-black">{upcomingEvents}</p>
+            </div>
+            <div className="rounded-2xl bg-[#fff2e2] px-4 py-4 text-[#946123]">
+              <p className="text-xs font-semibold opacity-80">안 읽은 알림</p>
+              <p className="mt-1 text-2xl font-black">{unreadNotifications}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function GuideStep({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof Search;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="grid grid-cols-[44px_1fr] gap-3 rounded-2xl border border-[#e3e7e1] bg-white px-4 py-4">
+      <div className="grid size-11 place-items-center rounded-xl bg-[#edf7f5] text-[#0f766e]">
+        <Icon size={20} aria-hidden />
+      </div>
+      <div>
+        <h3 className="font-bold text-[#17201d]">{title}</h3>
+        <p className="mt-1 text-sm leading-6 text-[#66746d]">{description}</p>
       </div>
     </div>
   );
