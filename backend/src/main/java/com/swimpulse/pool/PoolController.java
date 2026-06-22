@@ -106,4 +106,28 @@ public class PoolController {
 		log.info("Pool homepage reverification requested. limit={}", limit);
 		return poolService.reverifyHomepages(limit);
 	}
+
+	@PostMapping("/images/enrich")
+	public PoolImageEnrichmentResponse enrichPoolImages(@RequestParam(required = false) Integer limit) {
+		log.info("Pool image enrichment requested. limit={}", limit);
+		return poolService.enrichPoolImages(limit);
+	}
+
+	@PostMapping("/{poolId}/image/enrich")
+	public PoolImageEnrichmentResult enrichPoolImage(@PathVariable Long poolId) {
+		log.info("Pool image enrichment requested. poolId={}", poolId);
+		return poolService.enrichPoolImage(poolId);
+	}
+
+	@PostMapping("/images/favicon-enrich")
+	public PoolImageEnrichmentResponse enrichPoolFavicons(@RequestParam(required = false) Integer limit) {
+		log.info("Pool favicon/default image enrichment requested. limit={}", limit);
+		return poolService.enrichPoolFavicons(limit);
+	}
+
+	@PostMapping("/{poolId}/favicon/enrich")
+	public PoolImageEnrichmentResult enrichPoolFavicon(@PathVariable Long poolId) {
+		log.info("Pool favicon/default image enrichment requested. poolId={}", poolId);
+		return poolService.enrichPoolFavicon(poolId);
+	}
 }

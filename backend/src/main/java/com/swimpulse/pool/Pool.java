@@ -322,6 +322,10 @@ public class Pool {
 		return imageUrl;
 	}
 
+	public void updateImageUrl(String imageUrl) {
+		this.imageUrl = truncate(imageUrl, 500);
+	}
+
 	public Double getLatitude() {
 		return latitude;
 	}

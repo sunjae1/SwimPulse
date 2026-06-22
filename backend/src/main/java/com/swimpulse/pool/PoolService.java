@@ -31,6 +31,7 @@ public class PoolService {
 	private static final int MAX_LOCATION_CANDIDATE_RADIUS_METERS = 20_000;
 	private static final int DEFAULT_LOCATION_CANDIDATE_DISPLAY = 10;
 	private static final int MAX_LOCATION_CANDIDATE_DISPLAY = 10;
+	private static final int MAX_IMAGE_ENRICHMENT_LIMIT = 200;
 	private static final int LOCATION_CANDIDATE_GEOCODE_CONCURRENCY = 3;
 	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
 	private static final List<String> STRONG_POOL_CANDIDATE_TITLE_KEYWORDS = List.of(
@@ -77,19 +78,22 @@ public class PoolService {
 	private final LocationService locationService;
 	private final NaverMapsGeocodingClient naverMapsGeocodingClient;
 	private final NaverLocalSearchClient naverLocalSearchClient;
+	private final PoolImageEnrichmentService poolImageEnrichmentService;
 
 	public PoolService(
 			PoolRepository poolRepository,
 			PoolNearbyQueryRepository poolNearbyQueryRepository,
 			LocationService locationService,
 			NaverMapsGeocodingClient naverMapsGeocodingClient,
-			NaverLocalSearchClient naverLocalSearchClient
+			NaverLocalSearchClient naverLocalSearchClient,
+			PoolImageEnrichmentService poolImageEnrichmentService
 	) {
 		this.poolRepository = poolRepository;
 		this.poolNearbyQueryRepository = poolNearbyQueryRepository;
 		this.locationService = locationService;
 		this.naverMapsGeocodingClient = naverMapsGeocodingClient;
 		this.naverLocalSearchClient = naverLocalSearchClient;
+		this.poolImageEnrichmentService = poolImageEnrichmentService;
 	}
 
 	@Transactional(readOnly = true)
@@ -245,6 +249,56 @@ public class PoolService {
 				countByStatus(results, HomepageEnrichmentStatus.NEEDS_REVIEW),
 				countByStatus(results, HomepageEnrichmentStatus.FAILED));
 		return HomepageEnrichmentResponse.from(results);
+	}
+
+	@Transactional
+	public PoolImageEnrichmentResponse enrichPoolImages(Integer limit) {
+		int normalizedLimit = normalizeImageEnrichmentLimit(limit);
+		log.info("Pool image enrichment started. limit={}", normalizedLimit);
+		List<PoolImageEnrichmentResult> results = poolRepository.findAllByOrderByNameAsc()
+				.stream()
+				.filter(pool -> !hasText(pool.getImageUrl()))
+				.limit(normalizedLimit)
+				.map(poolImageEnrichmentService::enrich)
+				.toList();
+		PoolImageEnrichmentResponse response = PoolImageEnrichmentResponse.from(results);
+		log.info("Pool image enrichment completed. processed={} updated={} notFound={} skipped={} failed={}",
+				response.processedPools(),
+				response.updated(),
+				response.notFound(),
+				response.skipped(),
+				response.failed());
+		return response;
+	}
+
+	@Transactional
+	public PoolImageEnrichmentResult enrichPoolImage(Long poolId) {
+		Pool pool = poolRepository.findById(poolId)
+				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
+		return poolImageEnrichmentService.enrich(pool);
+	}
+
+	@Transactional
+	public PoolImageEnrichmentResponse enrichPoolFavicons(Integer limit) {
+		int normalizedLimit = normalizeImageEnrichmentLimit(limit);
+		log.info("Pool favicon/default image enrichment started. limit={}", normalizedLimit);
+		List<PoolImageEnrichmentResult> results = poolRepository.findAllByOrderByNameAsc()
+				.stream()
+				.filter(pool -> !hasText(pool.getImageUrl()))
+				.limit(normalizedLimit)
+				.map(poolImageEnrichmentService::enrichFallback)
+				.toList();
+		PoolImageEnrichmentResponse response = PoolImageEnrichmentResponse.from(results);
+		log.info("Pool favicon/default image enrichment completed. processed={} updated={} failed={}",
+				response.processedPools(), response.updated(), response.failed());
+		return response;
+	}
+
+	@Transactional
+	public PoolImageEnrichmentResult enrichPoolFavicon(Long poolId) {
+		Pool pool = poolRepository.findById(poolId)
+				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
+		return poolImageEnrichmentService.enrichFallback(pool);
 	}
 
 	private HomepageEnrichmentResult enrichHomepage(Pool pool) {
@@ -528,6 +582,14 @@ public class PoolService {
 			throw new BadRequestException("limit must be between 1 and 50");
 		}
 		return limit;
+	}
+
+	private int normalizeImageEnrichmentLimit(Integer limit) {
+		int normalizedLimit = limit == null ? 100 : limit;
+		if (normalizedLimit < 1 || normalizedLimit > MAX_IMAGE_ENRICHMENT_LIMIT) {
+			throw new BadRequestException("limit must be between 1 and " + MAX_IMAGE_ENRICHMENT_LIMIT);
+		}
+		return normalizedLimit;
 	}
 
 	private int normalizeLocationCandidateRadius(Integer radius) {

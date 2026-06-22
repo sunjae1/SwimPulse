@@ -42,6 +42,9 @@ class PoolServiceTests {
 	@Mock
 	private NaverLocalSearchClient naverLocalSearchClient;
 
+	@Mock
+	private PoolImageEnrichmentService poolImageEnrichmentService;
+
 	private PoolService poolService;
 
 	@BeforeEach
@@ -51,7 +54,8 @@ class PoolServiceTests {
 				poolNearbyQueryRepository,
 				locationService,
 				naverMapsGeocodingClient,
-				naverLocalSearchClient
+				naverLocalSearchClient,
+				poolImageEnrichmentService
 		);
 	}
 

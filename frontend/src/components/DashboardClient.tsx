@@ -7,7 +7,6 @@ import {
   CircleAlert,
   ExternalLink,
   FileSearch,
-  ImageIcon,
   List,
   LocateFixed,
   LogIn,
@@ -1314,9 +1313,25 @@ function NoticeToast({ message }: { message: string | null }) {
 }
 
 function PoolImage({ pool }: { pool: Pool }) {
-  const label = pool.indoorOutdoorTypeName === "실외" ? "실외 수영장" : "실내 수영장";
-
   if (pool.imageUrl) {
+    if (isDefaultPoolImage(pool.imageUrl)) {
+      return (
+        <div
+          className="h-24 rounded-lg bg-[#ddf5f4] bg-cover bg-center md:h-28"
+          aria-label={`${pool.name} 기본 대표 이미지`}
+          role="img"
+          style={{ backgroundImage: `url(${defaultPoolImageUrl(pool.imageUrl)})` }}
+        />
+      );
+    }
+    if (isIconLikePoolImage(pool.imageUrl)) {
+      return (
+        <div className="grid h-24 place-items-center rounded-lg border border-[#d8ddd5] bg-gradient-to-br from-[#eef8f5] to-[#d7ece8] p-4 md:h-28">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="max-h-full max-w-full object-contain" src={pool.imageUrl} alt={`${pool.name} 대표 아이콘`} />
+        </div>
+      );
+    }
     return (
       <div
         className="h-24 rounded-lg bg-[#edf7f5] bg-cover bg-center md:h-28"
@@ -1328,12 +1343,31 @@ function PoolImage({ pool }: { pool: Pool }) {
   }
 
   return (
-    <div className="grid h-24 place-items-center rounded-lg border border-[#d8ddd5] bg-[#edf7f5] text-[#0f766e] md:h-28">
-      <div className="grid gap-1 text-center text-xs font-semibold">
-        <ImageIcon className="mx-auto" size={20} aria-hidden />
-        <span>{label}</span>
-      </div>
-    </div>
+    <div
+      className="h-24 rounded-lg bg-[#ddf5f4] bg-cover bg-center md:h-28"
+      aria-label={`${pool.name} 기본 대표 이미지`}
+      role="img"
+      style={{ backgroundImage: "url(/swimpulse-pool-shark.png)" }}
+    />
+  );
+}
+
+function defaultPoolImageUrl(imageUrl: string) {
+  return imageUrl.toLowerCase().endsWith(".svg") ? "/swimpulse-pool-shark.png" : imageUrl;
+}
+
+function isDefaultPoolImage(imageUrl: string) {
+  return imageUrl.toLowerCase().includes("swimpulse-pool-shark");
+}
+
+function isIconLikePoolImage(imageUrl: string) {
+  const normalized = imageUrl.toLowerCase();
+  return (
+    normalized.includes("favicon") ||
+    normalized.includes("apple-touch-icon") ||
+    normalized.includes("icon") ||
+    normalized.endsWith(".ico") ||
+    normalized.endsWith(".svg")
   );
 }
 
