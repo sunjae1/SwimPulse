@@ -55,6 +55,7 @@ export function eventStatusLabel(status: EventStatus) {
 export function notificationStatusLabel(status: NotificationStatus) {
   return {
     QUEUED: "대기",
+    SENDING: "발송 중",
     SENT: "전송",
     FAILED: "실패",
   }[status];

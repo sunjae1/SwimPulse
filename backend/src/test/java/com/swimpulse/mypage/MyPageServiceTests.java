@@ -12,6 +12,7 @@ import com.swimpulse.notification.NotificationType;
 import com.swimpulse.notification.UserDeviceRepository;
 import com.swimpulse.subscription.SubscriptionResponse;
 import com.swimpulse.subscription.SubscriptionService;
+import com.swimpulse.user.AppUserRole;
 import com.swimpulse.user.UserResponse;
 import com.swimpulse.user.UserService;
 import java.time.Instant;
@@ -57,6 +58,7 @@ class MyPageServiceTests {
 				"수영러",
 				null,
 				true,
+				AppUserRole.USER,
 				true,
 				Instant.parse("2026-05-01T00:00:00Z"),
 				Instant.parse("2026-06-05T01:30:00Z")

@@ -19,6 +19,7 @@ public class NotificationWorker {
 	private final String queueKey;
 	private final int batchSize;
 	private final Duration staleSendingTimeout;
+	private final boolean autoStaleRequeueEnabled;
 
 	public NotificationWorker(
 			StringRedisTemplate redisTemplate,
@@ -26,13 +27,15 @@ public class NotificationWorker {
 			MeterRegistry meterRegistry,
 			@Value("${swimpulse.notification.queue-key:swimpulse:notifications}") String queueKey,
 			@Value("${swimpulse.notification.worker-batch-size:20}") int batchSize,
-			@Value("${swimpulse.notification.stale-sending-timeout-ms:120000}") long staleSendingTimeoutMs
+			@Value("${swimpulse.notification.stale-sending-timeout-ms:120000}") long staleSendingTimeoutMs,
+			@Value("${swimpulse.notification.auto-stale-requeue-enabled:true}") boolean autoStaleRequeueEnabled
 	) {
 		this.redisTemplate = redisTemplate;
 		this.notificationService = notificationService;
 		this.queueKey = queueKey;
 		this.batchSize = batchSize;
 		this.staleSendingTimeout = Duration.ofMillis(staleSendingTimeoutMs);
+		this.autoStaleRequeueEnabled = autoStaleRequeueEnabled;
 		Gauge.builder("swimpulse.notification.queue.length", redisTemplate, template -> {
 					Long size = template.opsForList().size(queueKey);
 					return size == null ? 0 : size;
@@ -44,9 +47,11 @@ public class NotificationWorker {
 
 	@Scheduled(fixedDelayString = "${swimpulse.notification.worker-delay-ms:1000}", scheduler = "notificationTaskScheduler")
 	public void process() {
-		int requeued = notificationService.requeueStaleSending(staleSendingTimeout);
-		if (requeued > 0) {
-			log.warn("Stale notification recovery completed. requeued={}", requeued);
+		if (autoStaleRequeueEnabled) {
+			int requeued = notificationService.requeueStaleSending(staleSendingTimeout);
+			if (requeued > 0) {
+				log.warn("Stale notification recovery completed. requeued={}", requeued);
+			}
 		}
 		for (int i = 0; i < batchSize; i++) {
 			String rawId = redisTemplate.opsForList().leftPop(queueKey);

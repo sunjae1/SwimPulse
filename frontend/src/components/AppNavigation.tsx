@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const navigationItems = [
   { href: "/", label: "대시보드" },
   { href: "/my-page", label: "마이 페이지" },
+  { href: "/admin", label: "관리자" },
 ];
 
 export function AppNavigation() {

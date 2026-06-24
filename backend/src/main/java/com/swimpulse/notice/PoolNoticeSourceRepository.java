@@ -26,4 +26,6 @@ public interface PoolNoticeSourceRepository extends JpaRepository<PoolNoticeSour
 	);
 
 	boolean existsByPoolAndStatus(Pool pool, NoticeSourceStatus status);
+
+	long countByStatus(NoticeSourceStatus status);
 }

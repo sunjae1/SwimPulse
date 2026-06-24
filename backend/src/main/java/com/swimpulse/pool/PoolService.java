@@ -173,6 +173,11 @@ public class PoolService {
 
 	@Transactional
 	public PoolResponse createFromLocationCandidate(CreatePoolFromLocationCandidateRequest request) {
+		return PoolResponse.from(createPoolFromLocationCandidatePool(request));
+	}
+
+	@Transactional
+	public Pool createPoolFromLocationCandidatePool(CreatePoolFromLocationCandidateRequest request) {
 		String title = normalizeRequired(request.title(), "title");
 		String roadAddress = normalizeBlankToNull(request.roadAddress());
 		String address = normalizeBlankToNull(request.address());
@@ -194,7 +199,7 @@ public class PoolService {
 		Pool existing = locationService.findMatchingPool(title, roadAddress, address, latitude, longitude);
 		if (existing != null) {
 			log.info("Location candidate matched existing pool. poolId={} title={}", existing.getId(), title);
-			return PoolResponse.from(existing);
+			return existing;
 		}
 
 		Pool created = Pool.fromLocationCandidate(
@@ -209,7 +214,7 @@ public class PoolService {
 		Pool saved = poolRepository.save(created);
 		log.info("Pool created from location candidate. poolId={} title={} hasHomepage={}",
 				saved.getId(), title, hasText(candidateHomepageUrl));
-		return PoolResponse.from(saved);
+		return saved;
 	}
 
 	@Transactional
@@ -232,6 +237,13 @@ public class PoolService {
 	}
 
 	@Transactional
+	public HomepageEnrichmentResult enrichHomepage(Long poolId) {
+		Pool pool = poolRepository.findById(poolId)
+				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
+		return enrichHomepage(pool);
+	}
+
+	@Transactional
 	public HomepageEnrichmentResponse reverifyHomepages(Integer limit) {
 		int normalizedLimit = normalizeLimit(limit == null ? 50 : limit);
 		log.info("Homepage reverification started. limit={}", normalizedLimit);
@@ -249,6 +261,16 @@ public class PoolService {
 				countByStatus(results, HomepageEnrichmentStatus.NEEDS_REVIEW),
 				countByStatus(results, HomepageEnrichmentStatus.FAILED));
 		return HomepageEnrichmentResponse.from(results);
+	}
+
+	@Transactional
+	public HomepageEnrichmentResult reverifyHomepage(Long poolId) {
+		Pool pool = poolRepository.findById(poolId)
+				.orElseThrow(() -> new NotFoundException("Pool not found: " + poolId));
+		if (!hasText(pool.getHomepageUrl())) {
+			return enrichHomepage(pool);
+		}
+		return reverifyHomepage(pool);
 	}
 
 	@Transactional

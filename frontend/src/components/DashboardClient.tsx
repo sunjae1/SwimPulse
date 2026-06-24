@@ -96,7 +96,7 @@ export function DashboardClient({
   initialLoginError = false,
 }: DashboardClientProps) {
   const [apiReachable, setApiReachable] = useState(initialData.apiReachable);
-  const [allPools, setAllPools] = useState<Pool[]>(initialData.pools);
+  const [allPools] = useState<Pool[]>(initialData.pools);
   const [pools, setPools] = useState<Pool[]>(initialData.pools);
   const [nearbyMode, setNearbyMode] = useState(false);
   const [nearbyDistances, setNearbyDistances] = useState<Record<number, number>>({});
@@ -379,10 +379,8 @@ export function DashboardClient({
     setNotice(null);
     try {
       const created = await createPoolFromLocationCandidate(candidateToAdd);
-      setAllPools((items) => upsertPool(items, created));
-      setPools((items) => upsertPool(items, created));
       setFacilityCandidates((items) => items.filter((item) => item.title !== candidateToAdd.title));
-      setNotice(`${created.name} 시설을 DB에 추가했습니다.`);
+      setNotice(`${created.title} 시설 추가 요청을 관리자에게 보냈습니다. 승인 후 수영장 목록에 반영됩니다.`);
       setCandidateToAdd(null);
     } catch (error) {
       setNotice(getErrorMessage(error, "시설 추가에 실패했습니다."));
@@ -1880,7 +1878,7 @@ function CandidateConfirmModal({
               disabled={busy}
               type="button"
             >
-              DB에 추가
+              추가 요청
             </button>
           </div>
         </div>
@@ -2327,14 +2325,6 @@ function toDistanceMap(items: NearbyPool[]) {
     accumulator[item.pool.id] = item.distanceMeters;
     return accumulator;
   }, {});
-}
-
-function upsertPool(items: Pool[], pool: Pool) {
-  const exists = items.some((item) => item.id === pool.id);
-  if (exists) {
-    return items.map((item) => (item.id === pool.id ? pool : item));
-  }
-  return [pool, ...items].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
 function buildSubscriptionTitle(notice: PoolNotice, period: NoticeRegistrationPeriod) {

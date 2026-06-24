@@ -2,6 +2,8 @@ package com.swimpulse.user;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -26,6 +28,10 @@ public class AppUser {
 
 	@Column(nullable = false)
 	private boolean notificationEnabled;
+
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 20)
+	private AppUserRole role = AppUserRole.USER;
 
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
@@ -69,6 +75,10 @@ public class AppUser {
 
 	public boolean isNotificationEnabled() {
 		return notificationEnabled;
+	}
+
+	public AppUserRole getRole() {
+		return role == null ? AppUserRole.USER : role;
 	}
 
 	public Instant getCreatedAt() {

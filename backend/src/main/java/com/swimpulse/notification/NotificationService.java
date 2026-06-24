@@ -15,8 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Page;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -315,16 +315,63 @@ public class NotificationService {
 	}
 
 	@Transactional
+	public NotificationResponse requeueFailed(Long notificationId) {
+		Notification notification = notificationRepository.findById(notificationId)
+				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
+		if (notification.getStatus() != NotificationStatus.FAILED) {
+			throw new BadRequestException("Only FAILED notifications can be manually requeued.");
+		}
+		notification.markQueued();
+		queuePublisher.publishAfterCommit(notificationId);
+		meterRegistry.counter("swimpulse.notification.queue.requeued", "reason", "admin_failed").increment();
+		log.info("Failed notification manually requeued. notificationId={} attempts={}", notificationId, notification.getAttempts());
+		return NotificationResponse.from(notification);
+	}
+
+	@Transactional(readOnly = true)
+	public List<NotificationResponse> findFailed(int limit) {
+		int normalizedLimit = Math.max(1, Math.min(limit, 50));
+		return notificationRepository.findByStatusOrderByCreatedAtDesc(
+						NotificationStatus.FAILED,
+						PageRequest.of(0, normalizedLimit)
+				)
+				.stream()
+				.map(NotificationResponse::from)
+				.toList();
+	}
+
+	@Transactional
 	public int requeueStaleSending(Duration staleTimeout) {
 		Instant cutoff = Instant.now().minus(staleTimeout);
 		List<Notification> staleNotifications = notificationRepository
-				.findTop50ByStatusAndProcessingStartedAtBeforeOrderByProcessingStartedAtAsc(NotificationStatus.SENDING, cutoff);
+				.findStaleByStatus(NotificationStatus.SENDING, cutoff, PageRequest.of(0, 50));
 		for (Notification notification : staleNotifications) {
 			Instant processingStartedAt = notification.getProcessingStartedAt();
 			notification.markQueued();
 			queuePublisher.publishAfterCommit(notification.getId());
 			meterRegistry.counter("swimpulse.notification.queue.requeued", "reason", "stale_sending").increment();
 			log.warn("Stale sending notification requeued. notificationId={} processingStartedAt={} attempts={}",
+					notification.getId(), processingStartedAt, notification.getAttempts());
+		}
+		return staleNotifications.size();
+	}
+
+	@Transactional
+	public int requeueStaleSending(Duration staleTimeout, int limit) {
+		int normalizedLimit = Math.max(1, Math.min(limit, 50));
+		Instant cutoff = Instant.now().minus(staleTimeout);
+		List<Notification> staleNotifications = notificationRepository
+				.findStaleByStatus(
+						NotificationStatus.SENDING,
+						cutoff,
+						PageRequest.of(0, normalizedLimit)
+				);
+		for (Notification notification : staleNotifications) {
+			Instant processingStartedAt = notification.getProcessingStartedAt();
+			notification.markQueued();
+			queuePublisher.publishAfterCommit(notification.getId());
+			meterRegistry.counter("swimpulse.notification.queue.requeued", "reason", "admin_stale_sending").increment();
+			log.warn("Stale sending notification manually requeued. notificationId={} processingStartedAt={} attempts={}",
 					notification.getId(), processingStartedAt, notification.getAttempts());
 		}
 		return staleNotifications.size();

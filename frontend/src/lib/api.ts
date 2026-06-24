@@ -1,5 +1,11 @@
 import type {
   AppUser,
+  AdminDashboard,
+  AdminActionResponse,
+  AdminActionLog,
+  AdminActionResultStatus,
+  AdminOperationsDashboard,
+  AdminServiceDashboard,
   DashboardInitialData,
   DeviceRegistration,
   GeocodedLocation,
@@ -10,6 +16,7 @@ import type {
   NotificationPage,
   NoticeScanResponse,
   Pool,
+  PoolAddRequest,
   PoolLocationCandidate,
   RegistrationEvent,
   Subscription,
@@ -212,6 +219,37 @@ export async function getMe(): Promise<AppUser> {
   return request<AppUser>("/api/me");
 }
 
+export async function getAdminDashboard(): Promise<AdminDashboard> {
+  return request<AdminDashboard>("/api/admin/dashboard");
+}
+
+export async function getAdminOperationsDashboard(): Promise<AdminOperationsDashboard> {
+  return request<AdminOperationsDashboard>("/api/admin/dashboard/operations");
+}
+
+export async function getAdminServiceDashboard(): Promise<AdminServiceDashboard> {
+  return request<AdminServiceDashboard>("/api/admin/dashboard/service");
+}
+
+export async function getAdminActionLogs(options: {
+  actionType?: string;
+  resultStatus?: AdminActionResultStatus;
+  limit?: number;
+} = {}): Promise<AdminActionLog[]> {
+  const params = new URLSearchParams();
+  if (options.actionType) {
+    params.set("actionType", options.actionType);
+  }
+  if (options.resultStatus) {
+    params.set("resultStatus", options.resultStatus);
+  }
+  if (options.limit) {
+    params.set("limit", options.limit.toString());
+  }
+  const query = params.toString();
+  return request<AdminActionLog[]>(`/api/admin/action-logs${query ? `?${query}` : ""}`);
+}
+
 export async function getMyPage(): Promise<MyPageData> {
   return request<MyPageData>("/api/my-page");
 }
@@ -281,17 +319,67 @@ export async function reverseGeocodeLocation(latitude: number, longitude: number
   return request<GeocodedLocation>(`/api/locations/reverse-geocode?${params.toString()}`);
 }
 
-export async function createPoolFromLocationCandidate(candidate: PoolLocationCandidate): Promise<Pool> {
-  return request<Pool>("/api/pools/from-location-candidate", {
+export async function createPoolFromLocationCandidate(candidate: PoolLocationCandidate): Promise<PoolAddRequest> {
+  return request<PoolAddRequest>("/api/pools/from-location-candidate", {
     method: "POST",
     body: JSON.stringify({
       title: candidate.title,
+      category: candidate.category,
       address: candidate.address,
       roadAddress: candidate.roadAddress,
       link: candidate.link,
       latitude: candidate.latitude,
       longitude: candidate.longitude,
     }),
+  });
+}
+
+export async function adminRequeueFailedNotification(notificationId: number): Promise<InAppNotification> {
+  return request<InAppNotification>(`/api/admin/notifications/${notificationId}/requeue`, {
+    method: "POST",
+  });
+}
+
+export async function adminRequeueStaleNotifications(limit = 50): Promise<AdminActionResponse> {
+  return request<AdminActionResponse>(`/api/admin/notifications/requeue-stale?limit=${limit}`, {
+    method: "POST",
+  });
+}
+
+export async function adminApprovePoolAddRequest(requestId: number): Promise<PoolAddRequest> {
+  return request<PoolAddRequest>(`/api/admin/pool-add-requests/${requestId}/approve`, {
+    method: "POST",
+  });
+}
+
+export async function adminRejectPoolAddRequest(requestId: number, reason = ""): Promise<PoolAddRequest> {
+  return request<PoolAddRequest>(`/api/admin/pool-add-requests/${requestId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function adminPostprocessPoolAddRequest(requestId: number): Promise<unknown> {
+  return request<unknown>(`/api/admin/pool-add-requests/${requestId}/postprocess`, {
+    method: "POST",
+  });
+}
+
+export async function adminPostprocessPoolAddRequestHomepage(requestId: number): Promise<unknown> {
+  return request<unknown>(`/api/admin/pool-add-requests/${requestId}/postprocess/homepage`, {
+    method: "POST",
+  });
+}
+
+export async function adminPostprocessPoolAddRequestImage(requestId: number): Promise<unknown> {
+  return request<unknown>(`/api/admin/pool-add-requests/${requestId}/postprocess/image`, {
+    method: "POST",
+  });
+}
+
+export async function adminPostprocessPoolAddRequestNotices(requestId: number): Promise<unknown> {
+  return request<unknown>(`/api/admin/pool-add-requests/${requestId}/postprocess/notices`, {
+    method: "POST",
   });
 }
 

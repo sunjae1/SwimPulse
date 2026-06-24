@@ -26,15 +26,18 @@ public class PoolController {
 	private final PoolService poolService;
 	private final PoolGeocodingService poolGeocodingService;
 	private final EventService eventService;
+	private final PoolAddRequestService poolAddRequestService;
 
 	public PoolController(
 			PoolService poolService,
 			PoolGeocodingService poolGeocodingService,
-			EventService eventService
+			EventService eventService,
+			PoolAddRequestService poolAddRequestService
 	) {
 		this.poolService = poolService;
 		this.poolGeocodingService = poolGeocodingService;
 		this.eventService = eventService;
+		this.poolAddRequestService = poolAddRequestService;
 	}
 
 	@GetMapping
@@ -86,13 +89,13 @@ public class PoolController {
 
 	@PostMapping("/from-location-candidate")
 	@ResponseStatus(HttpStatus.CREATED)
-	public PoolResponse createFromLocationCandidate(
+	public PoolAddRequestResponse createFromLocationCandidate(
 			@AuthenticationPrincipal AuthenticatedUser user,
 			@Valid @RequestBody CreatePoolFromLocationCandidateRequest request
 	) {
-		log.info("Pool creation from location candidate requested. userId={} title={}",
+		log.info("Pool add request from location candidate requested. userId={} title={}",
 				user.id(), request.title());
-		return poolService.createFromLocationCandidate(request);
+		return poolAddRequestService.create(user.id(), request);
 	}
 
 	@PostMapping("/homepages/enrich")

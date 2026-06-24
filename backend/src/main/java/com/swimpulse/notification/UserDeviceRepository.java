@@ -12,4 +12,6 @@ public interface UserDeviceRepository extends JpaRepository<UserDevice, Long> {
 	boolean existsByUser_IdAndEnabledTrue(Long userId);
 
 	long countByUser_IdAndEnabledTrue(Long userId);
+
+	long countByEnabledTrue();
 }

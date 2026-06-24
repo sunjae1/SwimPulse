@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface RegistrationEventRepository extends JpaRepository<RegistrationEvent, Long> {
 	long countByNoticeRegistrationPeriodIsNotNull();
 
+	long countByStatus(EventStatus status);
+
 	List<RegistrationEvent> findAllByOrderByRegistrationStartsAtAsc();
 
 	List<RegistrationEvent> findByPool_IdOrderByRegistrationStartsAtAsc(Long poolId);

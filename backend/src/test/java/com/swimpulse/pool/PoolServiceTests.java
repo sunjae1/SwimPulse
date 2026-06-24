@@ -67,6 +67,7 @@ class PoolServiceTests {
 
 		PoolResponse response = poolService.createFromLocationCandidate(new CreatePoolFromLocationCandidateRequest(
 				"소사국민체육센터",
+				null,
 				"경기도 부천시 소사구 소사로 108",
 				"경기도 부천시 소사구 소사로 108",
 				"https://www.best.or.kr/fmcs/44",
@@ -88,6 +89,7 @@ class PoolServiceTests {
 
 		PoolResponse response = poolService.createFromLocationCandidate(new CreatePoolFromLocationCandidateRequest(
 				"홈페이지 없는 체육센터",
+				null,
 				"경기도 부천시 원미구 예시로 1",
 				"경기도 부천시 원미구 예시로 1",
 				null,
@@ -116,6 +118,7 @@ class PoolServiceTests {
 
 		PoolResponse response = poolService.createFromLocationCandidate(new CreatePoolFromLocationCandidateRequest(
 				"기존 체육센터",
+				null,
 				"경기도 부천시 원미구 기존로 1",
 				"경기도 부천시 원미구 기존로 1",
 				"https://new.example.com",

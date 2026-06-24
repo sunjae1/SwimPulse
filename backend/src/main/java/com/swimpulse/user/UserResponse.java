@@ -8,6 +8,7 @@ public record UserResponse(
 		String displayName,
 		String profileImageUrl,
 		boolean notificationEnabled,
+		AppUserRole role,
 		boolean fcmTokenRegistered,
 		Instant createdAt,
 		Instant lastLoginAt
@@ -23,6 +24,7 @@ public record UserResponse(
 				user.getDisplayName(),
 				user.getProfileImageUrl(),
 				user.isNotificationEnabled(),
+				user.getRole(),
 				fcmTokenRegistered,
 				user.getCreatedAt(),
 				user.getLastLoginAt()

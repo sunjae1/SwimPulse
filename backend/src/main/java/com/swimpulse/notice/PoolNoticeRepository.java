@@ -11,6 +11,10 @@ public interface PoolNoticeRepository extends JpaRepository<PoolNotice, Long> {
 
 	long countByPeriodsMigrationErrorIsNotNull();
 
+	long countByOcrStatus(NoticeOcrStatus ocrStatus);
+
+	long countByExtractionStatus(NoticeExtractionStatus extractionStatus);
+
 	Optional<PoolNotice> findByUrl(String url);
 
 	List<PoolNotice> findByPool_IdOrderByIdAsc(Long poolId);

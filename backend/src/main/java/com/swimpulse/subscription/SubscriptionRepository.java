@@ -23,4 +23,31 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Long
 	@Modifying
 	@Query("delete from Subscription subscription where subscription.user.id = :userId and subscription.event.id = :eventId")
 	int deleteByUserIdAndEventId(@Param("userId") Long userId, @Param("eventId") Long eventId);
+
+	@Query("""
+			select subscription.pool.id as poolId,
+			       subscription.pool.name as poolName,
+			       count(subscription.id) as subscriptionCount
+			from Subscription subscription
+			where subscription.event is not null
+			group by subscription.pool.id, subscription.pool.name
+			order by count(subscription.id) desc, subscription.pool.name asc
+			""")
+	List<PoolSubscriptionRankingProjection> findPoolSubscriptionRankings(org.springframework.data.domain.Pageable pageable);
+
+	@Query("""
+			select case
+			           when subscription.pool.district is null or subscription.pool.district = '' then '지역 미지정'
+			           else subscription.pool.district
+			       end as district,
+			       count(subscription.id) as subscriptionCount
+			from Subscription subscription
+			where subscription.event is not null
+			group by case
+			           when subscription.pool.district is null or subscription.pool.district = '' then '지역 미지정'
+			           else subscription.pool.district
+			       end
+			order by count(subscription.id) desc
+			""")
+	List<DistrictSubscriptionRankingProjection> findDistrictSubscriptionRankings(org.springframework.data.domain.Pageable pageable);
 }

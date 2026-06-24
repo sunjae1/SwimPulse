@@ -28,6 +28,7 @@ public class SecurityConfig {
 						.requestMatchers(HttpMethod.GET, "/api/pools", "/api/pools/nearby", "/api/events").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/pools/location-candidates").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/locations/search", "/api/locations/geocode", "/api/locations/reverse-geocode").permitAll()
+						.requestMatchers("/api/admin/**").hasRole("ADMIN")
 						.requestMatchers("/api/**").authenticated()
 						.anyRequest().permitAll()
 				)

@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -34,7 +35,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 				UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
 						user,
 						null,
-						List.of()
+						List.of(new SimpleGrantedAuthority("ROLE_" + user.role()))
 				);
 				SecurityContextHolder.getContext().setAuthentication(authentication);
 			}, () -> log.debug("JWT cookie rejected. method={} uri={}", request.getMethod(), request.getRequestURI()));

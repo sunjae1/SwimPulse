@@ -1151,6 +1151,7 @@ function EventStatusBadge({ status }: { status: EventStatus }) {
 function NotificationStatusBadge({ status }: { status: NotificationStatus }) {
   const className = {
     QUEUED: "bg-[#fff2e2] text-[#946123]",
+    SENDING: "bg-[#e8f5fb] text-[#075985]",
     SENT: "bg-[#edf7f5] text-[#0f766e]",
     FAILED: "bg-[#fff0ed] text-[#bf4b3e]",
   }[status];

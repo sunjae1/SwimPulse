@@ -47,6 +47,7 @@ public class JwtService {
 				.expiresAt(now.plus(expiration))
 				.claim("email", user.getEmail())
 				.claim("display_name", user.getDisplayName())
+				.claim("role", user.getRole().name())
 				.build();
 		return jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
 	}
@@ -57,11 +58,17 @@ public class JwtService {
 			return Optional.of(new AuthenticatedUser(
 					Long.valueOf(jwt.getSubject()),
 					jwt.getClaimAsString("email"),
-					jwt.getClaimAsString("display_name")
+					jwt.getClaimAsString("display_name"),
+					role(jwt)
 			));
 		} catch (RuntimeException exception) {
 			return Optional.empty();
 		}
+	}
+
+	private String role(Jwt jwt) {
+		String role = jwt.getClaimAsString("role");
+		return role == null || role.isBlank() ? "USER" : role;
 	}
 
 	private SecretKey secretKey(byte[] secret) {
