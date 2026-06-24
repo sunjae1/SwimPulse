@@ -69,6 +69,7 @@ class MyPageServiceTests {
 						new EventResponse(
 								10L,
 								null,
+								null,
 								101L,
 								"강남스포츠센터 수영장",
 								"새벽반 모집",
@@ -86,6 +87,7 @@ class MyPageServiceTests {
 						null,
 						new EventResponse(
 								11L,
+								null,
 								null,
 								102L,
 								"마포구민체육센터 수영장",
@@ -140,7 +142,9 @@ class MyPageServiceTests {
 
 		when(userService.findUser(userId)).thenReturn(user);
 		when(subscriptionService.findByUser(userId)).thenReturn(subscriptions);
-		when(notificationService.findByUser(userId)).thenReturn(notifications);
+		when(notificationService.findRecentByUser(userId, 20)).thenReturn(notifications);
+		when(notificationService.countByUser(userId)).thenReturn(2L);
+		when(notificationService.countUnreadByUser(userId)).thenReturn(1L);
 		when(userDeviceRepository.countByUser_IdAndEnabledTrue(userId)).thenReturn(2L);
 
 		MyPageResponse response = myPageService.findMyPage(userId);

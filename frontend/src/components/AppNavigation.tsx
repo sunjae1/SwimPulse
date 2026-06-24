@@ -25,8 +25,8 @@ export function AppNavigation() {
             aria-current={active ? "page" : undefined}
             className={`inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-semibold transition ${
               active
-                ? "border-[#17201d] bg-[#17201d] text-white"
-                : "border-[#d8ddd5] bg-white text-[#31413b] hover:border-[#0f766e] hover:text-[#0f766e]"
+                ? "border-[#075985] bg-[#075985] text-white"
+                : "border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1]"
             }`}
           >
             {item.label}

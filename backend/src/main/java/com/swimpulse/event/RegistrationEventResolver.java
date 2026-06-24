@@ -31,9 +31,14 @@ public class RegistrationEventResolver {
 	}
 
 	public RegistrationEvent getOrCreate(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt) {
+		return getOrCreate(poolId, title, registrationStartsAt, registrationEndsAt, null);
+	}
+
+	public RegistrationEvent getOrCreate(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt, String noticeUrl) {
 		ensurePoolExists(poolId);
 		return findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
-				.orElseGet(() -> insertOrReuse(poolId, title, registrationStartsAt, registrationEndsAt));
+				.map(existing -> rememberNoticeUrl(existing, noticeUrl))
+				.orElseGet(() -> insertOrReuse(poolId, title, registrationStartsAt, registrationEndsAt, noticeUrl));
 	}
 
 	@Transactional
@@ -54,13 +59,14 @@ public class RegistrationEventResolver {
 						.orElseGet(() -> insertOrReuse(period, poolId, title)));
 	}
 
-	private RegistrationEvent insertOrReuse(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt) {
+	private RegistrationEvent insertOrReuse(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt, String noticeUrl) {
 		try {
-			return insertService.insert(poolId, title, registrationStartsAt, registrationEndsAt);
+			return insertService.insert(poolId, title, registrationStartsAt, registrationEndsAt, noticeUrl);
 		} catch (DataIntegrityViolationException exception) {
 			log.info("Concurrent registration event insert detected. Reusing existing row. poolId={} title={} startsAt={} endsAt={}",
 					poolId, title, registrationStartsAt, registrationEndsAt);
 			return insertService.findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
+					.map(existing -> rememberNoticeUrl(existing, noticeUrl))
 					.orElseThrow(() -> exception);
 		}
 	}
@@ -100,6 +106,11 @@ public class RegistrationEventResolver {
 			return event;
 		}
 		throw new BadRequestException("Registration event is already linked to another notice period.");
+	}
+
+	private RegistrationEvent rememberNoticeUrl(RegistrationEvent event, String noticeUrl) {
+		event.rememberNoticeUrl(noticeUrl);
+		return event;
 	}
 
 	private Optional<RegistrationEvent> findExisting(

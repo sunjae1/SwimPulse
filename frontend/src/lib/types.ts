@@ -114,6 +114,7 @@ export type NoticeScanResponse = {
 export type RegistrationEvent = {
   id: number;
   noticeRegistrationPeriodId: number | null;
+  noticeUrl: string | null;
   poolId: number;
   poolName: string;
   title: string;
@@ -160,6 +161,17 @@ export type InAppNotification = {
   createdAt: string;
   sentAt: string | null;
   readAt: string | null;
+};
+
+export type NotificationPage = {
+  content: InAppNotification[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  first: boolean;
+  last: boolean;
+  unreadElements: number;
 };
 
 export type DeviceRegistration = {

@@ -7,6 +7,7 @@ import type {
   LocationSearchCandidate,
   MyPageData,
   NearbyPool,
+  NotificationPage,
   NoticeScanResponse,
   Pool,
   PoolLocationCandidate,
@@ -115,6 +116,7 @@ const fallbackEvents: RegistrationEvent[] = [
   {
     id: 1,
     noticeRegistrationPeriodId: null,
+    noticeUrl: null,
     poolId: 1,
     poolName: "강남스포츠문화센터 수영장",
     title: "5월 신규회원 새벽반 접수",
@@ -127,6 +129,7 @@ const fallbackEvents: RegistrationEvent[] = [
   {
     id: 2,
     noticeRegistrationPeriodId: null,
+    noticeUrl: null,
     poolId: 2,
     poolName: "마포구민체육센터 수영장",
     title: "5월 구민 우선 접수",
@@ -139,6 +142,7 @@ const fallbackEvents: RegistrationEvent[] = [
   {
     id: 3,
     noticeRegistrationPeriodId: null,
+    noticeUrl: null,
     poolId: 3,
     poolName: "성동구립 용답체육센터",
     title: "평일 저녁반 잔여석 접수",
@@ -334,8 +338,13 @@ export async function deleteSubscription(eventId: number): Promise<void> {
   });
 }
 
+export async function getNotificationPage(page = 0, size = 20): Promise<NotificationPage> {
+  return request<NotificationPage>(`/api/notifications?page=${page}&size=${size}`);
+}
+
 export async function getNotifications(): Promise<InAppNotification[]> {
-  return request<InAppNotification[]>("/api/notifications");
+  const page = await getNotificationPage();
+  return page.content;
 }
 
 export async function markNotificationRead(notificationId: number): Promise<InAppNotification> {

@@ -4,7 +4,7 @@ public record MyPageMetrics(
 		int subscriptionCount,
 		long upcomingSubscriptionCount,
 		long openSubscriptionCount,
-		int notificationCount,
+		long notificationCount,
 		long unreadNotificationCount,
 		long activeDeviceCount
 ) {

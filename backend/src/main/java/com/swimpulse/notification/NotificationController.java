@@ -2,7 +2,6 @@ package com.swimpulse.notification;
 
 import com.swimpulse.auth.AuthenticatedUser;
 import jakarta.validation.Valid;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -29,9 +28,13 @@ public class NotificationController {
 	}
 
 	@GetMapping
-	public List<NotificationResponse> findNotifications(@AuthenticationPrincipal AuthenticatedUser user) {
-		log.info("Notifications requested. userId={}", user.id());
-		return notificationService.findByUser(user.id());
+	public NotificationPageResponse findNotifications(
+			@AuthenticationPrincipal AuthenticatedUser user,
+			@RequestParam(required = false) Integer page,
+			@RequestParam(required = false) Integer size
+	) {
+		log.info("Notifications requested. userId={} page={} size={}", user.id(), page, size);
+		return notificationService.findByUser(user.id(), page, size);
 	}
 
 	@PatchMapping("/{notificationId}/read")

@@ -21,10 +21,24 @@ self.addEventListener("push", (event) => {
   const notificationId = data.notificationId;
   const eventId = data.eventId;
   const poolId = data.poolId;
+  const noticeUrl = data.noticeUrl;
   const targetUrl = notificationId ? `/?notificationId=${notificationId}` : "/";
   const title = notification.title ?? data.title ?? titleForType(type);
   const body = notification.body ?? data.body ?? "새 알림이 도착했습니다.";
   const badgeText = type === "REGISTRATION_REMINDER" ? "곧 시작" : "접수 시작";
+  const actions = [
+    {
+      action: "open",
+      title: "알림 보기",
+    },
+  ];
+
+  if (noticeUrl) {
+    actions.push({
+      action: "source",
+      title: "원문 보기",
+    });
+  }
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -39,14 +53,10 @@ self.addEventListener("push", (event) => {
         notificationId,
         eventId,
         poolId,
+        noticeUrl,
         url: targetUrl,
       },
-      actions: [
-        {
-          action: "open",
-          title: "알림 보기",
-        },
-      ],
+      actions,
       vibrate: [80, 40, 80],
     }),
   );
@@ -54,6 +64,11 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
+  if (event.action === "source" && event.notification.data?.noticeUrl) {
+    event.waitUntil(clients.openWindow(event.notification.data.noticeUrl));
+    return;
+  }
 
   const targetUrl = event.notification.data?.url ?? "/";
 

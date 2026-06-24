@@ -39,6 +39,9 @@ public class RegistrationEvent {
 	@JoinColumn(name = "notice_registration_period_id", unique = true)
 	private NoticeRegistrationPeriodEntity noticeRegistrationPeriod;
 
+	@Column(length = 1000)
+	private String noticeUrl;
+
 	@Column(nullable = false, length = 120)
 	private String title;
 
@@ -68,12 +71,17 @@ public class RegistrationEvent {
 	}
 
 	public RegistrationEvent(Pool pool, String title, Instant registrationStartsAt, Instant registrationEndsAt, EventStatus status) {
-		this(pool, null, title, registrationStartsAt, registrationEndsAt, status);
+		this(pool, null, null, title, registrationStartsAt, registrationEndsAt, status);
+	}
+
+	public RegistrationEvent(Pool pool, String noticeUrl, String title, Instant registrationStartsAt, Instant registrationEndsAt, EventStatus status) {
+		this(pool, null, noticeUrl, title, registrationStartsAt, registrationEndsAt, status);
 	}
 
 	public RegistrationEvent(
 			Pool pool,
 			NoticeRegistrationPeriodEntity noticeRegistrationPeriod,
+			String noticeUrl,
 			String title,
 			Instant registrationStartsAt,
 			Instant registrationEndsAt,
@@ -81,6 +89,7 @@ public class RegistrationEvent {
 	) {
 		this.pool = pool;
 		this.noticeRegistrationPeriod = noticeRegistrationPeriod;
+		this.noticeUrl = truncate(noticeUrl, 1000);
 		this.title = title;
 		this.registrationStartsAt = registrationStartsAt;
 		this.registrationEndsAt = registrationEndsAt;
@@ -122,6 +131,16 @@ public class RegistrationEvent {
 		this.noticeRegistrationPeriod = noticeRegistrationPeriod;
 	}
 
+	public void rememberNoticeUrl(String noticeUrl) {
+		if (this.noticeUrl == null || this.noticeUrl.isBlank()) {
+			this.noticeUrl = truncate(noticeUrl, 1000);
+		}
+	}
+
+	public String getNoticeUrl() {
+		return noticeUrl;
+	}
+
 	public String getTitle() {
 		return title;
 	}
@@ -144,5 +163,12 @@ public class RegistrationEvent {
 
 	public boolean isStartQueued() {
 		return startQueued;
+	}
+
+	private String truncate(String value, int maxLength) {
+		if (value == null) {
+			return null;
+		}
+		return value.length() <= maxLength ? value : value.substring(0, maxLength);
 	}
 }

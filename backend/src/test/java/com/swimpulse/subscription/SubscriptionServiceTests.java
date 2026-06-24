@@ -69,6 +69,7 @@ class SubscriptionServiceTests {
 
 		RegistrationEvent currentEvent = new RegistrationEvent(
 				pool,
+				"https://example.com/source-notice",
 				"새벽반 모집",
 				Instant.now().plus(1, ChronoUnit.DAYS),
 				Instant.now().plus(1, ChronoUnit.DAYS).plus(2, ChronoUnit.HOURS),
@@ -83,6 +84,7 @@ class SubscriptionServiceTests {
 		Instant newEndsAt = newStartsAt.plus(3, ChronoUnit.HOURS);
 		RegistrationEvent newEvent = new RegistrationEvent(
 				pool,
+				"https://example.com/source-notice",
 				"오후반 모집",
 				newStartsAt,
 				newEndsAt,
@@ -95,7 +97,8 @@ class SubscriptionServiceTests {
 				101L,
 				"오후반 모집",
 				newStartsAt,
-				newEndsAt
+				newEndsAt,
+				"https://example.com/source-notice"
 		)).thenReturn(newEvent);
 		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 31L)).thenReturn(Optional.empty());
 
@@ -107,6 +110,7 @@ class SubscriptionServiceTests {
 
 		assertEquals(31L, response.event().id());
 		assertEquals("오후반 모집", response.event().title());
+		assertEquals("https://example.com/source-notice", response.event().noticeUrl());
 		assertEquals(newStartsAt, response.event().registrationStartsAt());
 		assertEquals(newEndsAt, response.event().registrationEndsAt());
 		assertSame(subscription.getEvent().getPool(), pool);
@@ -141,6 +145,7 @@ class SubscriptionServiceTests {
 		RegistrationEvent event = new RegistrationEvent(
 				pool,
 				period,
+				null,
 				"신규 회원 - 7월 신규 회원 모집",
 				startsAt,
 				endsAt,
@@ -248,7 +253,8 @@ class SubscriptionServiceTests {
 				101L,
 				"오후반 모집",
 				targetEvent.getRegistrationStartsAt(),
-				targetEvent.getRegistrationEndsAt()
+				targetEvent.getRegistrationEndsAt(),
+				null
 		)).thenReturn(targetEvent);
 		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 41L)).thenReturn(Optional.of(existing));
 

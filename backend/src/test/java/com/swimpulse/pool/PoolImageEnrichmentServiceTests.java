@@ -57,7 +57,7 @@ class PoolImageEnrichmentServiceTests {
 	}
 
 	@Test
-	void enrichUsesFaviconWhenRepresentativeCandidatesAreNotImages() {
+	void enrichUsesDefaultImageWhenRepresentativeCandidatesAreNotImages() {
 		FakePoolImagePageClient client = new FakePoolImagePageClient("""
 				<html>
 				  <head>
@@ -78,12 +78,13 @@ class PoolImageEnrichmentServiceTests {
 		PoolImageEnrichmentResult result = service.enrich(pool);
 
 		assertEquals(PoolImageEnrichmentStatus.UPDATED, result.status());
-		assertEquals("https://center.example.com/favicon.ico", result.imageUrl());
-		assertEquals("favicon:icon", result.source());
+		assertEquals("/swimpulse-pool-shark.png", result.imageUrl());
+		assertEquals("default:shark-logo", result.source());
+		assertEquals(List.of("https://center.example.com/notice"), client.probedUrls);
 	}
 
 	@Test
-	void enrichSkipsHomepageBannerImagesAndUsesFavicon() {
+	void enrichSkipsHomepageBannerImagesAndUsesDefaultImage() {
 		FakePoolImagePageClient client = new FakePoolImagePageClient("""
 				<html>
 				  <head><link rel="icon" href="/favicon.ico"></head>
@@ -104,13 +105,13 @@ class PoolImageEnrichmentServiceTests {
 		PoolImageEnrichmentResult result = service.enrich(pool);
 
 		assertEquals(PoolImageEnrichmentStatus.UPDATED, result.status());
-		assertEquals("https://center.example.com/favicon.ico", result.imageUrl());
-		assertEquals("favicon:icon", result.source());
-		assertEquals(List.of("https://center.example.com/favicon.ico"), client.probedUrls);
+		assertEquals("/swimpulse-pool-shark.png", result.imageUrl());
+		assertEquals("default:shark-logo", result.source());
+		assertEquals(List.of(), client.probedUrls);
 	}
 
 	@Test
-	void enrichSkipsYoutubeThumbnailsAndUsesFavicon() {
+	void enrichSkipsYoutubeThumbnailsAndUsesDefaultImage() {
 		FakePoolImagePageClient client = new FakePoolImagePageClient("""
 				<html>
 				  <head><link rel="icon" href="/favicon.ico"></head>
@@ -133,9 +134,9 @@ class PoolImageEnrichmentServiceTests {
 		PoolImageEnrichmentResult result = service.enrich(pool);
 
 		assertEquals(PoolImageEnrichmentStatus.UPDATED, result.status());
-		assertEquals("https://center.example.com/favicon.ico", result.imageUrl());
-		assertEquals("favicon:icon", result.source());
-		assertEquals(List.of("https://center.example.com/favicon.ico"), client.probedUrls);
+		assertEquals("/swimpulse-pool-shark.png", result.imageUrl());
+		assertEquals("default:shark-logo", result.source());
+		assertEquals(List.of(), client.probedUrls);
 	}
 
 	@Test

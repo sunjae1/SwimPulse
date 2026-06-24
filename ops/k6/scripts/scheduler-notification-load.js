@@ -17,7 +17,10 @@ const failureLogLimitPerVu = Number(__ENV.FAILURE_LOG_LIMIT_PER_VU || '3');
 
 const validResponseRate = new Rate('scheduler_notification_valid_response');
 const tickDuration = new Trend('scheduler_notification_tick_duration');
+const totalDeliveryDuration = new Trend('scheduler_notification_total_delivery_duration');
 const totalNotificationCount = new Trend('scheduler_notification_count');
+const queuedNotificationCount = new Trend('scheduler_notification_queued_count');
+const sendingNotificationCount = new Trend('scheduler_notification_sending_count');
 const sentNotificationCount = new Trend('scheduler_notification_sent_count');
 const failedNotificationCount = new Trend('scheduler_notification_failed_count');
 const redisQueueLength = new Trend('scheduler_notification_redis_queue_length');
@@ -126,12 +129,15 @@ function getStatus(eventId) {
 
 function recordStatusMetrics(status) {
   totalNotificationCount.add(Number(status.notificationCount || 0), { run_label: runLabel });
+  queuedNotificationCount.add(Number(status.queuedCount || 0), { run_label: runLabel });
+  sendingNotificationCount.add(Number(status.sendingCount || 0), { run_label: runLabel });
   sentNotificationCount.add(Number(status.sentCount || 0), { run_label: runLabel });
   failedNotificationCount.add(Number(status.failedCount || 0), { run_label: runLabel });
   redisQueueLength.add(Number(status.redisQueueLength || 0), { run_label: runLabel });
 }
 
 export default function (data) {
+  const startedAt = Date.now();
   const tickResponse = http.post(
     `${baseUrl}/internal/loadtest/scheduler-notifications/tick?eventId=${encodeURIComponent(data.eventId)}`,
     null,
@@ -190,6 +196,7 @@ export default function (data) {
   const deliveredEnough =
     Number(finalStatus.sentCount || 0) + Number(finalStatus.failedCount || 0) >= data.expectedNotifications;
   const valid = createdEnough && (!waitForDelivery || deliveredEnough);
+  totalDeliveryDuration.add(Date.now() - startedAt, { run_label: runLabel });
   validResponseRate.add(valid, { run_label: runLabel });
   check(finalStatus, {
     'scheduler created expected notifications': () => createdEnough,

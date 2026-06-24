@@ -17,6 +17,8 @@ public record MyPageResponse(
 			UserResponse user,
 			List<SubscriptionResponse> subscriptions,
 			List<NotificationResponse> notifications,
+			long notificationCount,
+			long unreadNotificationCount,
 			long activeDeviceCount
 	) {
 		long upcomingSubscriptionCount = subscriptions.stream()
@@ -29,17 +31,13 @@ public record MyPageResponse(
 				.filter(Objects::nonNull)
 				.filter(event -> event.status() == EventStatus.OPEN)
 				.count();
-		long unreadNotificationCount = notifications.stream()
-				.filter(notification -> notification.readAt() == null)
-				.count();
-
 		return new MyPageResponse(
 				user,
 				new MyPageMetrics(
 						subscriptions.size(),
 						upcomingSubscriptionCount,
 						openSubscriptionCount,
-						notifications.size(),
+						notificationCount,
 						unreadNotificationCount,
 						activeDeviceCount
 				),

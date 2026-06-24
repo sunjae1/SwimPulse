@@ -126,12 +126,14 @@ public class SubscriptionService {
 
 		Subscription subscription = subscriptionRepository.findByIdAndUser_Id(subscriptionId, userId)
 				.orElseThrow(() -> new NotFoundException("Subscription not found."));
+		String sourceNoticeUrl = noticeUrl(subscription.getEvent());
 		String title = normalizeTitle(request.title());
 		RegistrationEvent event = eventResolver.getOrCreate(
 				subscription.getPool().getId(),
 				title,
 				request.registrationStartsAt(),
-				request.registrationEndsAt()
+				request.registrationEndsAt(),
+				sourceNoticeUrl
 		);
 
 		subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
@@ -168,5 +170,15 @@ public class SubscriptionService {
 			throw new BadRequestException("Subscription title is required.");
 		}
 		return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 120);
+	}
+
+	private String noticeUrl(RegistrationEvent event) {
+		if (event.getNoticeUrl() != null && !event.getNoticeUrl().isBlank()) {
+			return event.getNoticeUrl();
+		}
+		if (event.getNoticeRegistrationPeriod() == null || event.getNoticeRegistrationPeriod().getNotice() == null) {
+			return null;
+		}
+		return event.getNoticeRegistrationPeriod().getNotice().getUrl();
 	}
 }

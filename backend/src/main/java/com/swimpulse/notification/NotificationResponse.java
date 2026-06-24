@@ -45,7 +45,7 @@ public record NotificationResponse(
 	private static String noticeUrl(Notification notification) {
 		NoticeRegistrationPeriodEntity period = notification.getEvent().getNoticeRegistrationPeriod();
 		if (period == null || period.getNotice() == null) {
-			return null;
+			return notification.getEvent().getNoticeUrl();
 		}
 		return period.getNotice().getUrl();
 	}

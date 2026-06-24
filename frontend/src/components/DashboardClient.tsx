@@ -34,7 +34,7 @@ import {
   getEvents,
   getMe,
   getNearbyPools,
-  getNotifications,
+  getNotificationPage,
   getSubscriptions,
   getPoolLocationCandidates,
   logout,
@@ -57,6 +57,7 @@ import type {
   LocationSearchCandidate,
   NearbyPool,
   NoticeRegistrationPeriod,
+  NotificationPage,
   NoticeScanResponse,
   PoolNotice,
   Pool,
@@ -114,6 +115,8 @@ export function DashboardClient({
   const [currentDeviceRegistered, setCurrentDeviceRegistered] = useState(false);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [notificationTotalCount, setNotificationTotalCount] = useState(0);
+  const [unreadNotificationTotalCount, setUnreadNotificationTotalCount] = useState(0);
   const [notificationsLoaded, setNotificationsLoaded] = useState(false);
   const [statusFilter, setStatusFilter] = useState<EventStatus | "ALL">("ALL");
   const [noticeSubscriptionMode, setNoticeSubscriptionMode] = useState(false);
@@ -158,7 +161,14 @@ export function DashboardClient({
   );
   const openEvents = events.filter((event) => event.status === "OPEN").length;
   const upcomingEvents = events.filter((event) => event.status === "UPCOMING").length;
-  const unreadNotifications = notifications.filter((item) => !item.readAt).length;
+  const unreadNotifications = unreadNotificationTotalCount;
+
+  function applyNotificationPage(page: NotificationPage) {
+    setNotifications(page.content);
+    setNotificationTotalCount(page.totalElements);
+    setUnreadNotificationTotalCount(page.unreadElements);
+    setNotificationsLoaded(true);
+  }
 
   function clearSearchParam(key: string) {
     const nextParams = new URLSearchParams(window.location.search);
@@ -177,16 +187,15 @@ export function DashboardClient({
           return;
         }
         setUser(currentUser);
-        const [freshSubscriptions, freshNotifications, freshEvents] = await Promise.all([
+        const [freshSubscriptions, freshNotificationPage, freshEvents] = await Promise.all([
           getSubscriptions(),
-          getNotifications(),
+          getNotificationPage(),
           getEvents(),
         ]);
         const currentDevice = await getCurrentDeviceRegistration(getOrCreateDeviceId());
         if (!cancelled) {
           setSubscriptions(freshSubscriptions);
-          setNotifications(freshNotifications);
-          setNotificationsLoaded(true);
+          applyNotificationPage(freshNotificationPage);
           setEvents(freshEvents);
           setCurrentDeviceRegistered(currentDevice.registered);
           setApiReachable(true);
@@ -198,6 +207,8 @@ export function DashboardClient({
             setCurrentDeviceRegistered(false);
             setSubscriptions([]);
             setNotifications([]);
+            setNotificationTotalCount(0);
+            setUnreadNotificationTotalCount(0);
             setNotificationsLoaded(true);
             setApiReachable(true);
             return;
@@ -223,15 +234,14 @@ export function DashboardClient({
     setBusy(true);
     setNotice(null);
     try {
-      const [freshSubscriptions, freshNotifications, freshEvents] = await Promise.all([
+      const [freshSubscriptions, freshNotificationPage, freshEvents] = await Promise.all([
         getSubscriptions(),
-        getNotifications(),
+        getNotificationPage(),
         getEvents(),
       ]);
       const currentDevice = await getCurrentDeviceRegistration(getOrCreateDeviceId());
       setSubscriptions(freshSubscriptions);
-      setNotifications(freshNotifications);
-      setNotificationsLoaded(true);
+      applyNotificationPage(freshNotificationPage);
       setEvents(freshEvents);
       setCurrentDeviceRegistered(currentDevice.registered);
       setApiReachable(true);
@@ -440,6 +450,8 @@ export function DashboardClient({
       setCurrentDeviceRegistered(false);
       setSubscriptions([]);
       setNotifications([]);
+      setNotificationTotalCount(0);
+      setUnreadNotificationTotalCount(0);
       setNotice("로그아웃됐습니다.");
     } catch {
       setNotice("로그아웃 요청을 처리하지 못했습니다.");
@@ -567,7 +579,9 @@ export function DashboardClient({
     try {
       await registerCurrentDeviceForPush(user);
       const queued = await sendTestNotification();
-      setNotifications((items) => [queued, ...items]);
+      setNotifications((items) => [queued, ...items].slice(0, 20));
+      setNotificationTotalCount((count) => count + 1);
+      setUnreadNotificationTotalCount((count) => count + 1);
       setNotice("테스트 알림을 Redis 큐에 넣었습니다. 실제 브라우저 푸시는 Firebase 설정이 연결되어 있어야 도착합니다.");
       window.setTimeout(() => {
         refreshAll();
@@ -624,7 +638,11 @@ export function DashboardClient({
 
     try {
       const updated = await markNotificationRead(notificationId);
+      const wasUnread = notifications.some((item) => item.id === updated.id && !item.readAt);
       setNotifications((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      if (wasUnread && updated.readAt) {
+        setUnreadNotificationTotalCount((count) => Math.max(0, count - 1));
+      }
     } catch {
       setNotice("알림 읽음 처리를 완료하지 못했습니다.");
     }
@@ -637,7 +655,11 @@ export function DashboardClient({
     try {
       if (target && !target.readAt && user) {
         const updated = await markNotificationRead(target.id);
+        const wasUnread = notifications.some((item) => item.id === updated.id && !item.readAt);
         setNotifications((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+        if (wasUnread && updated.readAt) {
+          setUnreadNotificationTotalCount((count) => Math.max(0, count - 1));
+        }
       }
     } catch {
       setNotice("알림 읽음 처리를 완료하지 못했습니다.");
@@ -760,17 +782,17 @@ export function DashboardClient({
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f8f4] text-[#17201d]">
-      <div className="border-b border-[#d8ddd5] bg-white">
+    <main className="min-h-screen bg-[#edf7ff] text-[#102033]">
+      <div className="sticky top-0 z-30 border-b border-[#c8def0] bg-white/92 shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-5">
             <div className="flex items-center gap-3">
-              <div className="grid size-10 place-items-center rounded-lg bg-[#0f766e] text-white">
+              <div className="grid size-10 place-items-center rounded-lg bg-[#0369a1] text-white shadow-sm swim-pulse-dot">
                 <Waves size={22} aria-hidden />
               </div>
               <div>
-                <p className="text-sm font-semibold text-[#0f766e]">SwimPulse</p>
-                <h1 className="text-xl font-semibold">수영장 등록 타이밍 알림</h1>
+                <p className="text-sm font-semibold text-[#0369a1]">SwimPulse</p>
+                <h1 className="text-xl font-semibold text-[#102033]">수영장 등록 타이밍 알림</h1>
               </div>
             </div>
             <AppNavigation />
@@ -783,7 +805,7 @@ export function DashboardClient({
               </span>
             ) : null}
             <button
-              className="grid size-10 place-items-center rounded-lg border border-[#cdd5cf] bg-white text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:opacity-50"
+              className="swim-action grid size-10 place-items-center rounded-lg border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1] disabled:opacity-50"
               onClick={refreshAll}
               disabled={busy || !user}
               title="새로고침"
@@ -792,7 +814,7 @@ export function DashboardClient({
               <RefreshCw size={18} aria-hidden />
             </button>
             <button
-              className="grid size-10 place-items-center rounded-lg bg-[#bf4b3e] text-white transition hover:bg-[#a33f35] disabled:opacity-50"
+              className="swim-action grid size-10 place-items-center rounded-lg bg-[#0284c7] text-white hover:bg-[#0369a1] disabled:opacity-50"
               onClick={enablePush}
               disabled={busy || !user}
               title="웹 푸시 등록"
@@ -802,7 +824,7 @@ export function DashboardClient({
             </button>
             {user ? (
               <button
-                className="grid size-10 place-items-center rounded-lg border border-[#cdd5cf] bg-white text-[#31413b] transition hover:border-[#bf4b3e] hover:text-[#bf4b3e] disabled:opacity-50"
+                className="swim-action grid size-10 place-items-center rounded-lg border border-[#c8def0] bg-white text-[#28516f] hover:border-[#ef4444] hover:text-[#dc2626] disabled:opacity-50"
                 onClick={logoutUser}
                 disabled={busy}
                 title="로그아웃"
@@ -812,7 +834,7 @@ export function DashboardClient({
               </button>
             ) : (
               <button
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                className="swim-action inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#075985] px-4 text-sm font-semibold text-white hover:bg-[#0c4a6e] disabled:opacity-50"
                 onClick={loginWithGoogle}
                 disabled={busy}
                 type="button"
@@ -834,23 +856,25 @@ export function DashboardClient({
         onEnablePush={enablePush}
         busy={busy}
       />
+      <ServiceIntroPages user={user} onLogin={loginWithGoogle} busy={busy} />
 
-      <div id="pool-workspace" className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-6 lg:grid-cols-[1fr_360px]">
-        <section className="space-y-5">
+      <div id="pool-workspace" className="swim-workspace-shell border-t border-[#c8def0]">
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-8 lg:grid-cols-[1fr_360px]">
+        <section className="swim-rise space-y-5">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Metric icon={CalendarClock} label="예정 이벤트" value={upcomingEvents.toString()} tone="teal" />
+            <Metric icon={CalendarClock} label="예정 이벤트" value={upcomingEvents.toString()} tone="blue" />
             <Metric icon={TimerReset} label="진행 중" value={openEvents.toString()} tone="amber" />
-            <Metric icon={Bell} label="안 읽은 알림" value={unreadNotifications.toString()} tone="coral" />
+            <Metric icon={Bell} label="안 읽은 알림" value={unreadNotifications.toString()} tone="cyan" />
           </div>
 
           {!user ? (
-            <div className="flex flex-col gap-3 rounded-lg border border-[#d8ddd5] bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="swim-card-motion flex flex-col gap-3 rounded-lg border border-[#c8def0] bg-white px-4 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold">Google 로그인 필요</h2>
-                <p className="text-sm text-[#66746d]">구독, 앱 내 알림, 웹 푸시는 로그인한 사용자 기준으로 저장됩니다.</p>
+                <h2 className="text-lg font-semibold text-[#102033]">Google 로그인 필요</h2>
+                <p className="text-sm text-[#4b6f8b]">구독, 앱 내 알림, 웹 푸시는 로그인한 사용자 기준으로 저장됩니다.</p>
               </div>
               <button
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b]"
+                className="swim-action inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#075985] px-4 text-sm font-semibold text-white hover:bg-[#0c4a6e]"
                 onClick={loginWithGoogle}
                 type="button"
               >
@@ -860,11 +884,11 @@ export function DashboardClient({
             </div>
           ) : null}
 
-          <section className="rounded-lg border border-[#d8ddd5] bg-white">
-            <div className="flex flex-col gap-3 border-b border-[#e3e7e1] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-[#d9eaf6] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold">수영장 목록</h2>
-                <p className="text-sm text-[#66746d]">
+                <h2 className="text-lg font-semibold text-[#102033]">수영장 목록</h2>
+                <p className="text-sm text-[#4b6f8b]">
                   {nearbyMode && currentLocation
                     ? `${nearbyOriginLabel ?? "선택 위치"} 기준 가까운 10개`
                     : user
@@ -876,8 +900,8 @@ export function DashboardClient({
                 <button
                   className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition disabled:opacity-50 ${
                     nearbyMode
-                      ? "bg-[#17201d] text-white"
-                      : "border border-[#d8ddd5] bg-white text-[#31413b] hover:border-[#0f766e]"
+                      ? "bg-[#075985] text-white"
+                      : "border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7]"
                   }`}
                   onClick={loadNearbyPools}
                   disabled={busy}
@@ -888,7 +912,7 @@ export function DashboardClient({
                 </button>
                 {nearbyMode ? (
                   <button
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d8ddd5] bg-white px-3 text-sm font-medium text-[#31413b] transition hover:border-[#0f766e]"
+                    className="swim-action inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#c8def0] bg-white px-3 text-sm font-medium text-[#28516f] hover:border-[#0284c7]"
                     onClick={resetPoolList}
                     type="button"
                   >
@@ -901,8 +925,8 @@ export function DashboardClient({
                     key={status}
                     className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
                       statusFilter === status
-                        ? "bg-[#17201d] text-white"
-                        : "border border-[#d8ddd5] bg-white text-[#31413b] hover:border-[#0f766e]"
+                        ? "bg-[#075985] text-white"
+                        : "border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7]"
                     }`}
                     onClick={() => setStatusFilter(status)}
                     type="button"
@@ -913,14 +937,14 @@ export function DashboardClient({
               </div>
             </div>
 
-            <div className="border-b border-[#e3e7e1] px-4 py-4">
+            <div className="border-b border-[#d9eaf6] px-4 py-4">
               <form className="flex flex-col gap-2 sm:flex-row" onSubmit={submitLocationSearch}>
                 <label className="sr-only" htmlFor="location-search">
                   위치 검색
                 </label>
                 <input
                   id="location-search"
-                  className="h-10 min-w-0 flex-1 rounded-lg border border-[#cdd5cf] px-3 text-sm outline-none focus:border-[#0f766e]"
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-[#b8d7ec] px-3 text-sm outline-none transition focus:border-[#0284c7] focus:ring-3 focus:ring-[#bae6fd]"
                   value={locationQuery}
                   onChange={(event) => {
                     setLocationQuery(event.target.value);
@@ -932,7 +956,7 @@ export function DashboardClient({
                   placeholder="화성남부국민체육센터"
                 />
                 <button
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                  className="swim-action inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#075985] px-4 text-sm font-semibold text-white hover:bg-[#0c4a6e] disabled:opacity-50"
                   disabled={locationSearchBusy}
                   type="submit"
                 >
@@ -947,7 +971,7 @@ export function DashboardClient({
                     return (
                       <div
                         key={`${candidate.title}-${address}-${index}`}
-                        className="rounded-lg border border-[#d8ddd5] bg-white px-3 py-3"
+                        className="swim-row-motion rounded-lg border border-[#c8def0] bg-white px-3 py-3"
                       >
                         <button className="grid w-full gap-1 text-left" onClick={() => selectLocationCandidate(candidate)} disabled={busy} type="button">
                           <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#17201d]">
@@ -965,15 +989,15 @@ export function DashboardClient({
                 </div>
               ) : null}
               {facilityCandidatesBusyLabel ? (
-                <div className="mt-4 flex items-center gap-2 rounded-lg border border-[#d8ddd5] bg-[#fbfcf8] px-3 py-3 text-sm font-semibold text-[#31413b]">
-                  <RefreshCw size={16} className="animate-spin text-[#0f766e]" aria-hidden />
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-[#c8def0] bg-[#f6fbff] px-3 py-3 text-sm font-semibold text-[#28516f]">
+                  <RefreshCw size={16} className="animate-spin text-[#0284c7]" aria-hidden />
                   {facilityCandidatesBusyLabel} 기준 수영장 후보 찾는 중
                 </div>
               ) : null}
               {facilityCandidates.length > 0 ? (
                 <div className="mt-4 space-y-3">
                   <button
-                    className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-3 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e]"
+                    className="swim-action inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#b8d7ec] bg-white px-3 text-sm font-semibold text-[#28516f] hover:border-[#0284c7]"
                     onClick={() => setFacilityCandidatesOpen((open) => !open)}
                     type="button"
                   >
@@ -989,7 +1013,7 @@ export function DashboardClient({
                           return (
                             <div
                               key={`facility-${candidate.title}-${address}-${index}`}
-                              className="grid gap-3 rounded-lg border border-[#d8ddd5] bg-[#fbfcf8] px-3 py-3 sm:grid-cols-[1fr_auto]"
+                              className="swim-row-motion grid gap-3 rounded-lg border border-[#c8def0] bg-[#f6fbff] px-3 py-3 sm:grid-cols-[1fr_auto]"
                             >
                               <button className="grid gap-1 text-left" onClick={() => selectLocationCandidate(candidate)} disabled={busy} type="button">
                                 <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#17201d]">
@@ -1007,7 +1031,7 @@ export function DashboardClient({
                                 {candidate.category ? <span className="text-xs text-[#0f766e]">{candidate.category}</span> : null}
                               </button>
                               <button
-                                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#0f766e] px-3 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
+                                className="swim-action inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#0284c7] px-3 text-sm font-semibold text-white hover:bg-[#0369a1] disabled:opacity-50"
                                 onClick={() => setCandidateToAdd(candidate)}
                                 disabled={busy || !user}
                                 type="button"
@@ -1025,15 +1049,15 @@ export function DashboardClient({
               ) : null}
             </div>
 
-            <div className="grid gap-0 divide-y divide-[#e3e7e1]">
+            <div className="grid gap-0 divide-y divide-[#d9eaf6]">
               {pools.map((pool) => (
-                <article key={pool.id} className="grid gap-4 px-4 py-4 md:grid-cols-[112px_1fr_auto]">
+                <article key={pool.id} className="swim-row-motion grid gap-4 px-4 py-4 md:grid-cols-[112px_1fr_auto]">
                   <PoolImage pool={pool} />
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold">{pool.name}</h3>
                       {pool.district ? (
-                        <span className="rounded-md bg-[#edf7f5] px-2 py-1 text-xs font-semibold text-[#0f766e]">
+                        <span className="rounded-md bg-[#e0f2fe] px-2 py-1 text-xs font-semibold text-[#0369a1]">
                           {pool.district}
                         </span>
                       ) : null}
@@ -1044,22 +1068,22 @@ export function DashboardClient({
                       ) : null}
                     </div>
                     {pool.roadNameAddress ?? pool.lotNumberAddress ? (
-                      <p className="flex items-center gap-1 text-sm text-[#66746d]">
+                      <p className="flex items-center gap-1 text-sm text-[#4b6f8b]">
                         <MapPin size={15} aria-hidden />
                         {pool.roadNameAddress ?? pool.lotNumberAddress}
                       </p>
                     ) : null}
-                    <div className="flex flex-wrap gap-2 text-xs font-medium text-[#66746d]">
+                    <div className="flex flex-wrap gap-2 text-xs font-medium text-[#4b6f8b]">
                       {pool.indoorOutdoorTypeName ? <span>{pool.indoorOutdoorTypeName}</span> : null}
                       {pool.standardPoolLengthMeters ? <span>{pool.standardPoolLengthMeters}m</span> : null}
                       {pool.standardPoolLaneCount ? <span>{pool.standardPoolLaneCount}레인</span> : null}
                       {pool.completionYear ? <span>{pool.completionYear}년 준공</span> : null}
                     </div>
-                    {pool.description ? <p className="text-sm text-[#47564f]">{pool.description}</p> : null}
+                    {pool.description ? <p className="text-sm text-[#355b78]">{pool.description}</p> : null}
                     <div className="flex flex-wrap gap-2">
                       {pool.homepageUrl ? (
                         <a
-                          className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#d8ddd5] px-3 text-xs font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
+                          className="swim-action inline-flex h-8 items-center gap-1 rounded-lg border border-[#c8def0] px-3 text-xs font-semibold text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1]"
                           href={pool.homepageUrl}
                           target="_blank"
                           rel="noreferrer"
@@ -1069,7 +1093,7 @@ export function DashboardClient({
                         </a>
                       ) : null}
                       <button
-                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#d8ddd5] px-3 text-xs font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:opacity-50"
+                        className="swim-action inline-flex h-8 items-center gap-1 rounded-lg border border-[#c8def0] px-3 text-xs font-semibold text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1] disabled:opacity-50"
                         onClick={() => scanNotices(pool)}
                         disabled={!user || !pool.homepageUrl}
                         title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "공지 확인"}
@@ -1088,10 +1112,10 @@ export function DashboardClient({
                   </div>
                   <div className="flex items-start md:justify-end">
                     <button
-                      className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:opacity-50 ${
+                      className={`swim-action inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold disabled:opacity-50 ${
                         subscribedPeriodPoolIds.has(pool.id)
-                          ? "border border-[#0f766e] bg-white text-[#0f766e] hover:bg-[#edf7f5]"
-                          : "bg-[#0f766e] text-white hover:bg-[#0b5f59]"
+                          ? "border border-[#0284c7] bg-white text-[#0369a1] hover:bg-[#e0f2fe]"
+                          : "bg-[#0284c7] text-white hover:bg-[#0369a1]"
                       }`}
                       onClick={() => scanNotices(pool, true)}
                       disabled={!user || !pool.homepageUrl}
@@ -1111,33 +1135,31 @@ export function DashboardClient({
             </div>
           </section>
 
-          <section className="rounded-lg border border-[#d8ddd5] bg-white">
-            <div className="border-b border-[#e3e7e1] px-4 py-4">
+          <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+            <div className="border-b border-[#d9eaf6] px-4 py-4">
               <h2 className="text-lg font-semibold">접수 이벤트</h2>
             </div>
-            <div className="divide-y divide-[#e3e7e1]">
+            <div className="divide-y divide-[#d9eaf6]">
               {filteredEvents.map((event) => (
-                <article key={event.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1fr_auto]">
+                <article key={event.id} className="swim-row-motion grid gap-3 px-4 py-4 md:grid-cols-[1fr_auto]">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusBadge status={event.status} />
                       <h3 className="font-semibold">{event.title}</h3>
                     </div>
-                    <p className="text-sm text-[#66746d]">{event.poolName}</p>
-                    <p className="text-sm text-[#31413b]">
+                    <p className="text-sm text-[#4b6f8b]">{event.poolName}</p>
+                    <p className="text-sm text-[#28516f]">
                       {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
                     </p>
                   </div>
-                  <div className="flex items-center text-right text-sm font-semibold text-[#bf4b3e] md:justify-end">
-                    {event.status === "CLOSED" ? "마감" : formatTimeLeft(event.registrationStartsAt)}
-                  </div>
+                  <EventTimeLeft event={event} />
                 </article>
               ))}
             </div>
           </section>
         </section>
 
-        <aside className="space-y-5">
+        <aside className="swim-rise swim-rise-delay-1 space-y-5">
           <AccountPanel
             user={user}
             subscriptions={subscriptions}
@@ -1148,15 +1170,15 @@ export function DashboardClient({
             busy={busy}
           />
 
-          <section className="rounded-lg border border-[#d8ddd5] bg-white">
-            <div className="border-b border-[#e3e7e1] px-4 py-4">
+          <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+            <div className="border-b border-[#d9eaf6] px-4 py-4">
               <h2 className="text-lg font-semibold">수동 이벤트 등록</h2>
             </div>
             <form className="space-y-4 px-4 py-4" onSubmit={submitEvent}>
               <label className="grid gap-1 text-sm font-medium">
                 수영장
                 <select
-                  className="h-11 rounded-lg border border-[#cdd5cf] bg-white px-3 text-sm outline-none focus:border-[#0f766e]"
+                  className="h-11 rounded-lg border border-[#b8d7ec] bg-white px-3 text-sm outline-none transition focus:border-[#0284c7] focus:ring-3 focus:ring-[#bae6fd]"
                   value={form.poolId}
                   onChange={(event) => setForm((current) => ({ ...current, poolId: event.target.value }))}
                   required
@@ -1171,7 +1193,7 @@ export function DashboardClient({
               <label className="grid gap-1 text-sm font-medium">
                 이벤트명
                 <input
-                  className="h-11 rounded-lg border border-[#cdd5cf] px-3 text-sm outline-none focus:border-[#0f766e]"
+                  className="h-11 rounded-lg border border-[#b8d7ec] px-3 text-sm outline-none transition focus:border-[#0284c7] focus:ring-3 focus:ring-[#bae6fd]"
                   value={form.title}
                   onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
                   required
@@ -1180,7 +1202,7 @@ export function DashboardClient({
               <label className="grid gap-1 text-sm font-medium">
                 접수 시작
                 <input
-                  className="h-11 rounded-lg border border-[#cdd5cf] px-3 text-sm outline-none focus:border-[#0f766e]"
+                  className="h-11 rounded-lg border border-[#b8d7ec] px-3 text-sm outline-none transition focus:border-[#0284c7] focus:ring-3 focus:ring-[#bae6fd]"
                   type="datetime-local"
                   value={form.startsAt}
                   onChange={(event) => setForm((current) => ({ ...current, startsAt: event.target.value }))}
@@ -1190,7 +1212,7 @@ export function DashboardClient({
               <label className="grid gap-1 text-sm font-medium">
                 접수 종료
                 <input
-                  className="h-11 rounded-lg border border-[#cdd5cf] px-3 text-sm outline-none focus:border-[#0f766e]"
+                  className="h-11 rounded-lg border border-[#b8d7ec] px-3 text-sm outline-none transition focus:border-[#0284c7] focus:ring-3 focus:ring-[#bae6fd]"
                   type="datetime-local"
                   value={form.endsAt}
                   onChange={(event) => setForm((current) => ({ ...current, endsAt: event.target.value }))}
@@ -1198,7 +1220,7 @@ export function DashboardClient({
                 />
               </label>
               <button
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                className="swim-action inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#075985] px-4 text-sm font-semibold text-white hover:bg-[#0c4a6e] disabled:opacity-50"
                 disabled={busy || !user}
                 type="submit"
               >
@@ -1208,15 +1230,15 @@ export function DashboardClient({
             </form>
           </section>
 
-          <section className="rounded-lg border border-[#d8ddd5] bg-white">
-            <div className="flex items-center justify-between gap-3 border-b border-[#e3e7e1] px-4 py-4">
+          <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-[#d9eaf6] px-4 py-4">
               <h2 className="text-lg font-semibold">앱 내 알림</h2>
               <div className="flex items-center gap-2">
                 <span className="rounded-md bg-[#fff2e2] px-2 py-1 text-xs font-semibold text-[#946123]">
-                  {notifications.length}
+                  {notificationTotalCount}
                 </span>
                 <button
-                  className="grid size-9 place-items-center rounded-lg border border-[#cdd5cf] bg-white text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:opacity-50"
+                  className="swim-action grid size-9 place-items-center rounded-lg border border-[#b8d7ec] bg-white text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1] disabled:opacity-50"
                   onClick={sendPushTest}
                   disabled={busy || !user}
                   title="테스트 푸시 전송"
@@ -1226,33 +1248,41 @@ export function DashboardClient({
                 </button>
               </div>
             </div>
-            <div className="max-h-[460px] divide-y divide-[#e3e7e1] overflow-auto">
+            <div className="max-h-[460px] divide-y divide-[#d9eaf6] overflow-auto">
               {notifications.length === 0 ? (
                 <p className="px-4 py-8 text-sm text-[#66746d]">아직 저장된 알림이 없습니다.</p>
               ) : (
-                notifications.map((item) => (
-                  <button
-                    key={item.id}
-                    className="block w-full px-4 py-4 text-left transition hover:bg-[#f7f8f4]"
-                    onClick={() => readNotification(item.id)}
-                    type="button"
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className={`text-sm font-semibold ${item.readAt ? "text-[#66746d]" : "text-[#17201d]"}`}>
-                        {item.title}
-                      </span>
-                      <span className="rounded-md border border-[#d8ddd5] px-2 py-1 text-xs text-[#66746d]">
-                        {notificationStatusLabel(item.status)}
-                      </span>
-                    </div>
-                    <p className="text-sm text-[#47564f]">{item.message}</p>
-                    <p className="mt-2 text-xs text-[#7c8982]">{formatDateTime(item.createdAt)}</p>
-                  </button>
-                ))
+                <>
+                  {notifications.map((item) => (
+                    <button
+                      key={item.id}
+                      className="swim-row-motion block w-full px-4 py-4 text-left"
+                      onClick={() => readNotification(item.id)}
+                      type="button"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className={`text-sm font-semibold ${item.readAt ? "text-[#66746d]" : "text-[#17201d]"}`}>
+                          {item.title}
+                        </span>
+                        <span className="rounded-md border border-[#d8ddd5] px-2 py-1 text-xs text-[#66746d]">
+                          {notificationStatusLabel(item.status)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-[#355b78]">{item.message}</p>
+                      <p className="mt-2 text-xs text-[#6d879b]">{formatDateTime(item.createdAt)}</p>
+                    </button>
+                  ))}
+                  {notificationTotalCount > notifications.length ? (
+                    <p className="px-4 py-3 text-sm text-[#4b6f8b]">
+                      최근 {notifications.length}개만 표시 중입니다. 전체 알림 수는 {notificationTotalCount}개입니다.
+                    </p>
+                  ) : null}
+                </>
               )}
             </div>
           </section>
         </aside>
+      </div>
       </div>
       {pushGuideOpen ? <PushGuideModal onClose={() => setPushGuideOpen(false)} /> : null}
       {candidateToAdd ? (
@@ -1337,29 +1367,27 @@ function WelcomeHero({
   busy: boolean;
 }) {
   return (
-    <section className="relative overflow-hidden border-b border-[#d8ddd5] bg-[#f2f7f3]">
-      <div className="absolute left-1/2 top-[-180px] h-[380px] w-[620px] -translate-x-1/2 rounded-full bg-[#bfe7df]/60 blur-3xl" aria-hidden />
-      <div className="absolute right-[-110px] top-20 h-64 w-64 rounded-full bg-[#f7c978]/35 blur-2xl" aria-hidden />
-      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:py-12">
-        <div className="relative space-y-6">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#c7ddd6] bg-white/80 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-[#0f766e]">
-            <span className="size-2 rounded-full bg-[#0f766e]" aria-hidden />
-            SwimPulse Guide
+    <section className="swim-animated-surface overflow-hidden border-b border-[#b8d7ec]">
+      <div className="mx-auto grid max-w-7xl gap-8 px-5 py-8 lg:grid-cols-[1.08fr_0.92fr] lg:items-center lg:py-14">
+        <div className="swim-rise space-y-6">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[#9fc9e5] bg-white/85 px-3 py-1 text-xs font-bold uppercase text-[#0369a1]">
+            <span className="size-2 rounded-full bg-[#0284c7]" aria-hidden />
+            SwimPulse Alert
           </div>
           <div className="max-w-3xl space-y-4">
-            <h2 className="text-3xl font-black tracking-[-0.04em] text-[#17201d] sm:text-5xl">
+            <h2 className="text-3xl font-black text-[#102033] sm:text-5xl">
               수영장 모집 공지,
-              <span className="block text-[#0f766e]">놓치기 전에 먼저 알려드릴게요.</span>
+              <span className="block text-[#0369a1]">접수 시작 전에<br></br> 먼저 챙겨드릴게요.</span>
             </h2>
-            <p className="max-w-2xl text-base leading-7 text-[#47564f] sm:text-lg">
-              관심 수영장을 찾고, 공지에서 접수 기간을 확인한 뒤, 원하는 기간을 구독하세요.
-              SwimPulse가 모집 시작 타이밍을 브라우저 푸시와 앱 알림으로 챙겨줍니다.
+            <p className="max-w-2xl text-base leading-7 text-[#355b78] sm:text-lg">
+              공공 수영장 모집 공지는 시설마다 올라오는 위치와 형식이 다릅니다.
+              SwimPulse는 공식 홈페이지 공지를 확인하고, 모집 기간을 정리해 알림으로 이어줍니다.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             {user ? (
               <button
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#17201d] px-5 text-sm font-bold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                className="swim-action inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#075985] px-5 text-sm font-bold text-white hover:bg-[#0c4a6e] disabled:opacity-50"
                 onClick={onEnablePush}
                 disabled={busy}
                 type="button"
@@ -1369,7 +1397,7 @@ function WelcomeHero({
               </button>
             ) : (
               <button
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#17201d] px-5 text-sm font-bold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+                className="swim-action inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#075985] px-5 text-sm font-bold text-white hover:bg-[#0c4a6e] disabled:opacity-50"
                 onClick={onLogin}
                 disabled={busy}
                 type="button"
@@ -1379,16 +1407,22 @@ function WelcomeHero({
               </button>
             )}
             <a
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-[#c7d2cb] bg-white/80 px-5 text-sm font-bold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
-              href="#pool-workspace"
+              className="swim-action inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-[#9fc9e5] bg-white/85 px-5 text-sm font-bold text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1]"
+              href="#service-flow"
             >
               <Search size={17} aria-hidden />
-              수영장 찾으러 가기
+              서비스 둘러보기
             </a>
           </div>
         </div>
 
-        <div className="relative rounded-[28px] border border-white/70 bg-white/75 p-4 shadow-[0_24px_70px_rgba(23,32,29,0.12)] backdrop-blur">
+        <div className="swim-rise swim-rise-delay-1 swim-card-motion rounded-3xl border border-white/75 bg-white/80 p-4 shadow-[0_24px_70px_rgba(3,105,161,0.18)]">
+          <div
+            className="swim-hero-visual mb-4 h-48 rounded-2xl bg-[#bde8ff] bg-cover bg-center"
+            aria-label="SwimPulse 수영장 알림 대표 이미지"
+            role="img"
+            style={{ backgroundImage: "url(/swimpulse-pool-shark.png)" }}
+          />
           <div className="grid gap-3">
             <GuideStep
               icon={Search}
@@ -1407,11 +1441,11 @@ function WelcomeHero({
             />
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-2xl bg-[#0f766e] px-4 py-4 text-white">
+            <div className="rounded-2xl bg-[#0369a1] px-4 py-4 text-white">
               <p className="text-xs font-semibold opacity-80">예정 이벤트</p>
               <p className="mt-1 text-2xl font-black">{upcomingEvents}</p>
             </div>
-            <div className="rounded-2xl bg-[#fff2e2] px-4 py-4 text-[#946123]">
+            <div className="rounded-2xl bg-[#e0f2fe] px-4 py-4 text-[#075985]">
               <p className="text-xs font-semibold opacity-80">안 읽은 알림</p>
               <p className="mt-1 text-2xl font-black">{unreadNotifications}</p>
             </div>
@@ -1419,6 +1453,86 @@ function WelcomeHero({
         </div>
       </div>
     </section>
+  );
+}
+
+function ServiceIntroPages({
+  user,
+  onLogin,
+  busy,
+}: {
+  user: AppUser | null;
+  onLogin: () => void;
+  busy: boolean;
+}) {
+  return (
+    <section id="service-flow" className="bg-white">
+      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-8 lg:grid-cols-2 lg:py-12">
+        <article className="swim-rise swim-card-motion min-h-[360px] rounded-lg border border-[#c8def0] bg-[#f6fbff] px-5 py-6 shadow-sm sm:px-7 sm:py-8">
+          <div className="mb-5 grid size-12 place-items-center rounded-xl bg-[#dff2ff] text-[#0369a1]">
+            <FileSearch size={23} aria-hidden />
+          </div>
+          <p className="text-sm font-bold text-[#0369a1]">INTRO 01</p>
+          <h2 className="mt-2 text-2xl font-black text-[#102033] sm:text-3xl">
+            모집 공지는 있는데, 접수 타이밍은 흩어져 있습니다.
+          </h2>
+          <p className="mt-4 leading-7 text-[#355b78]">
+            어떤 시설은 공지사항 게시판에, 어떤 시설은 강좌 안내 페이지에 모집 정보를 올립니다.
+            이미지 공지나 표 형식도 섞여서 사용자가 매번 직접 확인하기 어렵습니다.
+          </p>
+          <div className="mt-6 grid gap-3 text-sm text-[#28516f]">
+            <IntroPoint icon={Search} text="위치 기준으로 주변 수영장을 찾습니다." />
+            <IntroPoint icon={FileSearch} text="공식 홈페이지 공지에서 모집 기간을 정리합니다." />
+            <IntroPoint icon={Bell} text="원하는 기간을 구독하면 알림으로 이어집니다." />
+          </div>
+        </article>
+
+        <article className="swim-rise swim-rise-delay-1 swim-card-motion min-h-[360px] rounded-lg border border-[#c8def0] bg-[#102033] px-5 py-6 text-white shadow-sm sm:px-7 sm:py-8">
+          <div className="mb-5 grid size-12 place-items-center rounded-xl bg-white/12 text-[#7dd3fc]">
+            <Waves size={24} aria-hidden />
+          </div>
+          <p className="text-sm font-bold text-[#7dd3fc]">INTRO 02</p>
+          <h2 className="mt-2 text-2xl font-black sm:text-3xl">
+            찾기, 확인, 구독까지 한 화면에서 이어집니다.
+          </h2>
+          <p className="mt-4 leading-7 text-[#c8def0]">
+            아래 작업 영역에서 수영장을 검색하고, 공지 확인 버튼으로 모집 기간을 추출한 뒤,
+            필요한 기간만 구독하세요. 구독한 이벤트는 마이페이지와 알림 큐로 관리됩니다.
+          </p>
+          <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+            <a
+              className="swim-action inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#38bdf8] px-4 text-sm font-bold text-[#082f49] hover:bg-[#7dd3fc]"
+              href="#pool-workspace"
+            >
+              <Waves size={17} aria-hidden />
+              수영장 목록으로 이동
+            </a>
+            {!user ? (
+              <button
+                className="swim-action inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/30 px-4 text-sm font-bold text-white hover:bg-white/10 disabled:opacity-50"
+                onClick={onLogin}
+                disabled={busy}
+                type="button"
+              >
+                <LogIn size={17} aria-hidden />
+                로그인하고 구독하기
+              </button>
+            ) : null}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function IntroPoint({ icon: Icon, text }: { icon: typeof Search; text: string }) {
+  return (
+    <div className="swim-row-motion flex items-center gap-3 rounded-lg border border-[#d9eaf6] bg-white px-3 py-3">
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#e0f2fe] text-[#0369a1]">
+        <Icon size={17} aria-hidden />
+      </span>
+      <span className="font-semibold">{text}</span>
+    </div>
   );
 }
 
@@ -1432,54 +1546,58 @@ function GuideStep({
   description: string;
 }) {
   return (
-    <div className="grid grid-cols-[44px_1fr] gap-3 rounded-2xl border border-[#e3e7e1] bg-white px-4 py-4">
-      <div className="grid size-11 place-items-center rounded-xl bg-[#edf7f5] text-[#0f766e]">
+    <div className="swim-card-motion grid grid-cols-[44px_1fr] gap-3 rounded-2xl border border-[#d9eaf6] bg-white px-4 py-4">
+      <div className="grid size-11 place-items-center rounded-xl bg-[#e0f2fe] text-[#0369a1]">
         <Icon size={20} aria-hidden />
       </div>
       <div>
-        <h3 className="font-bold text-[#17201d]">{title}</h3>
-        <p className="mt-1 text-sm leading-6 text-[#66746d]">{description}</p>
+        <h3 className="font-bold text-[#102033]">{title}</h3>
+        <p className="mt-1 text-sm leading-6 text-[#4b6f8b]">{description}</p>
       </div>
     </div>
   );
 }
 
 function PoolImage({ pool }: { pool: Pool }) {
-  if (pool.imageUrl) {
-    if (isDefaultPoolImage(pool.imageUrl)) {
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
+  const imageUrl = pool.imageUrl && pool.imageUrl !== failedImageUrl ? pool.imageUrl : null;
+
+  if (imageUrl && !isWeakPoolImageUrl(imageUrl)) {
+    if (isDefaultPoolImage(imageUrl)) {
       return (
         <div
           className="h-24 rounded-lg bg-[#ddf5f4] bg-cover bg-center md:h-28"
           aria-label={`${pool.name} 기본 대표 이미지`}
           role="img"
-          style={{ backgroundImage: `url(${defaultPoolImageUrl(pool.imageUrl)})` }}
+          style={{ backgroundImage: `url(${defaultPoolImageUrl(imageUrl)})` }}
         />
       );
     }
-    if (isIconLikePoolImage(pool.imageUrl)) {
-      return (
-        <div className="grid h-24 min-w-0 place-items-center overflow-hidden rounded-lg border border-[#d8ddd5] bg-gradient-to-br from-[#eef8f5] to-[#d7ece8] px-3 md:h-28">
-          <div className="grid size-14 place-items-center rounded-2xl border border-white/80 bg-white/85 shadow-sm md:size-16">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="block size-10 object-contain md:size-11" src={pool.imageUrl} alt={`${pool.name} 대표 아이콘`} />
-          </div>
-        </div>
-      );
+    if (isIconLikePoolImage(imageUrl)) {
+      return <DefaultPoolImage poolName={pool.name} />;
     }
     return (
-      <div
-        className="h-24 rounded-lg bg-[#edf7f5] bg-cover bg-center md:h-28"
-        aria-label={`${pool.name} 대표 이미지`}
-        role="img"
-        style={{ backgroundImage: `url(${pool.imageUrl})` }}
-      />
+      <div className="h-24 overflow-hidden rounded-lg bg-[#edf7f5] md:h-28">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          className="h-full w-full object-cover"
+          src={imageUrl}
+          alt=""
+          aria-hidden
+          onError={() => setFailedImageUrl(imageUrl)}
+        />
+      </div>
     );
   }
 
+  return <DefaultPoolImage poolName={pool.name} />;
+}
+
+function DefaultPoolImage({ poolName }: { poolName: string }) {
   return (
     <div
       className="h-24 rounded-lg bg-[#ddf5f4] bg-cover bg-center md:h-28"
-      aria-label={`${pool.name} 기본 대표 이미지`}
+      aria-label={`${poolName} 기본 대표 이미지`}
       role="img"
       style={{ backgroundImage: "url(/swimpulse-pool-shark.png)" }}
     />
@@ -1492,6 +1610,15 @@ function defaultPoolImageUrl(imageUrl: string) {
 
 function isDefaultPoolImage(imageUrl: string) {
   return imageUrl.toLowerCase().includes("swimpulse-pool-shark");
+}
+
+function isWeakPoolImageUrl(imageUrl: string) {
+  const normalized = imageUrl.toLowerCase();
+  return (
+    normalized.includes("cdninstagram.com") ||
+    normalized.includes("static.cdninstagram.com") ||
+    normalized.includes("ssl.pstatic.net/static/blog/icon")
+  );
 }
 
 function isIconLikePoolImage(imageUrl: string) {
@@ -1524,22 +1651,22 @@ function AccountPanel({
 }) {
   if (!user) {
     return (
-      <section className="rounded-lg border border-[#d8ddd5] bg-white">
-        <div className="border-b border-[#e3e7e1] px-4 py-4">
+      <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+        <div className="border-b border-[#d9eaf6] px-4 py-4">
           <h2 className="text-lg font-semibold">계정</h2>
         </div>
         <div className="space-y-4 px-4 py-4">
           <div className="flex items-center gap-3">
-            <div className="grid size-12 place-items-center rounded-lg bg-[#f0f1ef] text-[#66746d]">
+            <div className="grid size-12 place-items-center rounded-lg bg-[#e0f2fe] text-[#0369a1]">
               <UserCircle size={26} aria-hidden />
             </div>
             <div>
               <p className="font-semibold">로그인 안 됨</p>
-              <p className="text-sm text-[#66746d]">Google 계정으로 시작하세요.</p>
+              <p className="text-sm text-[#4b6f8b]">Google 계정으로 시작하세요.</p>
             </div>
           </div>
           <button
-            className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+            className="swim-action inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#075985] px-4 text-sm font-semibold text-white hover:bg-[#0c4a6e] disabled:opacity-50"
             onClick={onLogin}
             disabled={busy}
             type="button"
@@ -1553,11 +1680,11 @@ function AccountPanel({
   }
 
   return (
-    <section className="rounded-lg border border-[#d8ddd5] bg-white">
-      <div className="flex items-center justify-between gap-3 border-b border-[#e3e7e1] px-4 py-4">
+    <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-[#d9eaf6] px-4 py-4">
         <h2 className="text-lg font-semibold">계정</h2>
         <button
-          className="grid size-9 place-items-center rounded-lg border border-[#cdd5cf] bg-white text-[#31413b] transition hover:border-[#bf4b3e] hover:text-[#bf4b3e] disabled:opacity-50"
+          className="swim-action grid size-9 place-items-center rounded-lg border border-[#b8d7ec] bg-white text-[#28516f] hover:border-[#ef4444] hover:text-[#dc2626] disabled:opacity-50"
           onClick={onLogout}
           disabled={busy}
           title="로그아웃"
@@ -1568,12 +1695,12 @@ function AccountPanel({
       </div>
       <div className="space-y-4 px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="grid size-12 place-items-center rounded-lg bg-[#edf7f5] text-lg font-semibold text-[#0f766e]">
+          <div className="grid size-12 place-items-center rounded-lg bg-[#e0f2fe] text-lg font-semibold text-[#0369a1]">
             {initialLetter(user.displayName)}
           </div>
           <div className="min-w-0">
             <p className="truncate font-semibold">{user.displayName}</p>
-            <p className="truncate text-sm text-[#66746d]">Google 로그인</p>
+            <p className="truncate text-sm text-[#4b6f8b]">Google 로그인</p>
           </div>
         </div>
         <div className="space-y-3 text-sm">
@@ -1583,19 +1710,19 @@ function AccountPanel({
           <AccountRow icon={Smartphone} label="현재 기기 PUSH" value={currentDeviceRegistered ? "등록됨" : "미등록"} />
           <AccountRow icon={CalendarClock} label="최근 로그인" value={user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "-"} />
         </div>
-        <div className="space-y-3 border-t border-[#e3e7e1] pt-4">
+        <div className="space-y-3 border-t border-[#d9eaf6] pt-4">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-[#31413b]">내 구독</h3>
-            <span className="rounded-md bg-[#edf7f5] px-2 py-1 text-xs font-semibold text-[#0f766e]">
+            <h3 className="text-sm font-semibold text-[#28516f]">내 구독</h3>
+            <span className="rounded-md bg-[#e0f2fe] px-2 py-1 text-xs font-semibold text-[#0369a1]">
               {subscriptions.length}
             </span>
           </div>
           {subscriptions.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-[#cdd5cf] px-3 py-4 text-sm text-[#66746d]">
+            <p className="rounded-lg border border-dashed border-[#b8d7ec] bg-[#f6fbff] px-3 py-4 text-sm text-[#4b6f8b]">
               아직 구독한 모집 기간이 없습니다.
             </p>
           ) : (
-            <div className="max-h-[340px] divide-y divide-[#e3e7e1] overflow-auto rounded-lg border border-[#e3e7e1]">
+            <div className="max-h-[340px] divide-y divide-[#d9eaf6] overflow-auto rounded-lg border border-[#d9eaf6]">
               {subscriptions.map((subscription) => (
                 <SubscriptionSummary key={subscription.id} subscription={subscription} />
               ))}
@@ -1603,7 +1730,7 @@ function AccountPanel({
           )}
         </div>
         <button
-          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#bf4b3e] hover:text-[#bf4b3e] disabled:opacity-50"
+          className="swim-action inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#b8d7ec] bg-white px-4 text-sm font-semibold text-[#28516f] hover:border-[#ef4444] hover:text-[#dc2626] disabled:opacity-50"
           onClick={onUnregisterDevice}
           disabled={busy || !currentDeviceRegistered}
           type="button"
@@ -1964,7 +2091,6 @@ function NoticeResultModal({
                             key={`${period.startsAt}-${period.endsAt}-${period.label ?? index}`}
                             notice={notice}
                             period={period}
-                            index={index}
                             subscribedEventKeys={subscribedEventKeys}
                             subscriptions={subscriptions}
                             pendingSubscriptionKey={pendingSubscriptionKey}
@@ -2012,7 +2138,6 @@ function NoticeResultModal({
 function PeriodSelectionRow({
   notice,
   period,
-  index,
   subscriptions,
   subscribedEventKeys,
   pendingSubscriptionKey,
@@ -2021,7 +2146,6 @@ function PeriodSelectionRow({
 }: {
   notice: PoolNotice;
   period: NoticeRegistrationPeriod;
-  index: number;
   subscriptions: Subscription[];
   subscribedEventKeys: Set<string>;
   pendingSubscriptionKey: string | null;
@@ -2044,12 +2168,13 @@ function PeriodSelectionRow({
   );
   const subscribed = subscribedEventKeys.has(key) || (shiftedKey !== null && subscribedEventKeys.has(shiftedKey));
   const pending = pendingSubscriptionKey === key || (shiftedKey !== null && pendingSubscriptionKey === shiftedKey);
+  const periodLabel = period.label?.trim() || "모집 기간";
 
   return (
     <div className="grid gap-3 rounded-md border border-[#e3e7e1] bg-[#fafbf8] px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#31413b]">
-          <span className="font-semibold">{period.label ?? `기간 ${index + 1}`}</span>
+          <span className="font-semibold">{periodLabel}</span>
           <span>
             {formatDate(period.startsAt)} - {formatDate(period.endsAt)}
           </span>
@@ -2084,15 +2209,15 @@ function SubscriptionSummary({ subscription }: { subscription: Subscription }) {
   const poolName = event?.poolName ?? subscription.pool.name;
 
   return (
-    <article className="space-y-2 bg-white px-3 py-3">
+    <article className="swim-row-motion space-y-2 bg-white px-3 py-3">
       <div className="flex flex-wrap items-center gap-2">
         {event ? <StatusBadge status={event.status} /> : null}
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-[#17201d]">{poolName}</p>
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-[#102033]">{poolName}</p>
       </div>
       <div className="space-y-1">
-        <p className="line-clamp-2 text-sm font-medium text-[#31413b]">{event?.title ?? "기간 정보 없음"}</p>
+        <p className="line-clamp-2 text-sm font-medium text-[#28516f]">{event?.title ?? "기간 정보 없음"}</p>
         {event ? (
-          <p className="text-xs leading-5 text-[#66746d]">
+          <p className="text-xs leading-5 text-[#4b6f8b]">
             {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
           </p>
         ) : (
@@ -2115,10 +2240,10 @@ function AccountRow({
 }) {
   return (
     <div className="flex items-start gap-2">
-      <Icon className="mt-0.5 shrink-0 text-[#66746d]" size={15} aria-hidden />
+      <Icon className="mt-0.5 shrink-0 text-[#4b6f8b]" size={15} aria-hidden />
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-[#66746d]">{label}</p>
-        <p className="break-words text-[#31413b]">{value}</p>
+        <p className="text-xs font-semibold text-[#4b6f8b]">{label}</p>
+        <p className="break-words text-[#28516f]">{value}</p>
       </div>
     </div>
   );
@@ -2133,21 +2258,21 @@ function Metric({
   icon: typeof CalendarClock;
   label: string;
   value: string;
-  tone: "teal" | "amber" | "coral";
+  tone: "blue" | "amber" | "cyan";
 }) {
   const toneClass = {
-    teal: "bg-[#edf7f5] text-[#0f766e]",
+    blue: "bg-[#e0f2fe] text-[#0369a1]",
     amber: "bg-[#fff2e2] text-[#946123]",
-    coral: "bg-[#fff0ed] text-[#bf4b3e]",
+    cyan: "bg-[#ecfeff] text-[#0e7490]",
   }[tone];
 
   return (
-    <div className="rounded-lg border border-[#d8ddd5] bg-white px-4 py-4">
+    <div className="swim-card-motion rounded-lg border border-[#c8def0] bg-white px-4 py-4 shadow-sm">
       <div className={`mb-5 grid size-10 place-items-center rounded-lg ${toneClass}`}>
         <Icon size={19} aria-hidden />
       </div>
-      <p className="text-sm text-[#66746d]">{label}</p>
-      <p className="mt-1 text-3xl font-semibold">{value}</p>
+      <p className="text-sm text-[#4b6f8b]">{label}</p>
+      <p className="mt-1 text-3xl font-semibold text-[#102033]">{value}</p>
     </div>
   );
 }
@@ -2172,6 +2297,14 @@ function StatusBadge({ status }: { status: EventStatus }) {
   }[status];
 
   return <span className={`rounded-md px-2 py-1 text-xs font-semibold ${className}`}>{eventStatusLabel(status)}</span>;
+}
+
+function EventTimeLeft({ event }: { event: RegistrationEvent }) {
+  return (
+    <div className="flex items-center text-right text-sm font-semibold text-[#0284c7] md:justify-end" suppressHydrationWarning>
+      {event.status === "CLOSED" ? "마감" : formatTimeLeft(event.registrationStartsAt)}
+    </div>
+  );
 }
 
 function toDateTimeLocalValue(date: Date) {
@@ -2294,7 +2427,12 @@ function subscriptionKeyFromEvent(event: RegistrationEvent) {
 }
 
 function subscriptionKey(poolId: number, title: string, startsAt: string, endsAt: string) {
-  return `${poolId}|${title}|${startsAt}|${endsAt}`;
+  return `${poolId}|${title}|${normalizeInstantKey(startsAt)}|${normalizeInstantKey(endsAt)}`;
+}
+
+function normalizeInstantKey(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
 }
 
 function formatDistance(distanceMeters: number) {

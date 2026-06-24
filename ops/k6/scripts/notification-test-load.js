@@ -11,6 +11,8 @@ const loadtestTokenCount = Number(__ENV.LOADTEST_TOKEN_COUNT || '0');
 const setupSubscription = (__ENV.SETUP_SUBSCRIPTION || 'true').toLowerCase() === 'true';
 const poolId = Number(__ENV.POOL_ID || '1');
 const subscriptionTitle = __ENV.TITLE || 'k6 notification test subscription';
+const listPage = Number(__ENV.LIST_PAGE || '0');
+const listPageSize = Number(__ENV.LIST_PAGE_SIZE || '20');
 const accessTokens = (__ENV.ACCESS_TOKENS || __ENV.ACCESS_TOKEN || '')
   .split(',')
   .map((value) => value.trim())
@@ -21,6 +23,9 @@ const responseDuration = new Trend('notification_test_duration');
 const queuedNotifications = new Counter('notification_test_queued');
 const deviceRegistrations = new Counter('notification_test_device_registrations');
 const notificationListCount = new Trend('notification_test_list_count');
+const notificationListTotalCount = new Trend('notification_test_list_total_count');
+const notificationListUnreadCount = new Trend('notification_test_list_unread_count');
+const notificationListDuration = new Trend('notification_test_list_duration');
 const failedResponses = new Counter('notification_test_failed_responses');
 
 let failureLogCount = 0;
@@ -205,7 +210,7 @@ function ensureDeviceRegistered(data) {
 }
 
 function loadNotifications(data) {
-  const response = http.get(`${baseUrl}/api/notifications`, {
+  const response = http.get(`${baseUrl}/api/notifications?page=${encodeURIComponent(listPage)}&size=${encodeURIComponent(listPageSize)}`, {
     headers: { Cookie: cookieHeader(data) },
     tags: {
       scenario: 'notification_test_load',
@@ -215,13 +220,21 @@ function loadNotifications(data) {
     },
   });
   const body = safeJson(response);
-  const valid = response.status === 200 && Array.isArray(body);
+  const valid =
+    response.status === 200 &&
+    body !== null &&
+    Array.isArray(body.content) &&
+    typeof body.totalElements === 'number' &&
+    typeof body.unreadElements === 'number';
   check(response, {
     'notification list status is 200': () => response.status === 200,
-    'notification list response is array': () => Array.isArray(body),
+    'notification list response is page': () => body !== null && Array.isArray(body.content),
   });
   if (valid) {
-    notificationListCount.add(body.length, { run_label: runLabel });
+    notificationListCount.add(body.content.length, { run_label: runLabel });
+    notificationListTotalCount.add(body.totalElements, { run_label: runLabel });
+    notificationListUnreadCount.add(body.unreadElements, { run_label: runLabel });
+    notificationListDuration.add(response.timings.duration, { run_label: runLabel });
   } else {
     recordFailure(response, 'list_notifications');
   }

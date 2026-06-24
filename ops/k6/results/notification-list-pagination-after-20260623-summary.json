@@ -1,0 +1,253 @@
+{
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {}
+            }
+        },
+        "checks": {
+            "notification device registration status is 204": {
+                "passes": 3,
+                "fails": 0,
+                "name": "notification device registration status is 204",
+                "path": "::notification device registration status is 204",
+                "id": "a3aba3fb56f2a068a643eb7345be18e5"
+            },
+            "notification test status is 200": {
+                "name": "notification test status is 200",
+                "path": "::notification test status is 200",
+                "id": "488b3b568aeb892a25cebeb7d8b4f47d",
+                "passes": 327,
+                "fails": 0
+            },
+            "notification test response has id": {
+                "name": "notification test response has id",
+                "path": "::notification test response has id",
+                "id": "66616a8a7045dbe9900c97137d1a81dd",
+                "passes": 327,
+                "fails": 0
+            },
+            "notification test response is queued": {
+                "name": "notification test response is queued",
+                "path": "::notification test response is queued",
+                "id": "b51a1ed742d3b3d425932b02d39eb0b2",
+                "passes": 327,
+                "fails": 0
+            },
+            "notification list status is 200": {
+                "name": "notification list status is 200",
+                "path": "::notification list status is 200",
+                "id": "e63d54cfec53a83d0ee5d4c55604ed54",
+                "passes": 327,
+                "fails": 0
+            },
+            "notification list response is page": {
+                "name": "notification list response is page",
+                "path": "::notification list response is page",
+                "id": "423c3eea59cd77f5ca18238d401afff7",
+                "passes": 327,
+                "fails": 0
+            }
+        }
+    },
+    "metrics": {
+        "http_reqs": {
+            "count": 661,
+            "rate": 10.872246073666016
+        },
+        "http_req_duration": {
+            "p(95)": 51.120994,
+            "p(99)": 57.3957664,
+            "avg": 26.25054659304082,
+            "min": 11.864446,
+            "med": 18.772818,
+            "max": 254.152419,
+            "p(90)": 47.753666,
+            "thresholds": {
+                "p(95)<1000": false
+            }
+        },
+        "vus_max": {
+            "max": 3,
+            "value": 3,
+            "min": 3
+        },
+        "notification_test_duration": {
+            "min": 14.573184,
+            "med": 34.300612,
+            "max": 104.028985,
+            "p(90)": 50.1335518,
+            "p(95)": 53.023032199999996,
+            "p(99)": 56.681936140000005,
+            "avg": 34.698075633027536
+        },
+        "data_received": {
+            "rate": 65384.60230723791,
+            "count": 3975188
+        },
+        "checks": {
+            "passes": 1638,
+            "fails": 0,
+            "value": 1
+        },
+        "iterations": {
+            "count": 327,
+            "rate": 5.378554411632053
+        },
+        "http_req_sending": {
+            "med": 0.014701,
+            "max": 2.872761,
+            "p(90)": 0.076008,
+            "p(95)": 0.10361,
+            "p(99)": 0.21437959999999998,
+            "avg": 0.03484911195158853,
+            "min": 0.0067
+        },
+        "vus": {
+            "value": 3,
+            "min": 3,
+            "max": 3
+        },
+        "http_req_waiting": {
+            "p(99)": 56.4948872,
+            "avg": 25.967124083207256,
+            "min": 11.625923,
+            "med": 18.405857,
+            "max": 253.975802,
+            "p(90)": 47.53945,
+            "p(95)": 50.990282
+        },
+        "http_req_blocked": {
+            "p(99)": 0.28170659999999986,
+            "avg": 0.012770065052950084,
+            "min": 0.0013,
+            "med": 0.003001,
+            "max": 1.593461,
+            "p(90)": 0.015301,
+            "p(95)": 0.018102
+        },
+        "notification_test_list_count": {
+            "max": 20,
+            "p(90)": 20,
+            "p(95)": 20,
+            "p(99)": 20,
+            "avg": 20,
+            "min": 20,
+            "med": 20
+        },
+        "notification_test_list_total_count": {
+            "max": 772,
+            "p(90)": 761.4000000000001,
+            "p(95)": 767,
+            "p(99)": 771,
+            "avg": 718,
+            "min": 664,
+            "med": 718
+        },
+        "data_sent": {
+            "rate": 4090.26726870646,
+            "count": 248676
+        },
+        "notification_test_valid_response": {
+            "passes": 327,
+            "fails": 0,
+            "thresholds": {
+                "rate>0.95": false
+            },
+            "value": 1
+        },
+        "http_req_tls_handshaking": {
+            "p(99)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_receiving": {
+            "p(95)": 0.591354,
+            "p(99)": 0.8484375999999991,
+            "avg": 0.24857339788199656,
+            "min": 0.027903,
+            "med": 0.162515,
+            "max": 2.155817,
+            "p(90)": 0.507646
+        },
+        "notification_test_list_unread_count": {
+            "p(90)": 761.4000000000001,
+            "p(95)": 767,
+            "p(99)": 771,
+            "avg": 718,
+            "min": 664,
+            "med": 718,
+            "max": 772
+        },
+        "notification_test_list_duration": {
+            "avg": 16.512003024464835,
+            "min": 11.864446,
+            "med": 15.537036,
+            "max": 57.453991,
+            "p(90)": 20.021118000000016,
+            "p(95)": 22.912098,
+            "p(99)": 30.39454822
+        },
+        "notification_test_device_registrations": {
+            "count": 3,
+            "rate": 0.0493445358865326
+        },
+        "http_req_connecting": {
+            "med": 0,
+            "max": 0.52105,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0.18275779999999828,
+            "avg": 0.004406934947049924,
+            "min": 0
+        },
+        "iteration_duration": {
+            "min": 512.055718,
+            "med": 553.0183895,
+            "max": 634.78509,
+            "p(90)": 568.6914825,
+            "p(95)": 573.0770824,
+            "p(99)": 623.06191176,
+            "avg": 552.9339086737805
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 661,
+            "thresholds": {
+                "rate<0.05": false
+            },
+            "value": 0
+        },
+        "notification_test_queued": {
+            "count": 327,
+            "rate": 5.378554411632053
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(99)": 57.3957664,
+            "avg": 26.25054659304082,
+            "min": 11.864446,
+            "med": 18.772818,
+            "max": 254.152419,
+            "p(90)": 47.753666,
+            "p(95)": 51.120994
+        }
+    },
+    "setup_data": {
+        "tokens": [
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyIiwiZXhwIjoxNzgyODIxODUzLCJkaXNwbGF5X25hbWUiOiJMb2FkIFRlc3QgVXNlciAxIiwiaWF0IjoxNzgyMjE3MDUzLCJlbWFpbCI6ImxvYWR0ZXN0LXVzZXItMUBzd2ltcHVsc2UubG9jYWwifQ.nsP6TQxveBfoScNYwwm8jMhyeMtWY6BZHgnaCpzuXZs",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIzIiwiZXhwIjoxNzgyODIxODU0LCJkaXNwbGF5X25hbWUiOiJMb2FkIFRlc3QgVXNlciAyIiwiaWF0IjoxNzgyMjE3MDU0LCJlbWFpbCI6ImxvYWR0ZXN0LXVzZXItMkBzd2ltcHVsc2UubG9jYWwifQ.ljcKfiRh2StRyPNXtnScBc3RVJHkCMNpKx8asQuXj2E",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI0IiwiZXhwIjoxNzgyODIxODU0LCJkaXNwbGF5X25hbWUiOiJMb2FkIFRlc3QgVXNlciAzIiwiaWF0IjoxNzgyMjE3MDU0LCJlbWFpbCI6ImxvYWR0ZXN0LXVzZXItM0Bzd2ltcHVsc2UubG9jYWwifQ.kmJiqr-Fw8CThLojKDdMfe5K-UA69ihIm2cI9n_8VZw"
+        ]
+    }
+}

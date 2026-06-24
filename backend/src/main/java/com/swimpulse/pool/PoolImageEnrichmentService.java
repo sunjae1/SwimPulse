@@ -41,6 +41,7 @@ public class PoolImageEnrichmentService {
 			"img.youtube.com",
 			"facebook.com",
 			"instagram.com",
+			"cdninstagram.com",
 			"kakao",
 			"naverblog",
 			"blog",
@@ -62,7 +63,7 @@ public class PoolImageEnrichmentService {
 
 	@Transactional
 	public PoolImageEnrichmentResult enrichFallback(Pool pool) {
-		return enrich(pool, false);
+		return useDefaultImage(pool, pool.getImageUrl(), "Favicon images are not used as pool representative images.");
 	}
 
 	private PoolImageEnrichmentResult enrich(Pool pool, boolean includeRepresentativeImages) {
@@ -84,16 +85,7 @@ public class PoolImageEnrichmentService {
 					return representative;
 				}
 			}
-			PoolImageEnrichmentResult favicon = tryCandidates(
-					pool,
-					previousImageUrl,
-					faviconCandidates(document),
-					false,
-					"Favicon found from official homepage."
-			);
-			return favicon != null
-					? favicon
-					: useDefaultImage(pool, previousImageUrl, "Homepage did not contain a usable og:image or favicon.");
+			return useDefaultImage(pool, previousImageUrl, "Homepage did not contain a usable representative image.");
 		} catch (RuntimeException exception) {
 			log.warn("Pool image enrichment failed. poolId={} homepageUrl={} message={}",
 					pool.getId(), pool.getHomepageUrl(), exception.getMessage());

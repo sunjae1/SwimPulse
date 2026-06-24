@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +28,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class NotificationService {
 	private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
+	private static final int DEFAULT_PAGE_SIZE = 20;
+	private static final int MAX_PAGE_SIZE = 100;
 
 	private final NotificationRepository notificationRepository;
 	private final SubscriptionRepository subscriptionRepository;
@@ -82,12 +86,31 @@ public class NotificationService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<NotificationResponse> findByUser(Long userId) {
+	public NotificationPageResponse findByUser(Long userId, Integer page, Integer size) {
 		ensureUserExists(userId);
-		return notificationRepository.findByUser_IdOrderByCreatedAtDesc(userId)
-				.stream()
-				.map(NotificationResponse::from)
-				.toList();
+		Page<Notification> notifications = notificationRepository.findByUser_IdOrderByCreatedAtDesc(
+				userId,
+				notificationPageRequest(page, size)
+		);
+		long unreadCount = notificationRepository.countByUser_IdAndReadAtIsNull(userId);
+		return NotificationPageResponse.from(notifications, unreadCount);
+	}
+
+	@Transactional(readOnly = true)
+	public List<NotificationResponse> findRecentByUser(Long userId, int size) {
+		return findByUser(userId, 0, size).content();
+	}
+
+	@Transactional(readOnly = true)
+	public long countByUser(Long userId) {
+		ensureUserExists(userId);
+		return notificationRepository.countByUser_Id(userId);
+	}
+
+	@Transactional(readOnly = true)
+	public long countUnreadByUser(Long userId) {
+		ensureUserExists(userId);
+		return notificationRepository.countByUser_IdAndReadAtIsNull(userId);
 	}
 
 	@Transactional
@@ -185,6 +208,7 @@ public class NotificationService {
 								"poolId", work.poolId().toString(),
 								"poolName", work.poolName(),
 								"eventTitle", work.eventTitle(),
+								"noticeUrl", work.noticeUrl() == null ? "" : work.noticeUrl(),
 								"type", work.type().name()
 						)
 				)));
@@ -240,6 +264,7 @@ public class NotificationService {
 				notification.getPool().getName(),
 				notification.getEvent().getId(),
 				notification.getEvent().getTitle(),
+				noticeUrl(notification),
 				notification.getType(),
 				notification.getTitle(),
 				notification.getMessage(),
@@ -259,6 +284,14 @@ public class NotificationService {
 		meterRegistry.counter("swimpulse.notification.delivery", "result", "sent", "type", notification.getType().name()).increment();
 		log.info("Notification delivery succeeded. notificationId={} failedDevices={}",
 				notificationId, failedDevices);
+	}
+
+	private String noticeUrl(Notification notification) {
+		if (notification.getEvent().getNoticeRegistrationPeriod() == null
+				|| notification.getEvent().getNoticeRegistrationPeriod().getNotice() == null) {
+			return notification.getEvent().getNoticeUrl();
+		}
+		return notification.getEvent().getNoticeRegistrationPeriod().getNotice().getUrl();
 	}
 
 	private boolean markDeliveryFailed(Long notificationId, String failureReason, int failedDevices) {
@@ -330,12 +363,19 @@ public class NotificationService {
 		}
 	}
 
+	private PageRequest notificationPageRequest(Integer page, Integer size) {
+		int safePage = page == null ? 0 : Math.max(0, page);
+		int safeSize = size == null ? DEFAULT_PAGE_SIZE : Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+		return PageRequest.of(safePage, safeSize);
+	}
+
 	public record DeliveryWork(
 			Long notificationId,
 			Long poolId,
 			String poolName,
 			Long eventId,
 			String eventTitle,
+			String noticeUrl,
 			NotificationType type,
 			String title,
 			String message,
@@ -343,7 +383,7 @@ public class NotificationService {
 			boolean skip
 	) {
 		public static DeliveryWork skip(Long notificationId) {
-			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, List.of(), true);
+			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, null, List.of(), true);
 		}
 	}
 }

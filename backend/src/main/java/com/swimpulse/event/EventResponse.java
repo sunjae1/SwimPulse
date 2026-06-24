@@ -5,6 +5,7 @@ import java.time.Instant;
 public record EventResponse(
 		Long id,
 		Long noticeRegistrationPeriodId,
+		String noticeUrl,
 		Long poolId,
 		String poolName,
 		String title,
@@ -18,6 +19,7 @@ public record EventResponse(
 		return new EventResponse(
 				event.getId(),
 				event.getNoticeRegistrationPeriod() == null ? null : event.getNoticeRegistrationPeriod().getId(),
+				noticeUrl(event),
 				event.getPool().getId(),
 				event.getPool().getName(),
 				event.getTitle(),
@@ -27,5 +29,12 @@ public record EventResponse(
 				event.isReminderQueued(),
 				event.isStartQueued()
 		);
+	}
+
+	private static String noticeUrl(RegistrationEvent event) {
+		if (event.getNoticeRegistrationPeriod() == null || event.getNoticeRegistrationPeriod().getNotice() == null) {
+			return event.getNoticeUrl();
+		}
+		return event.getNoticeRegistrationPeriod().getNotice().getUrl();
 	}
 }

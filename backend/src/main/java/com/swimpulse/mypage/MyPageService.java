@@ -34,8 +34,17 @@ public class MyPageService {
 	public MyPageResponse findMyPage(Long userId) {
 		UserResponse user = userService.findUser(userId);
 		List<SubscriptionResponse> subscriptions = subscriptionService.findByUser(userId);
-		List<NotificationResponse> notifications = notificationService.findByUser(userId);
+		List<NotificationResponse> notifications = notificationService.findRecentByUser(userId, 20);
+		long notificationCount = notificationService.countByUser(userId);
+		long unreadNotificationCount = notificationService.countUnreadByUser(userId);
 		long activeDeviceCount = userDeviceRepository.countByUser_IdAndEnabledTrue(userId);
-		return MyPageResponse.from(user, subscriptions, notifications, activeDeviceCount);
+		return MyPageResponse.from(
+				user,
+				subscriptions,
+				notifications,
+				notificationCount,
+				unreadNotificationCount,
+				activeDeviceCount
+		);
 	}
 }
