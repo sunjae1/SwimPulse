@@ -34,6 +34,7 @@ import {
   getEvents,
   getMe,
   getNearbyPools,
+  getNotification,
   getNotificationPage,
   getSubscriptions,
   getPoolLocationCandidates,
@@ -176,6 +177,18 @@ export function DashboardClient({
     const nextQuery = nextParams.toString();
     window.history.replaceState(null, "", nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname);
   }
+
+  useEffect(() => {
+    if (!initialNotificationId) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setPendingNotificationLaunchId(initialNotificationId);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [initialNotificationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -507,6 +520,7 @@ export function DashboardClient({
         registrationStartsAt: targetPeriod.startsAt,
         registrationEndsAt: targetPeriod.endsAt,
         noticeRegistrationPeriodId,
+        noticeUrl: targetNotice.url,
       });
       const [freshSubscriptions, freshEvents] = await Promise.all([getSubscriptions(), getEvents()]);
       setSubscriptions(freshSubscriptions);
@@ -739,19 +753,43 @@ export function DashboardClient({
       return;
     }
 
-    const target = notifications.find((item) => item.id === notificationId);
-    if (!target) {
-      clearSearchParam("notificationId");
-      window.setTimeout(() => {
-        setNotice("해당 알림을 찾지 못했습니다.");
-        setPendingNotificationLaunchId(null);
-      }, 0);
-      return;
+    let cancelled = false;
+
+    async function openNotificationFromLaunch() {
+      const target = notifications.find((item) => item.id === notificationId);
+      if (target) {
+        window.setTimeout(() => {
+          if (!cancelled) {
+            setPushNotificationModal(target);
+          }
+        }, 0);
+        return;
+      }
+
+      try {
+        const fetched = await getNotification(notificationId);
+        if (cancelled) {
+          return;
+        }
+        setNotifications((items) => (items.some((item) => item.id === fetched.id) ? items : [fetched, ...items]));
+        setPushNotificationModal(fetched);
+      } catch {
+        if (cancelled) {
+          return;
+        }
+        clearSearchParam("notificationId");
+        window.setTimeout(() => {
+          setNotice("해당 알림을 찾지 못했습니다.");
+          setPendingNotificationLaunchId(null);
+        }, 0);
+      }
     }
 
-    window.setTimeout(() => {
-      setPushNotificationModal(target);
-    }, 0);
+    openNotificationFromLaunch();
+
+    return () => {
+      cancelled = true;
+    };
   }, [notifications, notificationsLoaded, pendingNotificationLaunchId, user]);
 
   async function submitEvent(event: FormEvent<HTMLFormElement>) {

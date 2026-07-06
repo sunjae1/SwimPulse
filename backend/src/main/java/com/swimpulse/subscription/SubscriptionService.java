@@ -102,7 +102,8 @@ public class SubscriptionService {
 				request.poolId(),
 				title,
 				request.registrationStartsAt(),
-				request.registrationEndsAt()
+				request.registrationEndsAt(),
+				request.noticeUrl()
 		);
 	}
 
@@ -115,7 +116,6 @@ public class SubscriptionService {
 		}
 	}
 
-	@Transactional
 	public SubscriptionResponse updatePeriod(Long userId, Long subscriptionId, UpdateSubscriptionPeriodRequest request) {
 		if (!request.registrationStartsAt().isBefore(request.registrationEndsAt())) {
 			throw new BadRequestException("registrationStartsAt must be before registrationEndsAt");
@@ -124,28 +124,19 @@ public class SubscriptionService {
 			throw new BadRequestException("Cannot subscribe to an already closed registration period.");
 		}
 
-		Subscription subscription = subscriptionRepository.findByIdAndUser_Id(subscriptionId, userId)
-				.orElseThrow(() -> new NotFoundException("Subscription not found."));
-		String sourceNoticeUrl = noticeUrl(subscription.getEvent());
+		SubscriptionInsertService.SubscriptionUpdateSource source = insertService.findUpdateSource(userId, subscriptionId);
 		String title = normalizeTitle(request.title());
 		RegistrationEvent event = eventResolver.getOrCreate(
-				subscription.getPool().getId(),
+				source.poolId(),
 				title,
 				request.registrationStartsAt(),
 				request.registrationEndsAt(),
-				sourceNoticeUrl
+				source.noticeUrl()
 		);
-
-		subscriptionRepository.findByUser_IdAndEvent_Id(userId, event.getId())
-				.filter(existing -> !existing.getId().equals(subscription.getId()))
-				.ifPresent(existing -> {
-					throw new BadRequestException("Already subscribed to the same registration period.");
-				});
-
-		subscription.reassignEvent(event);
+		SubscriptionResponse response = insertService.reassignEvent(userId, subscriptionId, event.getId());
 		log.info("Subscription period updated. userId={} subscriptionId={} eventId={} startsAt={} endsAt={}",
 				userId, subscriptionId, event.getId(), event.getRegistrationStartsAt(), event.getRegistrationEndsAt());
-		return SubscriptionResponse.from(subscription);
+		return response;
 	}
 
 	@Transactional
@@ -172,13 +163,4 @@ public class SubscriptionService {
 		return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 120);
 	}
 
-	private String noticeUrl(RegistrationEvent event) {
-		if (event.getNoticeUrl() != null && !event.getNoticeUrl().isBlank()) {
-			return event.getNoticeUrl();
-		}
-		if (event.getNoticeRegistrationPeriod() == null || event.getNoticeRegistrationPeriod().getNotice() == null) {
-			return null;
-		}
-		return event.getNoticeRegistrationPeriod().getNotice().getUrl();
-	}
 }

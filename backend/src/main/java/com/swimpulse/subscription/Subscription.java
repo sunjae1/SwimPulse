@@ -74,6 +74,5 @@ public class Subscription {
 
 	public void reassignEvent(RegistrationEvent event) {
 		this.event = event;
-		this.pool = event.getPool();
 	}
 }

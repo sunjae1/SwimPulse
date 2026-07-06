@@ -54,6 +54,26 @@ public class RegistrationEventInsertService {
 		);
 	}
 
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public Optional<RegistrationEvent> findExistingAndRememberNoticeUrl(
+			Long poolId,
+			String title,
+			Instant registrationStartsAt,
+			Instant registrationEndsAt,
+			String noticeUrl
+	) {
+		return eventRepository.findByPool_IdAndTitleAndRegistrationStartsAtAndRegistrationEndsAt(
+						poolId,
+						title,
+						registrationStartsAt,
+						registrationEndsAt
+				)
+				.map(event -> {
+					event.rememberNoticeUrl(noticeUrl);
+					return event;
+				});
+	}
+
 	@Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
 	public Optional<RegistrationEvent> findByNoticeRegistrationPeriodId(Long noticeRegistrationPeriodId) {
 		return eventRepository.findByNoticeRegistrationPeriod_Id(noticeRegistrationPeriodId);

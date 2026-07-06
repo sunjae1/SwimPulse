@@ -1,7 +1,10 @@
 package com.swimpulse.notification;
 
 import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.AndroidConfig;
+import com.google.firebase.messaging.AndroidNotification;
 import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.Notification;
 import java.util.HashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -25,6 +28,18 @@ public class FirebaseAdminFcmClient implements FcmClient {
 
 			Message firebaseMessage = Message.builder()
 					.setToken(message.token())
+					.setNotification(Notification.builder()
+							.setTitle(message.title())
+							.setBody(message.body())
+							.build())
+					.setAndroidConfig(AndroidConfig.builder()
+							.setPriority(AndroidConfig.Priority.HIGH)
+							.setNotification(AndroidNotification.builder()
+									.setTitle(message.title())
+									.setBody(message.body())
+									.setChannelId("swimpulse_notifications")
+									.build())
+							.build())
 					.putAllData(data)
 					.build();
 			String messageId = firebaseMessaging.send(firebaseMessage);

@@ -92,7 +92,8 @@ class SubscriptionServiceTests {
 		);
 		setField(newEvent, "id", 31L);
 
-		when(subscriptionRepository.findByIdAndUser_Id(21L, 7L)).thenReturn(Optional.of(subscription));
+		when(insertService.findUpdateSource(7L, 21L))
+				.thenReturn(new SubscriptionInsertService.SubscriptionUpdateSource(101L, "https://example.com/source-notice"));
 		when(eventResolver.getOrCreate(
 				101L,
 				"오후반 모집",
@@ -100,7 +101,8 @@ class SubscriptionServiceTests {
 				newEndsAt,
 				"https://example.com/source-notice"
 		)).thenReturn(newEvent);
-		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 31L)).thenReturn(Optional.empty());
+		when(insertService.reassignEvent(7L, 21L, 31L))
+				.thenReturn(SubscriptionResponse.from(new Subscription(user, newEvent)));
 
 		SubscriptionResponse response = subscriptionService.updatePeriod(
 				7L,
@@ -113,8 +115,7 @@ class SubscriptionServiceTests {
 		assertEquals("https://example.com/source-notice", response.event().noticeUrl());
 		assertEquals(newStartsAt, response.event().registrationStartsAt());
 		assertEquals(newEndsAt, response.event().registrationEndsAt());
-		assertSame(subscription.getEvent().getPool(), pool);
-		assertEquals(31L, subscription.getEvent().getId());
+		verify(insertService).reassignEvent(7L, 21L, 31L);
 	}
 
 	@Test
@@ -170,7 +171,8 @@ class SubscriptionServiceTests {
 						"신규 회원 - 7월 신규 회원 모집",
 						startsAt,
 						endsAt,
-						61L
+						61L,
+						null
 				)
 		);
 
@@ -187,8 +189,10 @@ class SubscriptionServiceTests {
 		Instant startsAt = Instant.now().plus(10, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
 		Instant endsAt = startsAt.plus(4, ChronoUnit.DAYS);
 		String title = "재등록 - 6월 회원모집 (이번 달 예상)";
+		String noticeUrl = "https://example.com/notices/old-june";
 		RegistrationEvent event = new RegistrationEvent(
 				pool,
+				noticeUrl,
 				title,
 				startsAt,
 				endsAt,
@@ -197,7 +201,7 @@ class SubscriptionServiceTests {
 		setField(event, "id", 72L);
 
 		when(userRepository.existsById(7L)).thenReturn(true);
-		when(eventResolver.getOrCreate(44L, title, startsAt, endsAt)).thenReturn(event);
+		when(eventResolver.getOrCreate(44L, title, startsAt, endsAt, noticeUrl)).thenReturn(event);
 		when(insertService.findExistingResponse(7L, 72L)).thenReturn(Optional.empty())
 				.thenReturn(Optional.of(SubscriptionResponse.from(new Subscription(user, event))));
 		when(insertService.insert(7L, 72L, 44L))
@@ -205,13 +209,14 @@ class SubscriptionServiceTests {
 
 		SubscriptionResponse response = subscriptionService.subscribe(
 				7L,
-				new CreateSubscriptionRequest(44L, title, startsAt, endsAt, null)
+				new CreateSubscriptionRequest(44L, title, startsAt, endsAt, null, noticeUrl)
 		);
 
 		assertEquals(null, response.event().noticeRegistrationPeriodId());
+		assertEquals(noticeUrl, response.event().noticeUrl());
 		assertEquals(startsAt, response.event().registrationStartsAt());
 		assertEquals(endsAt, response.event().registrationEndsAt());
-		verify(eventResolver).getOrCreate(44L, title, startsAt, endsAt);
+		verify(eventResolver).getOrCreate(44L, title, startsAt, endsAt, noticeUrl);
 		verify(periodRepository, never()).findByIdAndStatusWithNoticeAndPool(
 				org.mockito.ArgumentMatchers.anyLong(),
 				org.mockito.ArgumentMatchers.any(NoticeRegistrationPeriodStatus.class)
@@ -248,7 +253,8 @@ class SubscriptionServiceTests {
 		Subscription existing = new Subscription(user, targetEvent);
 		setField(existing, "id", 22L);
 
-		when(subscriptionRepository.findByIdAndUser_Id(21L, 7L)).thenReturn(Optional.of(subscription));
+		when(insertService.findUpdateSource(7L, 21L))
+				.thenReturn(new SubscriptionInsertService.SubscriptionUpdateSource(101L, null));
 		when(eventResolver.getOrCreate(
 				101L,
 				"오후반 모집",
@@ -256,7 +262,8 @@ class SubscriptionServiceTests {
 				targetEvent.getRegistrationEndsAt(),
 				null
 		)).thenReturn(targetEvent);
-		when(subscriptionRepository.findByUser_IdAndEvent_Id(7L, 41L)).thenReturn(Optional.of(existing));
+		when(insertService.reassignEvent(7L, 21L, 41L))
+				.thenThrow(new BadRequestException("Already subscribed to the same registration period."));
 
 		assertThrows(BadRequestException.class, () -> subscriptionService.updatePeriod(
 				7L,

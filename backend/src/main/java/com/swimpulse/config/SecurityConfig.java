@@ -25,6 +25,7 @@ public class SecurityConfig {
 				.csrf(AbstractHttpConfigurer::disable)
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
+						.requestMatchers(HttpMethod.POST, "/api/auth/mobile/google").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/pools", "/api/pools/nearby", "/api/events").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/pools/location-candidates").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/locations/search", "/api/locations/geocode", "/api/locations/reverse-geocode").permitAll()

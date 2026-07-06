@@ -4,6 +4,7 @@ import com.swimpulse.user.UserResponse;
 import com.swimpulse.user.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -20,10 +21,16 @@ public class AuthController {
 
 	private final UserService userService;
 	private final AuthCookieService authCookieService;
+	private final MobileGoogleAuthService mobileGoogleAuthService;
 
-	public AuthController(UserService userService, AuthCookieService authCookieService) {
+	public AuthController(
+			UserService userService,
+			AuthCookieService authCookieService,
+			MobileGoogleAuthService mobileGoogleAuthService
+	) {
 		this.userService = userService;
 		this.authCookieService = authCookieService;
+		this.mobileGoogleAuthService = mobileGoogleAuthService;
 	}
 
 	@GetMapping("/me")
@@ -40,5 +47,10 @@ public class AuthController {
 		authCookieService.clearSession(response);
 		log.info("User logged out.");
 		return ResponseEntity.noContent().build();
+	}
+
+	@PostMapping("/auth/mobile/google")
+	public MobileLoginResponse mobileGoogleLogin(@Valid @org.springframework.web.bind.annotation.RequestBody MobileGoogleLoginRequest request) {
+		return mobileGoogleAuthService.login(request);
 	}
 }

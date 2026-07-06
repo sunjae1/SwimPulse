@@ -28,6 +28,11 @@ public class OAuthLoginService {
 		String displayName = optional(principal, "name", email.substring(0, email.indexOf("@")));
 		String profileImageUrl = optional(principal, "picture", null);
 
+		return loginGoogleUser(providerUserId, email, displayName, profileImageUrl);
+	}
+
+	@Transactional
+	public AppUser loginGoogleUser(String providerUserId, String email, String displayName, String profileImageUrl) {
 		return socialAccountRepository.findByProviderAndProviderUserId(SocialProvider.GOOGLE, providerUserId)
 				.map(account -> {
 					AppUser user = account.getUser();

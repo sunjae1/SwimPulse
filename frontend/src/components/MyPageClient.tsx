@@ -68,6 +68,7 @@ export function MyPageClient() {
   const [reloadKey, setReloadKey] = useState(0);
   const [editingSubscription, setEditingSubscription] = useState<SubscriptionEditForm | null>(null);
   const [deletingSubscription, setDeletingSubscription] = useState<Subscription | null>(null);
+  const [selectedSubscription, setSelectedSubscription] = useState<Subscription | null>(null);
   const [savingSubscriptionId, setSavingSubscriptionId] = useState<number | null>(null);
   const [removingSubscriptionId, setRemovingSubscriptionId] = useState<number | null>(null);
   const [editValidationShakeKey, setEditValidationShakeKey] = useState(0);
@@ -78,6 +79,7 @@ export function MyPageClient() {
   const [showClosedSubscriptions, setShowClosedSubscriptions] = useState(false);
   const [readingNotificationId, setReadingNotificationId] = useState<number | null>(null);
   const [notificationPageLoading, setNotificationPageLoading] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState<InAppNotification | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,6 +169,11 @@ export function MyPageClient() {
     });
   }
 
+  function openSubscriptionEditorFromDetail(subscription: Subscription) {
+    setSelectedSubscription(null);
+    openSubscriptionEditor(subscription);
+  }
+
   function closeSubscriptionEditor() {
     if (savingSubscriptionId !== null) {
       return;
@@ -184,6 +191,11 @@ export function MyPageClient() {
 
     setNotice(null);
     setDeletingSubscription(subscription);
+  }
+
+  function openSubscriptionDeleteConfirmFromDetail(subscription: Subscription) {
+    setSelectedSubscription(null);
+    openSubscriptionDeleteConfirm(subscription);
   }
 
   function closeSubscriptionDeleteConfirm() {
@@ -264,11 +276,21 @@ export function MyPageClient() {
       const wasUnread = target.readAt == null;
       setData((current) => (current ? applyNotificationUpdate(current, updated, wasUnread) : current));
       setNotificationPage((current) => (current ? applyNotificationPageUpdate(current, updated, wasUnread) : current));
+      setSelectedNotification((current) => (current?.id === updated.id ? updated : current));
       setNotice("알림을 읽음 처리했습니다.");
     } catch (error) {
       setNotice(getErrorMessage(error, "알림 읽음 처리에 실패했습니다."));
     } finally {
       setReadingNotificationId(null);
+    }
+  }
+
+  async function closeNotificationModal() {
+    const notification = selectedNotification;
+    setSelectedNotification(null);
+
+    if (notification && !notification.readAt) {
+      await readNotification(notification.id);
     }
   }
 
@@ -465,6 +487,7 @@ export function MyPageClient() {
                       <SubscriptionCard
                         key={subscription.id}
                         subscription={subscription}
+                        onOpen={setSelectedSubscription}
                         onEdit={openSubscriptionEditor}
                         onDelete={openSubscriptionDeleteConfirm}
                         editBusy={savingSubscriptionId === subscription.id}
@@ -492,6 +515,7 @@ export function MyPageClient() {
                             <SubscriptionCard
                               key={subscription.id}
                               subscription={subscription}
+                              onOpen={setSelectedSubscription}
                               onEdit={openSubscriptionEditor}
                               onDelete={openSubscriptionDeleteConfirm}
                               editBusy={savingSubscriptionId === subscription.id}
@@ -531,6 +555,7 @@ export function MyPageClient() {
                         key={notification.id}
                         notification={notification}
                         busy={readingNotificationId === notification.id}
+                        onOpen={setSelectedNotification}
                         onMarkRead={readNotification}
                       />
                     ))
@@ -646,6 +671,23 @@ export function MyPageClient() {
           busy={removingSubscriptionId === deletingSubscription.id}
           onClose={closeSubscriptionDeleteConfirm}
           onConfirm={removeSubscription}
+        />
+      ) : null}
+      {selectedSubscription ? (
+        <SubscriptionDetailModal
+          subscription={selectedSubscription}
+          editBusy={savingSubscriptionId === selectedSubscription.id}
+          deleteBusy={removingSubscriptionId === selectedSubscription.id}
+          onClose={() => setSelectedSubscription(null)}
+          onEdit={openSubscriptionEditorFromDetail}
+          onDelete={openSubscriptionDeleteConfirmFromDetail}
+        />
+      ) : null}
+      {selectedNotification ? (
+        <MyPageNotificationModal
+          notification={selectedNotification}
+          busy={readingNotificationId === selectedNotification.id}
+          onClose={closeNotificationModal}
         />
       ) : null}
     </main>
@@ -804,12 +846,14 @@ function HealthPill({ label, value }: { label: string; value: string }) {
 
 function SubscriptionCard({
   subscription,
+  onOpen,
   onEdit,
   onDelete,
   editBusy,
   deleteBusy,
 }: {
   subscription: Subscription;
+  onOpen: (subscription: Subscription) => void;
   onEdit: (subscription: Subscription) => void;
   onDelete: (subscription: Subscription) => void;
   editBusy: boolean;
@@ -821,7 +865,18 @@ function SubscriptionCard({
   const canEdit = event && event.status !== "CLOSED";
 
   return (
-    <article className="swim-row-motion rounded-2xl border border-[#d9eaf6] bg-[#f6fbff] px-4 py-4">
+    <article
+      className="swim-row-motion cursor-pointer rounded-2xl border border-[#d9eaf6] bg-[#f6fbff] px-4 py-4 transition hover:border-[#0284c7] hover:bg-white focus-within:border-[#0284c7]"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(subscription)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(subscription);
+        }
+      }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -833,7 +888,10 @@ function SubscriptionCard({
           {canEdit ? (
             <button
               className="swim-action inline-flex h-9 items-center justify-center rounded-lg border border-[#b8d7ec] bg-white px-3 text-sm font-semibold text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1] disabled:opacity-50"
-              onClick={() => onEdit(subscription)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit(subscription);
+              }}
               disabled={busy}
               type="button"
             >
@@ -842,7 +900,10 @@ function SubscriptionCard({
           ) : null}
           <button
             className="swim-action inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#fecaca] bg-white px-3 text-sm font-semibold text-[#b91c1c] hover:border-[#ef4444] hover:bg-[#fff1f2] disabled:opacity-50"
-            onClick={() => onDelete(subscription)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(subscription);
+            }}
             disabled={busy || !event}
             type="button"
           >
@@ -865,6 +926,7 @@ function SubscriptionCard({
           href={event.noticeUrl}
           target="_blank"
           rel="noreferrer"
+          onClick={(event) => event.stopPropagation()}
         >
           원문 보기
           <ExternalLink size={15} aria-hidden />
@@ -998,6 +1060,114 @@ function SubscriptionEditModal({
   );
 }
 
+function SubscriptionDetailModal({
+  subscription,
+  editBusy,
+  deleteBusy,
+  onClose,
+  onEdit,
+  onDelete,
+}: {
+  subscription: Subscription;
+  editBusy: boolean;
+  deleteBusy: boolean;
+  onClose: () => void;
+  onEdit: (subscription: Subscription) => void;
+  onDelete: (subscription: Subscription) => void;
+}) {
+  const event = subscription.event;
+  const poolName = event?.poolName ?? subscription.pool.name;
+  const canEdit = Boolean(event && event.status !== "CLOSED");
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/35 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="subscription-detail-title"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-[28px] border border-[#d8ddd5] bg-white shadow-[0_20px_60px_rgba(23,32,29,0.18)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[#e3e7e1] px-5 py-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#0f766e]">Subscription</p>
+            <h2 id="subscription-detail-title" className="mt-2 text-xl font-semibold">
+              구독 상세
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[#66746d]">
+              선택한 모집 기간의 원문과 개인 구독 액션을 확인할 수 있습니다.
+            </p>
+          </div>
+          <button
+            className="inline-flex h-9 min-w-14 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-[#cdd5cf] px-3 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
+            onClick={onClose}
+            type="button"
+          >
+            닫기
+          </button>
+        </div>
+        <div className="space-y-4 px-5 py-5">
+          <div className="rounded-2xl border border-[#d9eaf6] bg-[#f6fbff] px-4 py-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {event ? <EventStatusBadge status={event.status} /> : null}
+              <p className="text-sm font-semibold text-[#102033]">{poolName}</p>
+            </div>
+            <p className="mt-3 text-base font-semibold text-[#28516f]">
+              {event?.title ?? "기간 정보가 없는 구독"}
+            </p>
+            {event ? (
+              <p className="mt-2 text-sm leading-6 text-[#4b6f8b]">
+                {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
+              </p>
+            ) : null}
+            <p className="mt-3 text-xs text-[#7c8982]">구독 생성 {formatDateTime(subscription.createdAt)}</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {event?.noticeUrl ? (
+              <a
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
+                href={event.noticeUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                원문 보기
+                <ExternalLink size={15} aria-hidden />
+              </a>
+            ) : null}
+            {canEdit ? (
+              <button
+                className="inline-flex h-11 items-center justify-center rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:opacity-50"
+                onClick={() => onEdit(subscription)}
+                disabled={editBusy}
+                type="button"
+              >
+                {editBusy ? "수정 중..." : "기간 수정"}
+              </button>
+            ) : null}
+            <button
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#b91c1c] px-4 text-sm font-semibold text-white transition hover:bg-[#991b1b] disabled:opacity-50"
+              onClick={() => onDelete(subscription)}
+              disabled={deleteBusy || !event}
+              type="button"
+            >
+              <Trash2 size={16} aria-hidden />
+              {deleteBusy ? "해제 중..." : "구독 해제"}
+            </button>
+          </div>
+          {!canEdit ? (
+            <p className="rounded-2xl bg-[#f7f8f4] px-4 py-3 text-sm leading-6 text-[#66746d]">
+              마감된 구독은 기간 수정이 불가능하며 구독 해제만 가능합니다.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SubscriptionDeleteConfirmModal({
   subscription,
   busy,
@@ -1080,14 +1250,27 @@ function SubscriptionDeleteConfirmModal({
 function NotificationCard({
   notification,
   busy,
+  onOpen,
   onMarkRead,
 }: {
   notification: InAppNotification;
   busy: boolean;
+  onOpen: (notification: InAppNotification) => void;
   onMarkRead: (notificationId: number) => void;
 }) {
   return (
-    <article className="rounded-2xl border border-[#e3e7e1] bg-[#fafbf8] px-4 py-4">
+    <article
+      className="cursor-pointer rounded-2xl border border-[#e3e7e1] bg-[#fafbf8] px-4 py-4 transition hover:border-[#0f766e] hover:bg-white focus-within:border-[#0f766e]"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(notification)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(notification);
+        }
+      }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <NotificationStatusBadge status={notification.status} />
@@ -1103,7 +1286,10 @@ function NotificationCard({
         </div>
         <button
           className="inline-flex h-9 items-center justify-center rounded-lg border border-[#cdd5cf] bg-white px-3 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e] disabled:cursor-not-allowed disabled:opacity-50"
-          onClick={() => onMarkRead(notification.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onMarkRead(notification.id);
+          }}
           disabled={busy || Boolean(notification.readAt)}
           type="button"
         >
@@ -1125,12 +1311,84 @@ function NotificationCard({
           href={notification.noticeUrl}
           target="_blank"
           rel="noreferrer"
+          onClick={(event) => event.stopPropagation()}
         >
           원문 보기
           <ExternalLink size={15} aria-hidden />
         </a>
       ) : null}
     </article>
+  );
+}
+
+function MyPageNotificationModal({
+  notification,
+  busy,
+  onClose,
+}: {
+  notification: InAppNotification;
+  busy: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/45 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="my-page-notification-title"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-[28px] border border-[#d8ddd5] bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="space-y-5 px-6 py-6 sm:px-7 sm:py-7">
+          <div className="flex items-center justify-between gap-3">
+            <span className="rounded-full bg-[#edf7f5] px-3 py-1 text-xs font-semibold text-[#0f766e]">PUSH 알림</span>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                notification.readAt ? "bg-[#f0f1ef] text-[#66746d]" : "bg-[#fff0ed] text-[#bf4b3e]"
+              }`}
+            >
+              {notification.readAt ? "읽음" : "안 읽음"}
+            </span>
+          </div>
+          <div className="space-y-3">
+            <h2 id="my-page-notification-title" className="text-2xl font-semibold tracking-tight text-[#17201d]">
+              {notification.title}
+            </h2>
+            <p className="text-base leading-7 text-[#31413b]">{notification.message}</p>
+          </div>
+          <div className="rounded-2xl bg-[#f7f8f4] px-4 py-4 text-sm text-[#47564f]">
+            <p className="font-semibold text-[#17201d]">{notification.poolName}</p>
+            <p className="mt-1">{notification.eventTitle}</p>
+            <p className="mt-3 text-xs text-[#7c8982]">도착 {formatDateTime(notification.createdAt)}</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {notification.noticeUrl ? (
+              <a
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[#d8ddd5] bg-white px-4 text-sm font-semibold text-[#17201d] transition hover:border-[#17201d]"
+                href={notification.noticeUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                원문 보기
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </a>
+            ) : null}
+            <button
+              className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
+              onClick={onClose}
+              disabled={busy}
+              type="button"
+            >
+              {busy ? "읽음 처리 중..." : "확인"}
+            </button>
+          </div>
+          <p className="text-center text-xs text-[#7c8982]">바깥 영역을 눌러도 닫히며 읽음 처리됩니다.</p>
+        </div>
+      </div>
+    </div>
   );
 }
 

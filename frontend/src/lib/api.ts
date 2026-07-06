@@ -399,6 +399,7 @@ export async function createSubscription(input: {
   registrationStartsAt: string;
   registrationEndsAt: string;
   noticeRegistrationPeriodId: number | null;
+  noticeUrl?: string | null;
 }): Promise<Subscription> {
   return request<Subscription>("/api/subscriptions", {
     method: "POST",
@@ -433,6 +434,10 @@ export async function getNotificationPage(page = 0, size = 20): Promise<Notifica
 export async function getNotifications(): Promise<InAppNotification[]> {
   const page = await getNotificationPage();
   return page.content;
+}
+
+export async function getNotification(notificationId: number): Promise<InAppNotification> {
+  return request<InAppNotification>(`/api/notifications/${notificationId}`);
 }
 
 export async function markNotificationRead(notificationId: number): Promise<InAppNotification> {

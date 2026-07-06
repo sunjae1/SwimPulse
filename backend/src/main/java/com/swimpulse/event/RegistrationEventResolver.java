@@ -36,8 +36,13 @@ public class RegistrationEventResolver {
 
 	public RegistrationEvent getOrCreate(Long poolId, String title, Instant registrationStartsAt, Instant registrationEndsAt, String noticeUrl) {
 		ensurePoolExists(poolId);
-		return findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
-				.map(existing -> rememberNoticeUrl(existing, noticeUrl))
+		return insertService.findExistingAndRememberNoticeUrl(
+						poolId,
+						title,
+						registrationStartsAt,
+						registrationEndsAt,
+						noticeUrl
+				)
 				.orElseGet(() -> insertOrReuse(poolId, title, registrationStartsAt, registrationEndsAt, noticeUrl));
 	}
 
@@ -65,8 +70,13 @@ public class RegistrationEventResolver {
 		} catch (DataIntegrityViolationException exception) {
 			log.info("Concurrent registration event insert detected. Reusing existing row. poolId={} title={} startsAt={} endsAt={}",
 					poolId, title, registrationStartsAt, registrationEndsAt);
-			return insertService.findExisting(poolId, title, registrationStartsAt, registrationEndsAt)
-					.map(existing -> rememberNoticeUrl(existing, noticeUrl))
+			return insertService.findExistingAndRememberNoticeUrl(
+							poolId,
+							title,
+							registrationStartsAt,
+							registrationEndsAt,
+							noticeUrl
+					)
 					.orElseThrow(() -> exception);
 		}
 	}

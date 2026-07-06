@@ -3,6 +3,8 @@ package com.swimpulse.notification;
 import com.swimpulse.user.AppUser;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -33,6 +35,10 @@ public class UserDevice {
 	@Column(nullable = false, length = 500)
 	private String fcmToken;
 
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 20)
+	private DevicePlatform platform = DevicePlatform.WEB;
+
 	@Column(nullable = false)
 	private boolean enabled;
 
@@ -46,9 +52,14 @@ public class UserDevice {
 	}
 
 	public UserDevice(AppUser user, String deviceId, String fcmToken) {
+		this(user, deviceId, fcmToken, DevicePlatform.WEB);
+	}
+
+	public UserDevice(AppUser user, String deviceId, String fcmToken, DevicePlatform platform) {
 		this.user = user;
 		this.deviceId = deviceId;
 		this.fcmToken = fcmToken;
+		this.platform = platform == null ? DevicePlatform.WEB : platform;
 		this.enabled = true;
 		this.createdAt = Instant.now();
 		this.lastSeenAt = Instant.now();
@@ -56,6 +67,14 @@ public class UserDevice {
 
 	public void updateToken(String fcmToken) {
 		this.fcmToken = fcmToken;
+		this.platform = DevicePlatform.WEB;
+		this.enabled = true;
+		this.lastSeenAt = Instant.now();
+	}
+
+	public void updateToken(String fcmToken, DevicePlatform platform) {
+		this.fcmToken = fcmToken;
+		this.platform = platform == null ? DevicePlatform.WEB : platform;
 		this.enabled = true;
 		this.lastSeenAt = Instant.now();
 	}
@@ -71,6 +90,10 @@ public class UserDevice {
 
 	public boolean isEnabled() {
 		return enabled;
+	}
+
+	public DevicePlatform getPlatform() {
+		return platform == null ? DevicePlatform.WEB : platform;
 	}
 
 	public Instant getLastSeenAt() {

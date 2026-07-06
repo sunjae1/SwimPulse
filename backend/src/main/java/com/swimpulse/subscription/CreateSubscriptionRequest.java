@@ -9,6 +9,7 @@ public record CreateSubscriptionRequest(
 		@NotBlank String title,
 		@NotNull Instant registrationStartsAt,
 		@NotNull Instant registrationEndsAt,
-		Long noticeRegistrationPeriodId
+		Long noticeRegistrationPeriodId,
+		String noticeUrl
 ) {
 }

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "718199654379",
+    "project_id": "swimpulse-f571e",
+    "storage_bucket": "swimpulse-f571e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:718199654379:android:1d8ad3833c5aea69357bae",
+        "android_client_info": {
+          "package_name": "com.swimpulsemobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7ac6lPA6oJoASrOotMIlMmt4J-y8e03E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

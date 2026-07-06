@@ -37,6 +37,12 @@ public class NotificationController {
 		return notificationService.findByUser(user.id(), page, size);
 	}
 
+	@GetMapping("/{notificationId}")
+	public NotificationResponse findNotification(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable Long notificationId) {
+		log.info("Notification detail requested. userId={} notificationId={}", user.id(), notificationId);
+		return notificationService.findOneByUser(notificationId, user.id());
+	}
+
 	@PatchMapping("/{notificationId}/read")
 	public NotificationResponse markRead(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable Long notificationId) {
 		log.info("Notification read requested. userId={} notificationId={}", user.id(), notificationId);

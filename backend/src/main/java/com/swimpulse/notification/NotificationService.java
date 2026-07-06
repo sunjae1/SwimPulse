@@ -102,6 +102,16 @@ public class NotificationService {
 	}
 
 	@Transactional(readOnly = true)
+	public NotificationResponse findOneByUser(Long notificationId, Long userId) {
+		Notification notification = notificationRepository.findById(notificationId)
+				.orElseThrow(() -> new NotFoundException("Notification not found: " + notificationId));
+		if (!notification.getUser().getId().equals(userId)) {
+			throw new NotFoundException("Notification not found: " + notificationId);
+		}
+		return NotificationResponse.from(notification);
+	}
+
+	@Transactional(readOnly = true)
 	public long countByUser(Long userId) {
 		ensureUserExists(userId);
 		return notificationRepository.countByUser_Id(userId);
@@ -135,10 +145,10 @@ public class NotificationService {
 		AppUser user = userRepository.findById(userId)
 				.orElseThrow(() -> new NotFoundException("User not found: " + userId));
 		UserDevice device = userDeviceRepository.findByUser_IdAndDeviceId(userId, request.deviceId())
-				.orElseGet(() -> new UserDevice(user, request.deviceId(), request.fcmToken()));
-		device.updateToken(request.fcmToken());
+				.orElseGet(() -> new UserDevice(user, request.deviceId(), request.fcmToken(), request.resolvedPlatform()));
+		device.updateToken(request.fcmToken(), request.resolvedPlatform());
 		userDeviceRepository.save(device);
-		log.info("User device registered. userId={} deviceId={}", userId, request.deviceId());
+		log.info("User device registered. userId={} deviceId={} platform={}", userId, request.deviceId(), request.resolvedPlatform());
 	}
 
 	@Transactional(readOnly = true)
