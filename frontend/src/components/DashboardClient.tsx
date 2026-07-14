@@ -25,6 +25,7 @@ import {
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   ApiRequestError,
+  authUrl,
   createEvent,
   createPoolFromLocationCandidate,
   createSubscription,
@@ -449,7 +450,7 @@ export function DashboardClient({
   }
 
   function loginWithGoogle() {
-    window.location.href = "/oauth2/authorization/google";
+    window.location.href = authUrl("/oauth2/authorization/google");
   }
 
   async function logoutUser() {

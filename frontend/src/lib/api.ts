@@ -30,6 +30,10 @@ function apiUrl(path: string) {
   return `${baseUrl}${path}`;
 }
 
+export function authUrl(path: string) {
+  return apiUrl(path);
+}
+
 const fallbackPools: Pool[] = [
   {
     id: 1,

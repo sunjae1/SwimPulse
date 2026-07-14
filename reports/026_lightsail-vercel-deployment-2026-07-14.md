@@ -173,6 +173,13 @@ NAVER_SEARCH_CLIENT_ID=...
 NAVER_SEARCH_CLIENT_SECRET=...
 ```
 
+주의: `SWIMPULSE_OAUTH2_REDIRECT_URI`는 Vercel 프론트 주소가 아니라 Spring backend의 Google callback 주소여야 한다.
+
+```text
+올바름: https://api.your-domain.com/login/oauth2/code/google
+틀림:   https://YOUR_VERCEL_PROJECT.vercel.app/login/oauth2/code/google
+```
+
 랜덤 JWT secret 생성 예:
 
 ```bash

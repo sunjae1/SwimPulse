@@ -23,6 +23,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/AppNavigation";
 import {
   ApiRequestError,
+  authUrl,
   deleteSubscription,
   getMyPage,
   getNotificationPage,
@@ -124,7 +125,7 @@ export function MyPageClient() {
   }, [reloadKey]);
 
   function loginWithGoogle() {
-    window.location.href = "/oauth2/authorization/google";
+    window.location.href = authUrl("/oauth2/authorization/google");
   }
 
   async function logoutUser() {
