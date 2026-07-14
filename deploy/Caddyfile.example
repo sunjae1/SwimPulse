@@ -1,0 +1,8 @@
+api.example.com {
+	encode zstd gzip
+
+	# Keep Actuator private. Use an SSH tunnel for local Prometheus scraping.
+	respond /actuator/* 404
+
+	reverse_proxy 127.0.0.1:8080
+}

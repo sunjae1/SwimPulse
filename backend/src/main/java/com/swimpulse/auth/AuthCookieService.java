@@ -13,13 +13,16 @@ public class AuthCookieService {
 	private static final String SESSION_COOKIE = "JSESSIONID";
 
 	private final boolean secure;
+	private final String sameSite;
 	private final Duration maxAge;
 
 	public AuthCookieService(
 			@Value("${swimpulse.auth.cookie-secure:false}") boolean secure,
+			@Value("${swimpulse.auth.cookie-same-site:Lax}") String sameSite,
 			@Value("${swimpulse.auth.jwt-expiration-hours:168}") long expirationHours
 	) {
 		this.secure = secure;
+		this.sameSite = sameSite;
 		this.maxAge = Duration.ofHours(expirationHours);
 	}
 
@@ -41,7 +44,7 @@ public class AuthCookieService {
 		response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(SESSION_COOKIE, "")
 				.httpOnly(true)
 				.secure(secure)
-				.sameSite("Lax")
+				.sameSite(sameSite)
 				.path("/")
 				.maxAge(Duration.ZERO)
 				.build()
@@ -52,7 +55,7 @@ public class AuthCookieService {
 		return ResponseCookie.from(ACCESS_TOKEN_COOKIE, value)
 				.httpOnly(true)
 				.secure(secure)
-				.sameSite("Lax")
+				.sameSite(sameSite)
 				.path("/");
 	}
 }

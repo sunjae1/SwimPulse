@@ -1,0 +1,43 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.7.2
+    container_name: swimpulse-prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./ops/prometheus/prometheus.remote.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: swimpulse-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: swimpulse-admin
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  k6:
+    image: grafana/k6:0.49.0
+    container_name: swimpulse-k6
+    profiles: ["loadtest"]
+    working_dir: /scripts
+    volumes:
+      - ./ops/k6/scripts:/scripts:ro
+      - ./ops/k6/results:/results
+    environment:
+      BASE_URL: ${K6_BASE_URL:-http://host.docker.internal:18080}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  prometheus-data:
+  grafana-data:

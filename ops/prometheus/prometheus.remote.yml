@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "swimpulse-backend-remote"
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Run an SSH tunnel first:
+      # ssh -N -L 18080:127.0.0.1:8080 ubuntu@YOUR_LIGHTSAIL_PUBLIC_IP
+      - targets: ["host.docker.internal:18080"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["prometheus:9090"]
