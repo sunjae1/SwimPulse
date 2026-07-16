@@ -51,25 +51,52 @@ jobs:
     steps:
       - name: Validate deployment secrets
         run: |
+          echo "배포 환경변수 확인 중..."
           test -n "$LIGHTSAIL_HOST"
           test -n "$LIGHTSAIL_USER"
           test -n "$LIGHTSAIL_SSH_KEY"
+          echo "배포 환경변수 확인 완료."
 
       - name: Prepare SSH
         run: |
+          echo "SSH 접속 준비 중..."
           mkdir -p ~/.ssh
           printf '%s\n' "$LIGHTSAIL_SSH_KEY" > ~/.ssh/lightsail
           chmod 600 ~/.ssh/lightsail
           ssh-keyscan -H "$LIGHTSAIL_HOST" >> ~/.ssh/known_hosts
+          echo "SSH 접속 준비 완료."
 
       - name: Deploy backend
         run: |
+          echo "Lightsail 배포 시작."
           ssh -i ~/.ssh/lightsail -o BatchMode=yes "$LIGHTSAIL_USER@$LIGHTSAIL_HOST" << 'EOF'
             set -e
+            echo "SSH 접속 완료."
             cd /home/ubuntu/SwimPulse
+            echo "운영 서버 코드 갱신 중..."
             git pull --ff-only
+            echo "운영 서버 코드 갱신 완료."
+            echo "컨테이너 이미지 빌드 및 배포 중..."
             docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            echo "컨테이너 이미지 배포 완료."
+            echo "사용하지 않는 Docker 이미지 정리 중..."
             docker image prune -f
-            curl -fsS http://127.0.0.1:8080/actuator/health
+            echo "Docker 이미지 정리 완료."
+            echo "백엔드 컨테이너 healthcheck 대기 중..."
+            for attempt in $(seq 1 36); do
+              if curl -fsS --max-time 5 http://127.0.0.1:8080/actuator/health; then
+                echo "백엔드 healthcheck 성공."
+                break
+              fi
+              if [ "$attempt" -eq 36 ]; then
+                echo "백엔드 healthcheck 실패. 최근 로그를 출력합니다."
+                docker logs --tail=200 swimpulse-backend
+                exit 1
+              fi
+              echo "백엔드 시작 대기 중... ($attempt/36)"
+              sleep 5
+            done
+            echo "컨테이너 상태 확인 중..."
             docker ps --filter "name=swimpulse-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            echo "Lightsail 배포 완료."
           EOF

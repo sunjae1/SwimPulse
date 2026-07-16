@@ -50,15 +50,39 @@ chmod +x ./gradlew
 배포 명령:
 
 ```bash
+echo "SSH 접속 완료."
 cd /home/ubuntu/SwimPulse
+echo "운영 서버 코드 갱신 중..."
 git pull --ff-only
+echo "운영 서버 코드 갱신 완료."
+echo "컨테이너 이미지 빌드 및 배포 중..."
 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+echo "컨테이너 이미지 배포 완료."
+echo "사용하지 않는 Docker 이미지 정리 중..."
 docker image prune -f
-curl -fsS http://127.0.0.1:8080/actuator/health
+echo "Docker 이미지 정리 완료."
+echo "백엔드 컨테이너 healthcheck 대기 중..."
+for attempt in $(seq 1 36); do
+  if curl -fsS --max-time 5 http://127.0.0.1:8080/actuator/health; then
+    echo "백엔드 healthcheck 성공."
+    break
+  fi
+  if [ "$attempt" -eq 36 ]; then
+    echo "백엔드 healthcheck 실패. 최근 로그를 출력합니다."
+    docker logs --tail=200 swimpulse-backend
+    exit 1
+  fi
+  echo "백엔드 시작 대기 중... ($attempt/36)"
+  sleep 5
+done
+echo "컨테이너 상태 확인 중..."
 docker ps --filter "name=swimpulse-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+echo "Lightsail 배포 완료."
 ```
 
 배포 job은 test job이 성공해야만 실행된다.
+
+`docker compose up -d`는 컨테이너 시작 명령까지만 보장하고 Spring Boot 준비 완료를 보장하지 않는다. 그래서 `/actuator/health`는 즉시 1회 호출하지 않고 최대 180초 동안 재시도한다.
 
 ### 2. GitHub Secrets
 
@@ -208,4 +232,3 @@ https://api.sunjae.link/actuator/health
 3. 전체 테스트가 통과해야 배포되므로, 수동 배포보다 안정성이 높다.
 
 다음 개선 단계는 Lightsail 서버에서 build하지 않고 GitHub Actions에서 Docker image를 만들고 GHCR에 push한 뒤, 서버는 image만 pull하는 구조다.
-
