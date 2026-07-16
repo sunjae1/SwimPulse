@@ -4,5 +4,10 @@ out
 *.iml
 *.log
 .env
+.env.*
 *firebase-adminsdk*.json
 firebase-service-account*.json
+.git
+.gitignore
+README.md
+*.md

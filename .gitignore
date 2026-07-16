@@ -17,6 +17,10 @@ frontend/.env*.local
 #ngrok
 ngrok/
 
+# Deployment secrets
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+
 # Logs
 *.log
 
@@ -24,7 +28,9 @@ ngrok/
 .env
 !.env.example
 backend/.env
+backend/.env.prod
 !backend/.env.example
+!backend/.env.prod.example
 frontend/.env
 !frontend/.env.example
 firebase-service-account*.json
