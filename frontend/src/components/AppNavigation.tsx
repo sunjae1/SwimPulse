@@ -2,19 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { AppUser } from "@/lib/types";
 
 const navigationItems = [
   { href: "/", label: "대시보드" },
   { href: "/my-page", label: "마이 페이지" },
-  { href: "/admin", label: "관리자" },
 ];
 
-export function AppNavigation() {
+type AppNavigationProps = {
+  userRole?: AppUser["role"] | null;
+  showAdmin?: boolean;
+};
+
+export function AppNavigation({ userRole = null, showAdmin = false }: AppNavigationProps) {
   const pathname = usePathname();
+  const visibleNavigationItems =
+    showAdmin || userRole === "ADMIN"
+      ? [...navigationItems, { href: "/admin", label: "관리자" }]
+      : navigationItems;
 
   return (
     <nav aria-label="주요 메뉴" className="flex flex-wrap items-center gap-2">
-      {navigationItems.map((item) => {
+      {visibleNavigationItems.map((item) => {
         const active = item.href === "/"
           ? pathname === item.href
           : pathname === item.href || pathname.startsWith(`${item.href}/`);

@@ -1011,7 +1011,7 @@ public class NoticeCrawlerService {
 		if (containsAny(haystack, RENTAL_PAGE_KEYWORDS)) {
 			return false;
 		}
-		return hasMonthKeyword(haystack) && containsAny(haystack, DETAIL_KEYWORDS);
+		return hasAnyMonthKeyword(haystack) && containsAny(haystack, DETAIL_KEYWORDS);
 	}
 
 	private String resolveDetailNoticeUrl(String noticeListUrl, Document document, Element link) {
@@ -2169,6 +2169,12 @@ public class NoticeCrawlerService {
 		if (!candidate.source().contains("monthly")) {
 			return false;
 		}
+		if (candidate.startsAt().equals(candidate.endsAt())
+				&& periods.stream().anyMatch(period -> period != candidate
+						&& !period.source().contains("monthly")
+						&& labelsAreCompatible(candidate.label(), period.label()))) {
+			return true;
+		}
 		for (MatchedPeriod other : periods) {
 			if (other == candidate || other.source().contains("monthly")) {
 				continue;
@@ -2659,6 +2665,10 @@ public class NoticeCrawlerService {
 				|| value.contains("0" + monthValue + "월")
 				|| value.contains(monthValue + " 월")
 				|| value.contains("0" + monthValue + " 월");
+	}
+
+	private boolean hasAnyMonthKeyword(String value) {
+		return Pattern.compile("\\d{1,2}\\s*월").matcher(value).find();
 	}
 
 	private String normalizeForSearch(String value) {

@@ -1,0 +1,75 @@
+name: Backend Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "docker-compose.prod.yml"
+      - ".github/workflows/backend-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run backend tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew test
+
+  deploy:
+    name: Deploy to Lightsail
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    env:
+      LIGHTSAIL_HOST: ${{ secrets.LIGHTSAIL_HOST }}
+      LIGHTSAIL_USER: ${{ secrets.LIGHTSAIL_USER }}
+      LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+    steps:
+      - name: Validate deployment secrets
+        run: |
+          test -n "$LIGHTSAIL_HOST"
+          test -n "$LIGHTSAIL_USER"
+          test -n "$LIGHTSAIL_SSH_KEY"
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$LIGHTSAIL_SSH_KEY" > ~/.ssh/lightsail
+          chmod 600 ~/.ssh/lightsail
+          ssh-keyscan -H "$LIGHTSAIL_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy backend
+        run: |
+          ssh -i ~/.ssh/lightsail -o BatchMode=yes "$LIGHTSAIL_USER@$LIGHTSAIL_HOST" << 'EOF'
+            set -e
+            cd /home/ubuntu/SwimPulse
+            git pull --ff-only
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            docker image prune -f
+            curl -fsS http://127.0.0.1:8080/actuator/health
+            docker ps --filter "name=swimpulse-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          EOF

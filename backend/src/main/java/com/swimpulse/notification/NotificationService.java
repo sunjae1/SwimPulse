@@ -178,7 +178,7 @@ public class NotificationService {
 				.stream()
 				.filter(candidate -> candidate.getEvent() != null)
 				.findFirst()
-				.orElseThrow(() -> new BadRequestException("Subscribe to a registration period before sending a test notification."));
+				.orElseThrow(() -> new BadRequestException("테스트 알림을 보내기 전에 원하는 수영장 공지를 확인하고 모집 기간을 구독해주세요."));
 		RegistrationEvent event = subscription.getEvent();
 		Notification notification = notificationRepository.save(new Notification(
 				user,

@@ -363,7 +363,7 @@ export function MyPageClient() {
                 <h1 className="text-xl font-semibold text-[#102033]">마이 페이지</h1>
               </div>
             </div>
-            <AppNavigation />
+            <AppNavigation userRole={data?.user.role} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {loading ? (

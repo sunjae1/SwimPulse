@@ -164,6 +164,7 @@ export function DashboardClient({
   const openEvents = events.filter((event) => event.status === "OPEN").length;
   const upcomingEvents = events.filter((event) => event.status === "UPCOMING").length;
   const unreadNotifications = unreadNotificationTotalCount;
+  const isAdmin = user?.role === "ADMIN";
 
   function applyNotificationPage(page: NotificationPage) {
     setNotifications(page.content);
@@ -832,7 +833,7 @@ export function DashboardClient({
                 <h1 className="text-xl font-semibold text-[#102033]">수영장 등록 타이밍 알림</h1>
               </div>
             </div>
-            <AppNavigation />
+            <AppNavigation userRole={user?.role} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill active={apiReachable} />
@@ -1172,28 +1173,30 @@ export function DashboardClient({
             </div>
           </section>
 
-          <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
-            <div className="border-b border-[#d9eaf6] px-4 py-4">
-              <h2 className="text-lg font-semibold">접수 이벤트</h2>
-            </div>
-            <div className="divide-y divide-[#d9eaf6]">
-              {filteredEvents.map((event) => (
-                <article key={event.id} className="swim-row-motion grid gap-3 px-4 py-4 md:grid-cols-[1fr_auto]">
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <StatusBadge status={event.status} />
-                      <h3 className="font-semibold">{event.title}</h3>
+          {isAdmin ? (
+            <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+              <div className="border-b border-[#d9eaf6] px-4 py-4">
+                <h2 className="text-lg font-semibold">접수 이벤트</h2>
+              </div>
+              <div className="divide-y divide-[#d9eaf6]">
+                {filteredEvents.map((event) => (
+                  <article key={event.id} className="swim-row-motion grid gap-3 px-4 py-4 md:grid-cols-[1fr_auto]">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={event.status} />
+                        <h3 className="font-semibold">{event.title}</h3>
+                      </div>
+                      <p className="text-sm text-[#4b6f8b]">{event.poolName}</p>
+                      <p className="text-sm text-[#28516f]">
+                        {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
+                      </p>
                     </div>
-                    <p className="text-sm text-[#4b6f8b]">{event.poolName}</p>
-                    <p className="text-sm text-[#28516f]">
-                      {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
-                    </p>
-                  </div>
-                  <EventTimeLeft event={event} />
-                </article>
-              ))}
-            </div>
-          </section>
+                    <EventTimeLeft event={event} />
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </section>
 
         <aside className="swim-rise swim-rise-delay-1 space-y-5">

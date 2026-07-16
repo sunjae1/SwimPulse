@@ -30,6 +30,66 @@ type RequestOptions = RequestInit & {
   auth?: boolean;
 };
 
+const USER_FRIENDLY_API_MESSAGES = new Map<string, string>([
+  [
+    'Subscribe to a registration period before sending a test notification.',
+    '테스트 알림을 보내기 전에 원하는 수영장 공지를 확인하고 모집 기간을 구독해주세요.',
+  ],
+  [
+    'Register web push before sending a test notification.',
+    '테스트 알림을 보내려면 먼저 푸시 알림을 등록해주세요.',
+  ],
+  [
+    'Register web push before sending test notifications.',
+    '테스트 알림을 보내려면 먼저 푸시 알림을 등록해주세요.',
+  ],
+]);
+
+function userFriendlyErrorMessage(status: number, statusText: string, body: string) {
+  const rawMessage = extractErrorMessage(body) || `${status} ${statusText}`;
+  const mappedMessage = USER_FRIENDLY_API_MESSAGES.get(rawMessage);
+
+  if (mappedMessage) {
+    return mappedMessage;
+  }
+
+  if (/[가-힣]/.test(rawMessage) && !rawMessage.startsWith('{')) {
+    return rawMessage;
+  }
+
+  if (status === 401) {
+    return '로그인이 필요합니다.';
+  }
+  if (status === 403) {
+    return '요청 권한이 없습니다.';
+  }
+  if (status === 404) {
+    return '요청한 정보를 찾을 수 없습니다.';
+  }
+  if (status >= 500) {
+    return '서버에서 문제가 발생했습니다. 잠시 후 다시 시도해주세요.';
+  }
+
+  return '요청을 처리하지 못했습니다. 입력값을 확인해주세요.';
+}
+
+function extractErrorMessage(body: string) {
+  if (!body) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(body) as {message?: unknown};
+    if (typeof parsed.message === 'string' && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // Plain text error responses are handled below.
+  }
+
+  return body.trim();
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Content-Type', 'application/json');
@@ -49,7 +109,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!response.ok) {
     const body = await response.text();
-    throw new ApiError(response.status, body || `${response.status} ${response.statusText}`);
+    throw new ApiError(response.status, userFriendlyErrorMessage(response.status, response.statusText, body));
   }
 
   if (response.status === 204) {

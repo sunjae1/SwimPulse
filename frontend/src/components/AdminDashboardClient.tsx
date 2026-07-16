@@ -354,7 +354,7 @@ export function AdminDashboardClient() {
               <h1 className="text-2xl font-bold text-[#0f2f43]">SwimPulse 운영 대시보드</h1>
             </div>
           </div>
-          <AppNavigation />
+          <AppNavigation showAdmin />
         </div>
       </section>
 
