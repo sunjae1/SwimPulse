@@ -22,7 +22,7 @@ import {
   UserCircle,
   Waves,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiRequestError,
   authUrl,
@@ -88,8 +88,8 @@ type PastPeriodPrompt = {
   shiftedPeriod: NoticeRegistrationPeriod;
 };
 
-const statusOptions: Array<EventStatus | "ALL"> = ["ALL", "UPCOMING", "OPEN", "CLOSED"];
 const NOTICE_AUTO_DISMISS_MS = 5000;
+const POOL_PAGE_SIZE = 10;
 
 export function DashboardClient({
   initialData,
@@ -120,10 +120,11 @@ export function DashboardClient({
   const [notificationTotalCount, setNotificationTotalCount] = useState(0);
   const [unreadNotificationTotalCount, setUnreadNotificationTotalCount] = useState(0);
   const [notificationsLoaded, setNotificationsLoaded] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<EventStatus | "ALL">("ALL");
+  const [poolPage, setPoolPage] = useState(1);
   const [noticeSubscriptionMode, setNoticeSubscriptionMode] = useState(false);
   const [pendingSubscriptionKey, setPendingSubscriptionKey] = useState<string | null>(null);
   const [pastPeriodPrompt, setPastPeriodPrompt] = useState<PastPeriodPrompt | null>(null);
+  const [loginRequiredModalOpen, setLoginRequiredModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingNoticeScanPoolIds, setPendingNoticeScanPoolIds] = useState<number[]>([]);
@@ -157,10 +158,12 @@ export function DashboardClient({
     () => new Set(subscriptions.map((item) => item.event?.poolId).filter((poolId): poolId is number => poolId !== undefined)),
     [subscriptions],
   );
-  const filteredEvents = useMemo(
-    () => events.filter((event) => statusFilter === "ALL" || event.status === statusFilter),
-    [events, statusFilter],
-  );
+  const poolTotalPages = Math.max(1, Math.ceil(pools.length / POOL_PAGE_SIZE));
+  const safePoolPage = Math.min(poolPage, poolTotalPages);
+  const visiblePools = useMemo(() => {
+    const startIndex = (safePoolPage - 1) * POOL_PAGE_SIZE;
+    return pools.slice(startIndex, startIndex + POOL_PAGE_SIZE);
+  }, [safePoolPage, pools]);
   const openEvents = events.filter((event) => event.status === "OPEN").length;
   const upcomingEvents = events.filter((event) => event.status === "UPCOMING").length;
   const unreadNotifications = unreadNotificationTotalCount;
@@ -269,14 +272,20 @@ export function DashboardClient({
     }
   }
 
-  async function loadNearbyPools() {
+  const loadNearbyPools = useCallback(async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent ?? false;
+
     if (!("geolocation" in navigator)) {
-      setNotice("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
+      if (!silent) {
+        setNotice("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
+      }
       return;
     }
 
-    setBusy(true);
-    setNotice(null);
+    if (!silent) {
+      setBusy(true);
+      setNotice(null);
+    }
     try {
       const position = await getCurrentPosition();
       const location = {
@@ -289,21 +298,43 @@ export function DashboardClient({
       ]);
       const originLabel = reverseGeocoded?.address ?? "현재 위치";
       setPools(nearby.map((item) => item.pool));
+      setPoolPage(1);
       setNearbyDistances(toDistanceMap(nearby));
       setCurrentLocation(location);
       setNearbyOriginLabel(originLabel);
       setNearbyMode(true);
       setApiReachable(true);
-      setNotice(`${originLabel} 기준 가까운 수영장 10개를 불러왔습니다.`);
+      if (!silent) {
+        setNotice(`${originLabel} 기준 가까운 수영장 10개를 불러왔습니다.`);
+      }
     } catch (error) {
-      setNotice(getGeolocationErrorMessage(error));
+      if (!silent) {
+        setNotice(getGeolocationErrorMessage(error));
+      }
     } finally {
-      setBusy(false);
+      if (!silent) {
+        setBusy(false);
+      }
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!apiReachable || allPools.length === 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void loadNearbyPools({ silent: true });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [allPools.length, apiReachable, loadNearbyPools]);
 
   function resetPoolList() {
     setPools(allPools);
+    setPoolPage(1);
     setNearbyDistances({});
     setCurrentLocation(null);
     setNearbyOriginLabel(null);
@@ -366,6 +397,7 @@ export function DashboardClient({
       setFacilityCandidates(facilities.filter((item) => !item.alreadyExists));
       setFacilityCandidatesOpen(false);
       setPools(nearby.map((item) => item.pool));
+      setPoolPage(1);
       setNearbyDistances(toDistanceMap(nearby));
       setCurrentLocation(selectedLocation);
       setNearbyOriginLabel(candidate.title);
@@ -405,10 +437,6 @@ export function DashboardClient({
   }
 
   async function scanNotices(pool: Pool, subscriptionMode = false) {
-    if (!user) {
-      setNotice("Google 로그인 후 공지를 확인할 수 있습니다.");
-      return;
-    }
     if (pendingNoticeScanPoolIds.includes(pool.id)) {
       setNotice(
         subscriptionMode
@@ -475,7 +503,7 @@ export function DashboardClient({
 
   async function subscribeToNoticePeriod(notice: PoolNotice, period: NoticeRegistrationPeriod) {
     if (!user) {
-      setNotice("Google 로그인 후 구독할 수 있습니다.");
+      setLoginRequiredModalOpen(true);
       return;
     }
     if (isPastMonthPeriod(period)) {
@@ -929,9 +957,7 @@ export function DashboardClient({
                 <p className="text-sm text-[#4b6f8b]">
                   {nearbyMode && currentLocation
                     ? `${nearbyOriginLabel ?? "선택 위치"} 기준 가까운 10개`
-                    : user
-                      ? `${user.displayName} 기준`
-                      : "로그인 후 구독할 수 있습니다"}
+                    : `전체 ${pools.length.toLocaleString("ko-KR")}개 중 ${visiblePools.length.toLocaleString("ko-KR")}개 표시`}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -941,37 +967,25 @@ export function DashboardClient({
                       ? "bg-[#075985] text-white"
                       : "border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7]"
                   }`}
-                  onClick={loadNearbyPools}
+                  onClick={() => loadNearbyPools()}
                   disabled={busy}
                   type="button"
                 >
                   <LocateFixed size={16} aria-hidden />
                   가까운 순
                 </button>
-                {nearbyMode ? (
-                  <button
-                    className="swim-action inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#c8def0] bg-white px-3 text-sm font-medium text-[#28516f] hover:border-[#0284c7]"
-                    onClick={resetPoolList}
-                    type="button"
-                  >
-                    <List size={16} aria-hidden />
-                    전체
-                  </button>
-                ) : null}
-                {statusOptions.map((status) => (
-                  <button
-                    key={status}
-                    className={`h-9 rounded-lg px-3 text-sm font-medium transition ${
-                      statusFilter === status
-                        ? "bg-[#075985] text-white"
-                        : "border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7]"
-                    }`}
-                    onClick={() => setStatusFilter(status)}
-                    type="button"
-                  >
-                    {status === "ALL" ? "전체" : eventStatusLabel(status)}
-                  </button>
-                ))}
+                <button
+                  className={`swim-action inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition ${
+                    nearbyMode
+                      ? "border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7]"
+                      : "bg-[#075985] text-white"
+                  }`}
+                  onClick={resetPoolList}
+                  type="button"
+                >
+                  <List size={16} aria-hidden />
+                  전체 보기
+                </button>
               </div>
             </div>
 
@@ -1088,7 +1102,7 @@ export function DashboardClient({
             </div>
 
             <div className="grid gap-0 divide-y divide-[#d9eaf6]">
-              {pools.map((pool) => (
+              {visiblePools.map((pool) => (
                 <article key={pool.id} className="swim-row-motion grid gap-4 px-4 py-4 md:grid-cols-[112px_1fr_auto]">
                   <PoolImage pool={pool} />
                   <div className="space-y-2">
@@ -1133,7 +1147,7 @@ export function DashboardClient({
                       <button
                         className="swim-action inline-flex h-8 items-center gap-1 rounded-lg border border-[#c8def0] px-3 text-xs font-semibold text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1] disabled:opacity-50"
                         onClick={() => scanNotices(pool)}
-                        disabled={!user || !pool.homepageUrl}
+                        disabled={!pool.homepageUrl}
                         title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "공지 확인"}
                         type="button"
                       >
@@ -1156,7 +1170,7 @@ export function DashboardClient({
                           : "bg-[#0284c7] text-white hover:bg-[#0369a1]"
                       }`}
                       onClick={() => scanNotices(pool, true)}
-                      disabled={!user || !pool.homepageUrl}
+                      disabled={!pool.homepageUrl}
                       title={!pool.homepageUrl ? "홈페이지를 찾을 수 없습니다." : "알림 구독"}
                       type="button"
                     >
@@ -1171,6 +1185,15 @@ export function DashboardClient({
                 </article>
               ))}
             </div>
+            {pools.length > POOL_PAGE_SIZE ? (
+              <PaginationBar
+                page={safePoolPage}
+                totalPages={poolTotalPages}
+                totalItems={pools.length}
+                pageSize={POOL_PAGE_SIZE}
+                onPageChange={setPoolPage}
+              />
+            ) : null}
           </section>
 
           {isAdmin ? (
@@ -1179,7 +1202,7 @@ export function DashboardClient({
                 <h2 className="text-lg font-semibold">접수 이벤트</h2>
               </div>
               <div className="divide-y divide-[#d9eaf6]">
-                {filteredEvents.map((event) => (
+                {events.map((event) => (
                   <article key={event.id} className="swim-row-motion grid gap-3 px-4 py-4 md:grid-cols-[1fr_auto]">
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1347,6 +1370,7 @@ export function DashboardClient({
           pendingSubscriptionKey={pendingSubscriptionKey}
           onSubscribe={subscribeToNoticePeriod}
           onUnsubscribe={unsubscribeFromNoticePeriod}
+          isAdmin={isAdmin}
         />
       ) : null}
       {pastPeriodPrompt ? (
@@ -1363,6 +1387,12 @@ export function DashboardClient({
           }
           onConfirm={confirmCurrentMonthSubscription}
           onClose={() => setPastPeriodPrompt(null)}
+        />
+      ) : null}
+      {loginRequiredModalOpen ? (
+        <LoginRequiredModal
+          onClose={() => setLoginRequiredModalOpen(false)}
+          onLogin={loginWithGoogle}
         />
       ) : null}
       {pushNotificationModal ? (
@@ -2008,6 +2038,7 @@ function NoticeResultModal({
   pendingSubscriptionKey,
   onSubscribe,
   onUnsubscribe,
+  isAdmin,
 }: {
   result: NoticeScanResponse;
   onResultUpdate: (result: NoticeScanResponse) => void;
@@ -2018,6 +2049,7 @@ function NoticeResultModal({
   pendingSubscriptionKey: string | null;
   onSubscribe: (notice: PoolNotice, period: NoticeRegistrationPeriod) => void;
   onUnsubscribe: (subscription: Subscription) => void;
+  isAdmin: boolean;
 }) {
   const trace = result.trace ?? [];
   const hasOcrInProgress = result.notices.some((notice) => isOcrInProgress(notice.ocrStatus));
@@ -2157,7 +2189,7 @@ function NoticeResultModal({
               );
             })
           )}
-          {trace.length > 0 ? (
+          {isAdmin && trace.length > 0 ? (
             <section className="space-y-3 bg-[#f7f8f4] px-5 py-4">
               <h3 className="text-sm font-semibold text-[#31413b]">크롤링 경로</h3>
               <ol className="space-y-2 text-xs leading-5 text-[#66746d]">
@@ -2240,6 +2272,41 @@ function PeriodSelectionRow({
         {subscribed ? <CheckCircle2 size={16} aria-hidden /> : <Plus size={16} aria-hidden />}
         {subscribed ? "구독 해제" : "이 기간 구독"}
       </button>
+    </div>
+  );
+}
+
+function LoginRequiredModal({ onClose, onLogin }: { onClose: () => void; onLogin: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/35 px-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-lg border border-[#d8ddd5] bg-white shadow-xl">
+        <div className="border-b border-[#e3e7e1] px-5 py-4">
+          <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#0f766e]">LOGIN REQUIRED</p>
+          <h2 className="mt-2 text-xl font-bold text-[#102033]">로그인이 필요한 작업입니다.</h2>
+        </div>
+        <div className="space-y-4 px-5 py-5">
+          <p className="text-sm leading-6 text-[#4b6f8b]">
+            모집 기간 알림을 받으려면 Google 로그인이 필요합니다. 공지 확인 결과는 계속 볼 수 있고,
+            로그인 후 원하는 기간을 구독할 수 있습니다.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              className="swim-action h-11 rounded-lg border border-[#cdd5cf] px-4 text-sm font-semibold text-[#31413b] hover:border-[#0f766e]"
+              onClick={onClose}
+              type="button"
+            >
+              닫기
+            </button>
+            <button
+              className="swim-action h-11 rounded-lg bg-[#0f766e] px-4 text-sm font-semibold text-white hover:bg-[#0b5f59]"
+              onClick={onLogin}
+              type="button"
+            >
+              Google 로그인
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2337,6 +2404,52 @@ function StatusBadge({ status }: { status: EventStatus }) {
   }[status];
 
   return <span className={`rounded-md px-2 py-1 text-xs font-semibold ${className}`}>{eventStatusLabel(status)}</span>;
+}
+
+function PaginationBar({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(totalItems, page * pageSize);
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-[#d9eaf6] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm font-medium text-[#4b6f8b]">
+        {start.toLocaleString("ko-KR")}-{end.toLocaleString("ko-KR")} / {totalItems.toLocaleString("ko-KR")}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          className="swim-action h-9 rounded-lg border border-[#c8def0] px-3 text-sm font-semibold text-[#28516f] hover:border-[#0284c7] disabled:opacity-50"
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+        >
+          이전
+        </button>
+        <span className="min-w-16 text-center text-sm font-bold text-[#102033]">
+          {page} / {totalPages}
+        </span>
+        <button
+          className="swim-action h-9 rounded-lg border border-[#c8def0] px-3 text-sm font-semibold text-[#28516f] hover:border-[#0284c7] disabled:opacity-50"
+          type="button"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+        >
+          다음
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function EventTimeLeft({ event }: { event: RegistrationEvent }) {

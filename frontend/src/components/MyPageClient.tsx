@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   Bell,
   CalendarClock,
-  ChevronDown,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -55,8 +54,15 @@ type SubscriptionEditForm = {
 };
 
 type SubscriptionDateField = "startsAt" | "endsAt";
+type SubscriptionStatusFilter = "ALL" | EventStatus;
 
 const MY_PAGE_NOTIFICATION_PAGE_SIZE = 10;
+const SUBSCRIPTION_STATUS_FILTERS: { value: SubscriptionStatusFilter; label: string }[] = [
+  { value: "ALL", label: "전체" },
+  { value: "UPCOMING", label: "예정" },
+  { value: "OPEN", label: "시작" },
+  { value: "CLOSED", label: "종료" },
+];
 
 export function MyPageClient() {
   const [data, setData] = useState<MyPageData | null>(null);
@@ -77,7 +83,7 @@ export function MyPageClient() {
   const [editValidationMessage, setEditValidationMessage] = useState<string | null>(null);
   const [lastEditedSubscriptionDateField, setLastEditedSubscriptionDateField] =
     useState<SubscriptionDateField>("endsAt");
-  const [showClosedSubscriptions, setShowClosedSubscriptions] = useState(false);
+  const [subscriptionStatusFilter, setSubscriptionStatusFilter] = useState<SubscriptionStatusFilter>("ALL");
   const [readingNotificationId, setReadingNotificationId] = useState<number | null>(null);
   const [notificationPageLoading, setNotificationPageLoading] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<InAppNotification | null>(null);
@@ -346,8 +352,25 @@ export function MyPageClient() {
   const visibleNotifications = notificationPage?.content ?? [];
   const notificationTotalPages = Math.max(notificationPage?.totalPages ?? 0, 1);
   const notificationPageNumber = notificationPage?.page ?? 0;
-  const activeSubscriptions = data?.subscriptions.filter((subscription) => subscription.event?.status !== "CLOSED") ?? [];
-  const closedSubscriptions = data?.subscriptions.filter((subscription) => subscription.event?.status === "CLOSED") ?? [];
+  const subscriptions = data?.subscriptions ?? [];
+  const filteredSubscriptions = subscriptions.filter((subscription) => {
+    if (subscriptionStatusFilter === "ALL") {
+      return true;
+    }
+    return subscription.event?.status === subscriptionStatusFilter;
+  });
+  const subscriptionFilterCounts = SUBSCRIPTION_STATUS_FILTERS.reduce<Record<SubscriptionStatusFilter, number>>(
+    (counts, option) => {
+      counts[option.value] =
+        option.value === "ALL"
+          ? subscriptions.length
+          : subscriptions.filter((subscription) => subscription.event?.status === option.value).length;
+      return counts;
+    },
+    { ALL: 0, UPCOMING: 0, OPEN: 0, CLOSED: 0 },
+  );
+  const selectedSubscriptionFilterLabel =
+    SUBSCRIPTION_STATUS_FILTERS.find((option) => option.value === subscriptionStatusFilter)?.label ?? "선택한";
 
   return (
     <main className="min-h-screen bg-[#edf7ff] text-[#102033]">
@@ -479,12 +502,35 @@ export function MyPageClient() {
                   </span>
                 </div>
                 <div className="space-y-3 px-5 py-5">
-                  {data.subscriptions.length === 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {SUBSCRIPTION_STATUS_FILTERS.map((option) => {
+                      const active = subscriptionStatusFilter === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          className={`inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-semibold transition ${
+                            active
+                              ? "bg-[#075985] text-white"
+                              : "border border-[#c8def0] bg-white text-[#28516f] hover:border-[#0284c7] hover:text-[#0369a1]"
+                          }`}
+                          onClick={() => setSubscriptionStatusFilter(option.value)}
+                          type="button"
+                        >
+                          {option.label}
+                          <span className={active ? "ml-1 text-white/85" : "ml-1 text-[#6b879c]"}>
+                            {subscriptionFilterCounts[option.value]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {subscriptions.length === 0 ? (
                     <EmptyMessage message="아직 구독한 모집 기간이 없습니다. 대시보드에서 관심 수영장 모집을 구독해 보세요." />
-                  ) : activeSubscriptions.length === 0 ? (
-                    <EmptyMessage message="진행 중이거나 예정된 구독이 없습니다. 마감된 구독은 아래 접힌 영역에서 확인할 수 있습니다." />
+                  ) : filteredSubscriptions.length === 0 ? (
+                    <EmptyMessage message={`${selectedSubscriptionFilterLabel} 상태의 구독이 없습니다.`} />
                   ) : (
-                    activeSubscriptions.map((subscription) => (
+                    filteredSubscriptions.map((subscription) => (
                       <SubscriptionCard
                         key={subscription.id}
                         subscription={subscription}
@@ -496,37 +542,6 @@ export function MyPageClient() {
                       />
                     ))
                   )}
-                  {closedSubscriptions.length > 0 ? (
-                    <div className="rounded-2xl border border-[#d9eaf6] bg-[#f8fbfd]">
-                      <button
-                        className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left text-sm font-semibold text-[#28516f]"
-                        onClick={() => setShowClosedSubscriptions((current) => !current)}
-                        type="button"
-                      >
-                        <span>마감된 구독 {closedSubscriptions.length}개</span>
-                        {showClosedSubscriptions ? (
-                          <ChevronDown size={17} aria-hidden />
-                        ) : (
-                          <ChevronRight size={17} aria-hidden />
-                        )}
-                      </button>
-                      {showClosedSubscriptions ? (
-                        <div className="space-y-3 border-t border-[#d9eaf6] px-4 py-4">
-                          {closedSubscriptions.map((subscription) => (
-                            <SubscriptionCard
-                              key={subscription.id}
-                              subscription={subscription}
-                              onOpen={setSelectedSubscription}
-                              onEdit={openSubscriptionEditor}
-                              onDelete={openSubscriptionDeleteConfirm}
-                              editBusy={savingSubscriptionId === subscription.id}
-                              deleteBusy={removingSubscriptionId === subscription.id}
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
                 </div>
               </section>
 

@@ -15,7 +15,10 @@ import type {
   Subscription,
 } from './types';
 
-export const API_BASE_URL = 'http://10.0.2.2:8080';
+const LOCAL_EMULATOR_API_BASE_URL = 'http://10.0.2.2:8080';
+const PRODUCTION_API_BASE_URL = 'https://api.sunjae.link';
+
+export const API_BASE_URL = __DEV__ ? LOCAL_EMULATOR_API_BASE_URL : PRODUCTION_API_BASE_URL;
 
 export class ApiError extends Error {
   status: number;

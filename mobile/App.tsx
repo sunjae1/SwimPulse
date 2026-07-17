@@ -22,6 +22,7 @@ import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {
   ApiError,
+  API_BASE_URL,
   createPoolFromLocationCandidate,
   createSubscription,
   deleteSubscription,
@@ -77,6 +78,14 @@ import {
   subscriptionTitle,
   toInputDateTime,
 } from './src/utils/date';
+
+type DateTimeParts = {
+  date: string;
+  hour: string;
+  minute: string;
+};
+
+const POOL_PAGE_SIZE = 10;
 
 type RootStackParamList = {
   Home: undefined;
@@ -212,10 +221,17 @@ function HomeScreen({
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<NoticeScanResponse | null>(null);
   const [scanVisible, setScanVisible] = useState(false);
+  const [poolPage, setPoolPage] = useState(1);
 
   const subscribedKeys = useMemo(() => {
     return new Set(subscriptions.map(subscriptionKey));
   }, [subscriptions]);
+  const poolTotalPages = Math.max(1, Math.ceil(pools.length / POOL_PAGE_SIZE));
+  const safePoolPage = Math.min(poolPage, poolTotalPages);
+  const visiblePools = useMemo(() => {
+    const startIndex = (safePoolPage - 1) * POOL_PAGE_SIZE;
+    return pools.slice(startIndex, startIndex + POOL_PAGE_SIZE);
+  }, [safePoolPage, pools]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -226,6 +242,7 @@ function HomeScreen({
         user ? getSubscriptions() : Promise.resolve([] as Subscription[]),
       ]);
       setPools(poolResult);
+      setPoolPage(1);
       setEvents(eventResult);
       setSubscriptions(subscriptionResult);
     } catch (error) {
@@ -252,11 +269,6 @@ function HomeScreen({
   }
 
   async function openNoticeScan(pool: Pool) {
-    if (!user) {
-      Alert.alert('로그인이 필요합니다.', '공지 확인과 구독은 로그인 후 사용할 수 있습니다.');
-      return;
-    }
-
     try {
       setBusyMessage(`${pool.name} 공지를 확인하고 있습니다.`);
       const result = await scanPoolNotices(pool.id);
@@ -397,7 +409,7 @@ function HomeScreen({
               onRequestAdd={() => requestPoolAdd(candidate)}
             />
           ))}
-          {nearbyPools.map(item => (
+        {nearbyPools.map(item => (
             <PoolCard
               key={`nearby:${item.pool.id}`}
               pool={item.pool}
@@ -430,9 +442,21 @@ function HomeScreen({
         </Section>
 
         <Section title="수영장 목록">
-          {pools.map(pool => (
+          <Text style={styles.mutedText}>
+            전체 {pools.length.toLocaleString('ko-KR')}개 중 {visiblePools.length.toLocaleString('ko-KR')}개 표시
+          </Text>
+          {visiblePools.map(pool => (
             <PoolCard key={pool.id} pool={pool} onScan={() => openNoticeScan(pool)} />
           ))}
+          {pools.length > POOL_PAGE_SIZE ? (
+            <MobilePaginationControls
+              page={safePoolPage}
+              totalPages={poolTotalPages}
+              totalItems={pools.length}
+              pageSize={POOL_PAGE_SIZE}
+              onPageChange={setPoolPage}
+            />
+          ) : null}
         </Section>
       </ScrollView>
 
@@ -444,6 +468,8 @@ function HomeScreen({
           onClose={() => setScanVisible(false)}
           onResultChange={setScanResult}
           onSubscriptionsChanged={refreshSubscriptions}
+          user={user}
+          onLogin={login}
         />
       ) : null}
     </Screen>
@@ -457,6 +483,8 @@ function NoticeScanModal({
   onClose,
   onResultChange,
   onSubscriptionsChanged,
+  user,
+  onLogin,
 }: {
   visible: boolean;
   result: NoticeScanResponse;
@@ -464,6 +492,8 @@ function NoticeScanModal({
   onClose: () => void;
   onResultChange: (result: NoticeScanResponse) => void;
   onSubscriptionsChanged: () => Promise<void>;
+  user: AppUser | null;
+  onLogin: () => Promise<void>;
 }) {
   const [pollMessage, setPollMessage] = useState<string | null>(null);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
@@ -513,6 +543,18 @@ function NoticeScanModal({
   }, [visible, result, onResultChange]);
 
   async function subscribe(notice: PoolNotice, period: NormalizedPeriod) {
+    if (!user) {
+      Alert.alert(
+        '로그인이 필요한 작업입니다.',
+        '모집 기간 알림을 받으려면 Google 로그인이 필요합니다.',
+        [
+          {text: '닫기', style: 'cancel'},
+          {text: 'Google 로그인', onPress: onLogin},
+        ],
+      );
+      return;
+    }
+
     const baseInput = {
       poolId: result.poolId,
       title: notice.title,
@@ -972,7 +1014,7 @@ function SettingsScreen({user, setUser}: AppState) {
     <Screen>
       <ScrollView contentContainerStyle={styles.screenContent}>
         <Section title="API 연결">
-          <Text style={styles.mutedText}>Android emulator dev API: http://10.0.2.2:8080</Text>
+          <Text style={styles.mutedText}>API: {API_BASE_URL}</Text>
           <Text style={styles.periodText}>상태: {status}</Text>
           <ActionButton label="API 상태 확인" onPress={checkApi} />
         </Section>
@@ -1024,8 +1066,8 @@ function EditSubscriptionModal({
 }) {
   const event = subscription.event;
   const [title, setTitle] = useState(event?.title ?? subscription.pool.name);
-  const [startsAt, setStartsAt] = useState(event ? toInputDateTime(event.registrationStartsAt) : '');
-  const [endsAt, setEndsAt] = useState(event ? toInputDateTime(event.registrationEndsAt) : '');
+  const [startParts, setStartParts] = useState<DateTimeParts>(() => toDateTimeParts(event?.registrationStartsAt));
+  const [endParts, setEndParts] = useState<DateTimeParts>(() => toDateTimeParts(event?.registrationEndsAt));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -1034,10 +1076,10 @@ function EditSubscriptionModal({
       return;
     }
 
-    const nextStart = fromInputDateTime(startsAt);
-    const nextEnd = fromInputDateTime(endsAt);
+    const nextStart = fromDateTimeParts(startParts);
+    const nextEnd = fromDateTimeParts(endParts);
     if (!nextStart || !nextEnd || new Date(nextStart).getTime() >= new Date(nextEnd).getTime()) {
-      setError('올바른 날짜를 입력하세요.');
+      setError('시작/종료 날짜와 시간을 다시 확인해 주세요.');
       return;
     }
 
@@ -1087,32 +1129,48 @@ function EditSubscriptionModal({
 
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>시작 시각</Text>
-              <TextInput
-                value={startsAt}
-                onChangeText={value => {
-                  setStartsAt(value);
+              <DateTimeEditor
+                value={startParts}
+                onChange={setStartParts}
+                disabled={saving}
+                hasError={Boolean(error)}
+                onClearError={() => setError(null)}
+              />
+              <QuickTimeRow
+                disabled={saving}
+                onPick={(hour, minute) => {
+                  setStartParts(current => ({...current, hour, minute}));
                   setError(null);
                 }}
-                editable={!saving}
-                style={[styles.input, error ? styles.inputError : null]}
-                placeholder="2026-07-15 09:00"
-                placeholderTextColor="#7a8a99"
+                options={[
+                  ['09', '00', '오전 9시'],
+                  ['10', '00', '오전 10시'],
+                  ['12', '00', '정오'],
+                ]}
               />
-              <Text style={styles.fieldHint}>한국 시간 기준으로 입력하세요. 예: 2026-07-15 09:00</Text>
+              <Text style={styles.fieldHint}>날짜와 시간을 나눠 입력하세요. 한국 시간 기준입니다.</Text>
             </View>
 
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>종료 시각</Text>
-              <TextInput
-                value={endsAt}
-                onChangeText={value => {
-                  setEndsAt(value);
+              <DateTimeEditor
+                value={endParts}
+                onChange={setEndParts}
+                disabled={saving}
+                hasError={Boolean(error)}
+                onClearError={() => setError(null)}
+              />
+              <QuickTimeRow
+                disabled={saving}
+                onPick={(hour, minute) => {
+                  setEndParts(current => ({...current, hour, minute}));
                   setError(null);
                 }}
-                editable={!saving}
-                style={[styles.input, error ? styles.inputError : null]}
-                placeholder="2026-07-23 23:59"
-                placeholderTextColor="#7a8a99"
+                options={[
+                  ['18', '00', '오후 6시'],
+                  ['23', '00', '오후 11시'],
+                  ['23', '59', '마감 23:59'],
+                ]}
               />
               <Text style={styles.fieldHint}>종료 시각은 시작 시각보다 뒤여야 합니다.</Text>
             </View>
@@ -1138,6 +1196,115 @@ function EditSubscriptionModal({
       </View>
     </Modal>
   );
+}
+
+function DateTimeEditor({
+  value,
+  onChange,
+  disabled,
+  hasError,
+  onClearError,
+}: {
+  value: DateTimeParts;
+  onChange: (value: DateTimeParts) => void;
+  disabled: boolean;
+  hasError: boolean;
+  onClearError: () => void;
+}) {
+  function update(partial: Partial<DateTimeParts>) {
+    onChange({...value, ...partial});
+    onClearError();
+  }
+
+  return (
+    <View style={styles.dateTimeEditor}>
+      <TextInput
+        value={value.date}
+        onChangeText={date => update({date})}
+        editable={!disabled}
+        style={[styles.input, styles.dateInput, hasError ? styles.inputError : null]}
+        placeholder="2026-07-15"
+        placeholderTextColor="#7a8a99"
+        keyboardType="numbers-and-punctuation"
+        maxLength={10}
+      />
+      <TextInput
+        value={value.hour}
+        onChangeText={hour => update({hour: onlyDigits(hour).slice(0, 2)})}
+        editable={!disabled}
+        style={[styles.input, styles.timeInput, hasError ? styles.inputError : null]}
+        placeholder="09"
+        placeholderTextColor="#7a8a99"
+        keyboardType="number-pad"
+        maxLength={2}
+      />
+      <Text style={styles.timeSeparator}>:</Text>
+      <TextInput
+        value={value.minute}
+        onChangeText={minute => update({minute: onlyDigits(minute).slice(0, 2)})}
+        editable={!disabled}
+        style={[styles.input, styles.timeInput, hasError ? styles.inputError : null]}
+        placeholder="00"
+        placeholderTextColor="#7a8a99"
+        keyboardType="number-pad"
+        maxLength={2}
+      />
+    </View>
+  );
+}
+
+function QuickTimeRow({
+  options,
+  disabled,
+  onPick,
+}: {
+  options: Array<[string, string, string]>;
+  disabled: boolean;
+  onPick: (hour: string, minute: string) => void;
+}) {
+  return (
+    <View style={styles.quickTimeRow}>
+      {options.map(([hour, minute, label]) => (
+        <SecondaryButton
+          key={`${hour}:${minute}`}
+          label={label}
+          onPress={() => onPick(hour, minute)}
+          disabled={disabled}
+        />
+      ))}
+    </View>
+  );
+}
+
+function toDateTimeParts(value: string | null | undefined): DateTimeParts {
+  const input = value ? toInputDateTime(value) : '';
+  const [date = '', time = ''] = input.split(' ');
+  const [hour = '', minute = ''] = time.split(':');
+  return {date, hour, minute};
+}
+
+function fromDateTimeParts(value: DateTimeParts) {
+  const date = normalizeDateInput(value.date);
+  const hour = onlyDigits(value.hour).padStart(2, '0');
+  const minute = onlyDigits(value.minute).padStart(2, '0');
+  if (!date || hour.length !== 2 || minute.length !== 2) {
+    return null;
+  }
+  return fromInputDateTime(`${date} ${hour}:${minute}`);
+}
+
+function normalizeDateInput(value: string) {
+  const normalized = value.trim().replace(/\./g, '-').replace(/\//g, '-');
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day] = match;
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, '');
 }
 
 function PushNotificationModal({
@@ -1316,6 +1483,7 @@ function PoolCard({
   distanceMeters?: number;
   onScan: () => void;
 }) {
+  const canScanNotices = Boolean(pool.homepageUrl);
   return (
     <View style={styles.poolCard}>
       <View style={styles.rowBetween}>
@@ -1331,11 +1499,17 @@ function PoolCard({
       {distanceMeters !== undefined ? (
         <Text style={styles.mutedText}>현재 위치에서 약 {(distanceMeters / 1000).toFixed(1)}km</Text>
       ) : null}
+      {!canScanNotices ? (
+        <NoticeBanner
+          text="홈페이지를 찾을 수 없어 공지 확인을 할 수 없습니다. 시설 정보가 보강되면 이용할 수 있어요."
+          tone="amber"
+        />
+      ) : null}
       <View style={styles.buttonRow}>
         {pool.homepageUrl ? (
           <SecondaryButton label="홈페이지" onPress={() => Linking.openURL(pool.homepageUrl!)} />
         ) : null}
-        <ActionButton label="공지 확인" onPress={onScan} />
+        <ActionButton label="공지 확인" onPress={onScan} disabled={!canScanNotices} />
       </View>
     </View>
   );
@@ -1403,6 +1577,46 @@ function Metric({label, value}: {label: string; value: number}) {
     <View style={styles.metricCard}>
       <Text style={styles.metricValue}>{value}</Text>
       <Text style={styles.mutedText}>{label}</Text>
+    </View>
+  );
+}
+
+function MobilePaginationControls({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(totalItems, page * pageSize);
+
+  return (
+    <View style={styles.paginationBox}>
+      <Text style={styles.paginationText}>
+        {start.toLocaleString('ko-KR')}-{end.toLocaleString('ko-KR')} / {totalItems.toLocaleString('ko-KR')}
+      </Text>
+      <View style={styles.paginationButtons}>
+        <SecondaryButton
+          label="이전"
+          onPress={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page <= 1}
+        />
+        <Text style={styles.paginationPage}>
+          {page} / {totalPages}
+        </Text>
+        <SecondaryButton
+          label="다음"
+          onPress={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages}
+        />
+      </View>
     </View>
   );
 }
@@ -1569,6 +1783,24 @@ const styles = StyleSheet.create({
     color: '#112d42',
     paddingHorizontal: 14,
   },
+  dateTimeEditor: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  dateInput: {
+    flex: 1,
+  },
+  timeInput: {
+    width: 58,
+    textAlign: 'center',
+    paddingHorizontal: 8,
+  },
+  timeSeparator: {
+    color: '#244a5f',
+    fontSize: 18,
+    fontWeight: '900',
+  },
   inputError: {
     borderColor: '#dc2626',
     backgroundColor: '#fff7f7',
@@ -1688,6 +1920,36 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
     justifyContent: 'flex-end',
+  },
+  paginationBox: {
+    gap: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d6e5eb',
+    backgroundColor: '#f6fbfb',
+    padding: 12,
+  },
+  paginationText: {
+    color: '#5c7080',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  paginationButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  paginationPage: {
+    minWidth: 54,
+    color: '#112d42',
+    fontSize: 14,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  quickTimeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   badgeRow: {
     flexDirection: 'row',
