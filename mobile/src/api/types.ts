@@ -1,8 +1,10 @@
 export type EventStatus = 'UPCOMING' | 'OPEN' | 'CLOSED';
 
-export type NotificationStatus = 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
+export type NotificationStatus = 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'CANCELLED';
 
-export type NotificationType = 'REGISTRATION_REMINDER' | 'REGISTRATION_OPEN';
+export type NotificationType = 'REGISTRATION_REMINDER' | 'REGISTRATION_OPEN' | 'SOURCE_REVIEW_REQUIRED';
+export type SubscriptionReviewStatus = 'ACTIVE' | 'REVIEW_REQUIRED' | 'CONFIRMED' | 'INVALIDATED';
+export type EventSourceValidityStatus = 'ACTIVE' | 'REVIEW_REQUIRED' | 'INVALIDATED';
 
 export type GeocodeStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
 
@@ -39,6 +41,7 @@ export type Pool = {
   homepageUrl: string | null;
   homepageSource: HomepageSource | null;
   homepageStatus: HomepageVerificationStatus;
+  homepageRevision: number;
   homepageVerifiedAt: string | null;
   homepageCandidateTitle: string | null;
   homepageCandidateAddress: string | null;
@@ -131,6 +134,9 @@ export type RegistrationEvent = {
   registrationStartsAt: string;
   registrationEndsAt: string;
   status: EventStatus;
+  sourceValidityStatus: EventSourceValidityStatus;
+  sourceChangedAt: string | null;
+  sourceChangeReason: string | null;
   reminderQueued: boolean;
   startQueued: boolean;
 };
@@ -157,6 +163,10 @@ export type Subscription = {
   userId: number;
   pool: Pool;
   event: RegistrationEvent | null;
+  reviewStatus: SubscriptionReviewStatus;
+  reviewRequestedAt: string | null;
+  reviewedAt: string | null;
+  reviewReason: string | null;
   createdAt: string;
 };
 
@@ -167,7 +177,10 @@ export type InAppNotification = {
   poolName: string;
   eventId: number;
   eventTitle: string;
+  subscriptionId: number | null;
+  subscriptionReviewStatus: SubscriptionReviewStatus | null;
   noticeUrl: string | null;
+  currentHomepageUrl: string | null;
   type: NotificationType;
   status: NotificationStatus;
   title: string;

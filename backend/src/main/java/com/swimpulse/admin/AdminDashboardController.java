@@ -17,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,6 +30,7 @@ public class AdminDashboardController {
 	private final AdminActionLogService actionLogService;
 	private final NotificationService notificationService;
 	private final PoolAddRequestService poolAddRequestService;
+	private final AdminPoolHomepageCorrectionService poolHomepageCorrectionService;
 	private final Duration staleSendingTimeout;
 
 	public AdminDashboardController(
@@ -36,13 +38,30 @@ public class AdminDashboardController {
 			AdminActionLogService actionLogService,
 			NotificationService notificationService,
 			PoolAddRequestService poolAddRequestService,
+			AdminPoolHomepageCorrectionService poolHomepageCorrectionService,
 			@Value("${swimpulse.notification.stale-sending-timeout-ms:120000}") long staleSendingTimeoutMs
 	) {
 		this.adminDashboardService = adminDashboardService;
 		this.actionLogService = actionLogService;
 		this.notificationService = notificationService;
 		this.poolAddRequestService = poolAddRequestService;
+		this.poolHomepageCorrectionService = poolHomepageCorrectionService;
 		this.staleSendingTimeout = Duration.ofMillis(staleSendingTimeoutMs);
+	}
+
+	@PatchMapping("/pools/{poolId}/homepage")
+	public AdminPoolHomepageCorrectionResponse correctPoolHomepage(
+			@AuthenticationPrincipal AuthenticatedUser admin,
+			@PathVariable Long poolId,
+			@Valid @RequestBody AdminPoolHomepageCorrectionRequest request
+	) {
+		return audited(
+				admin,
+				"CORRECT_POOL_HOMEPAGE",
+				"POOL",
+				poolId,
+				() -> poolHomepageCorrectionService.correct(poolId, request)
+		);
 	}
 
 	@GetMapping("/dashboard")

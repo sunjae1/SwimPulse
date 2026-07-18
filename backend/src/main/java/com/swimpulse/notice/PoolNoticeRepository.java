@@ -21,6 +21,8 @@ public interface PoolNoticeRepository extends JpaRepository<PoolNotice, Long> {
 
 	List<PoolNotice> findTop20ByPoolIdOrderByIdDesc(Long poolId);
 
+	List<PoolNotice> findTop20ByPoolIdAndHomepageRevisionOrderByIdDesc(Long poolId, int homepageRevision);
+
 	@Query("""
 			select notice
 			from PoolNotice notice

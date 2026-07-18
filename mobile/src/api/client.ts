@@ -233,6 +233,10 @@ export async function updateSubscriptionPeriod(
   });
 }
 
+export async function confirmSubscriptionSourceReview(subscriptionId: number): Promise<Subscription> {
+  return request(`/api/subscriptions/${subscriptionId}/source-review/confirm`, {method: 'POST'});
+}
+
 export async function deleteSubscription(eventId: number): Promise<void> {
   await request(`/api/subscriptions?eventId=${eventId}`, {method: 'DELETE'});
 }

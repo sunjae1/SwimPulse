@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  AlertTriangle,
   Bell,
   CalendarClock,
   CheckCircle2,
@@ -23,6 +24,7 @@ import { AppNavigation } from "@/components/AppNavigation";
 import {
   ApiRequestError,
   authUrl,
+  confirmSubscriptionSourceReview,
   deleteSubscription,
   getMyPage,
   getNotificationPage,
@@ -64,7 +66,7 @@ const SUBSCRIPTION_STATUS_FILTERS: { value: SubscriptionStatusFilter; label: str
   { value: "CLOSED", label: "종료" },
 ];
 
-export function MyPageClient() {
+export function MyPageClient({ initialSubscriptionId = null }: { initialSubscriptionId?: string | null }) {
   const [data, setData] = useState<MyPageData | null>(null);
   const [notificationPage, setNotificationPage] = useState<NotificationPage | null>(null);
   const [authorized, setAuthorized] = useState(true);
@@ -87,6 +89,8 @@ export function MyPageClient() {
   const [readingNotificationId, setReadingNotificationId] = useState<number | null>(null);
   const [notificationPageLoading, setNotificationPageLoading] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<InAppNotification | null>(null);
+  const [confirmingReviewId, setConfirmingReviewId] = useState<number | null>(null);
+  const [openedInitialSubscription, setOpenedInitialSubscription] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +133,22 @@ export function MyPageClient() {
       cancelled = true;
     };
   }, [reloadKey]);
+
+  useEffect(() => {
+    if (!data || openedInitialSubscription || !initialSubscriptionId) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      const subscriptionId = Number(initialSubscriptionId);
+      const subscription = data.subscriptions.find((candidate) => candidate.id === subscriptionId);
+      setOpenedInitialSubscription(true);
+      if (subscription) {
+        setSubscriptionStatusFilter("ALL");
+        setSelectedSubscription(subscription);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [data, initialSubscriptionId, openedInitialSubscription]);
 
   function loginWithGoogle() {
     window.location.href = authUrl("/oauth2/authorization/google");
@@ -301,6 +321,37 @@ export function MyPageClient() {
     }
   }
 
+  function openNotification(notification: InAppNotification) {
+    if (notification.type === "SOURCE_REVIEW_REQUIRED" && notification.subscriptionId) {
+      const subscription = data?.subscriptions.find((candidate) => candidate.id === notification.subscriptionId);
+      if (subscription) {
+        setSelectedSubscription(subscription);
+        if (!notification.readAt) {
+          void readNotification(notification.id);
+        }
+        return;
+      }
+    }
+    setSelectedNotification(notification);
+  }
+
+  async function confirmCurrentSubscriptionPeriod(subscription: Subscription) {
+    setConfirmingReviewId(subscription.id);
+    try {
+      const updated = await confirmSubscriptionSourceReview(subscription.id);
+      setData((current) => current ? {
+        ...current,
+        subscriptions: current.subscriptions.map((candidate) => candidate.id === updated.id ? updated : candidate),
+      } : current);
+      setSelectedSubscription(updated);
+      setNotice("현재 구독 기간을 유지했습니다. 이 기간 기준으로 알림이 다시 동작합니다.");
+    } catch (error) {
+      setNotice(getErrorMessage(error, "구독 검토를 완료하지 못했습니다."));
+    } finally {
+      setConfirmingReviewId(null);
+    }
+  }
+
   function rejectSubscriptionEdit(message: string, invalidField: SubscriptionDateField) {
     setEditValidationMessage(message);
     setEditInvalidDateField(invalidField);
@@ -353,12 +404,21 @@ export function MyPageClient() {
   const notificationTotalPages = Math.max(notificationPage?.totalPages ?? 0, 1);
   const notificationPageNumber = notificationPage?.page ?? 0;
   const subscriptions = data?.subscriptions ?? [];
-  const filteredSubscriptions = subscriptions.filter((subscription) => {
-    if (subscriptionStatusFilter === "ALL") {
-      return true;
-    }
-    return subscription.event?.status === subscriptionStatusFilter;
-  });
+  const reviewRequiredSubscriptions = subscriptions.filter(
+    (subscription) => subscription.reviewStatus === "REVIEW_REQUIRED",
+  );
+  const filteredSubscriptions = [...subscriptions]
+    .filter((subscription) => {
+      if (subscriptionStatusFilter === "ALL") {
+        return true;
+      }
+      return subscription.event?.status === subscriptionStatusFilter;
+    })
+    .sort((left, right) => {
+      const leftNeedsReview = left.reviewStatus === "REVIEW_REQUIRED";
+      const rightNeedsReview = right.reviewStatus === "REVIEW_REQUIRED";
+      return Number(rightNeedsReview) - Number(leftNeedsReview);
+    });
   const subscriptionFilterCounts = SUBSCRIPTION_STATUS_FILTERS.reduce<Record<SubscriptionStatusFilter, number>>(
     (counts, option) => {
       counts[option.value] =
@@ -502,6 +562,22 @@ export function MyPageClient() {
                   </span>
                 </div>
                 <div className="space-y-3 px-5 py-5">
+                  {reviewRequiredSubscriptions.length > 0 ? (
+                    <div
+                      className="rounded-lg border border-[#fdba74] bg-[#fff7ed] px-4 py-3 text-[#9a3412]"
+                      role="status"
+                    >
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 shrink-0" size={19} aria-hidden />
+                        <div>
+                          <p className="text-sm font-semibold">홈페이지 출처 변경으로 구독 검토가 필요합니다.</p>
+                          <p className="mt-1 text-sm leading-5">
+                            잘못 연결된 홈페이지 출처를 올바른 시설 홈페이지로 교정했습니다. 검토 대상 {reviewRequiredSubscriptions.length}건이 목록 상단에 표시됩니다.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap gap-2">
                     {SUBSCRIPTION_STATUS_FILTERS.map((option) => {
                       const active = subscriptionStatusFilter === option.value;
@@ -571,7 +647,7 @@ export function MyPageClient() {
                         key={notification.id}
                         notification={notification}
                         busy={readingNotificationId === notification.id}
-                        onOpen={setSelectedNotification}
+                        onOpen={openNotification}
                         onMarkRead={readNotification}
                       />
                     ))
@@ -694,9 +770,11 @@ export function MyPageClient() {
           subscription={selectedSubscription}
           editBusy={savingSubscriptionId === selectedSubscription.id}
           deleteBusy={removingSubscriptionId === selectedSubscription.id}
+          confirmBusy={confirmingReviewId === selectedSubscription.id}
           onClose={() => setSelectedSubscription(null)}
           onEdit={openSubscriptionEditorFromDetail}
           onDelete={openSubscriptionDeleteConfirmFromDetail}
+          onConfirmCurrent={confirmCurrentSubscriptionPeriod}
         />
       ) : null}
       {selectedNotification ? (
@@ -879,10 +957,15 @@ function SubscriptionCard({
   const poolName = event?.poolName ?? subscription.pool.name;
   const busy = editBusy || deleteBusy;
   const canEdit = event && event.status !== "CLOSED";
+  const needsReview = subscription.reviewStatus === "REVIEW_REQUIRED";
 
   return (
     <article
-      className="swim-row-motion cursor-pointer rounded-2xl border border-[#d9eaf6] bg-[#f6fbff] px-4 py-4 transition hover:border-[#0284c7] hover:bg-white focus-within:border-[#0284c7]"
+      className={`swim-row-motion cursor-pointer rounded-2xl border px-4 py-4 transition hover:bg-white focus-within:border-[#0284c7] ${
+        needsReview
+          ? "border-[#fdba74] bg-[#fffaf3] hover:border-[#f97316]"
+          : "border-[#d9eaf6] bg-[#f6fbff] hover:border-[#0284c7]"
+      }`}
       role="button"
       tabIndex={0}
       onClick={() => onOpen(subscription)}
@@ -897,6 +980,9 @@ function SubscriptionCard({
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             {event ? <EventStatusBadge status={event.status} /> : null}
+            {needsReview ? (
+              <span className="rounded-md bg-[#ffedd5] px-2 py-1 text-xs font-semibold text-[#9a3412]">검토 필요</span>
+            ) : null}
             <p className="text-sm font-semibold text-[#102033]">{poolName}</p>
           </div>
         </div>
@@ -935,6 +1021,26 @@ function SubscriptionCard({
         <p className="mt-2 text-sm leading-6 text-[#4b6f8b]">
           {formatDateTime(event.registrationStartsAt)} - {formatDateTime(event.registrationEndsAt)}
         </p>
+      ) : null}
+      {needsReview ? (
+        <div className="mt-3 flex flex-col gap-2 rounded-lg border border-[#fed7aa] bg-[#fff7ed] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[#9a3412]">홈페이지 출처 변경으로 구독 검토가 필요합니다.</p>
+            <p className="mt-1 text-sm leading-5 text-[#9a3412]">
+              {subscription.reviewReason ?? "잘못 연결된 홈페이지 출처를 올바른 시설 홈페이지로 교정했습니다. 기존 공지와 새 홈페이지를 확인해주세요."}
+            </p>
+          </div>
+          <button
+            className="swim-action inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-[#c2410c] px-3 text-sm font-semibold text-white hover:bg-[#9a3412]"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen(subscription);
+            }}
+            type="button"
+          >
+            검토하기
+          </button>
+        </div>
       ) : null}
       {event?.noticeUrl ? (
         <a
@@ -1080,16 +1186,20 @@ function SubscriptionDetailModal({
   subscription,
   editBusy,
   deleteBusy,
+  confirmBusy,
   onClose,
   onEdit,
   onDelete,
+  onConfirmCurrent,
 }: {
   subscription: Subscription;
   editBusy: boolean;
   deleteBusy: boolean;
+  confirmBusy: boolean;
   onClose: () => void;
   onEdit: (subscription: Subscription) => void;
   onDelete: (subscription: Subscription) => void;
+  onConfirmCurrent: (subscription: Subscription) => void;
 }) {
   const event = subscription.event;
   const poolName = event?.poolName ?? subscription.pool.name;
@@ -1126,6 +1236,12 @@ function SubscriptionDetailModal({
           </button>
         </div>
         <div className="space-y-4 px-5 py-5">
+          {subscription.reviewStatus === "REVIEW_REQUIRED" ? (
+            <div className="rounded-2xl border border-[#f8c9a7] bg-[#fff7ed] px-4 py-4 text-sm leading-6 text-[#9a4d16]">
+              <p className="font-bold text-[#7c2d12]">홈페이지 출처 변경으로 구독 검토가 필요합니다.</p>
+              <p className="mt-1">{subscription.reviewReason ?? "기존 공지와 새 홈페이지를 비교한 뒤 기간을 유지하거나 수정해주세요."}</p>
+            </div>
+          ) : null}
           <div className="rounded-2xl border border-[#d9eaf6] bg-[#f6fbff] px-4 py-4">
             <div className="flex flex-wrap items-center gap-2">
               {event ? <EventStatusBadge status={event.status} /> : null}
@@ -1141,7 +1257,7 @@ function SubscriptionDetailModal({
             ) : null}
             <p className="mt-3 text-xs text-[#7c8982]">구독 생성 {formatDateTime(subscription.createdAt)}</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2">
             {event?.noticeUrl ? (
               <a
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
@@ -1149,9 +1265,30 @@ function SubscriptionDetailModal({
                 target="_blank"
                 rel="noreferrer"
               >
-                원문 보기
+                기존 공지 보기
                 <ExternalLink size={15} aria-hidden />
               </a>
+            ) : null}
+            {subscription.pool.homepageUrl ? (
+              <a
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
+                href={subscription.pool.homepageUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                새 홈페이지 확인
+                <ExternalLink size={15} aria-hidden />
+              </a>
+            ) : null}
+            {subscription.reviewStatus === "REVIEW_REQUIRED" ? (
+              <button
+                className="inline-flex h-11 items-center justify-center rounded-lg bg-[#0f766e] px-4 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
+                onClick={() => onConfirmCurrent(subscription)}
+                disabled={confirmBusy}
+                type="button"
+              >
+                {confirmBusy ? "처리 중..." : "현재 기간 유지"}
+              </button>
             ) : null}
             {canEdit ? (
               <button
@@ -1428,6 +1565,7 @@ function NotificationStatusBadge({ status }: { status: NotificationStatus }) {
     SENDING: "bg-[#e8f5fb] text-[#075985]",
     SENT: "bg-[#edf7f5] text-[#0f766e]",
     FAILED: "bg-[#fff0ed] text-[#bf4b3e]",
+    CANCELLED: "bg-[#f0f1ef] text-[#66746d]",
   }[status];
 
   return (

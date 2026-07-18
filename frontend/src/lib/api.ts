@@ -5,6 +5,7 @@ import type {
   AdminActionLog,
   AdminActionResultStatus,
   AdminOperationsDashboard,
+  AdminPoolHomepageCorrection,
   AdminServiceDashboard,
   DashboardInitialData,
   DeviceRegistration,
@@ -54,6 +55,7 @@ const fallbackPools: Pool[] = [
     homepageUrl: "https://www.gangnam.go.kr",
     homepageSource: null,
     homepageStatus: "UNVERIFIED",
+    homepageRevision: 1,
     homepageVerifiedAt: null,
     homepageCandidateTitle: null,
     homepageCandidateAddress: null,
@@ -82,6 +84,7 @@ const fallbackPools: Pool[] = [
     homepageUrl: "https://www.mapo.go.kr",
     homepageSource: null,
     homepageStatus: "UNVERIFIED",
+    homepageRevision: 1,
     homepageVerifiedAt: null,
     homepageCandidateTitle: null,
     homepageCandidateAddress: null,
@@ -110,6 +113,7 @@ const fallbackPools: Pool[] = [
     homepageUrl: "https://www.sd.go.kr",
     homepageSource: null,
     homepageStatus: "UNVERIFIED",
+    homepageRevision: 1,
     homepageVerifiedAt: null,
     homepageCandidateTitle: null,
     homepageCandidateAddress: null,
@@ -134,6 +138,9 @@ const fallbackEvents: RegistrationEvent[] = [
     registrationStartsAt: new Date(now + 8 * 60 * 1000).toISOString(),
     registrationEndsAt: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
     status: "UPCOMING",
+    sourceValidityStatus: "ACTIVE",
+    sourceChangedAt: null,
+    sourceChangeReason: null,
     reminderQueued: false,
     startQueued: false,
   },
@@ -147,6 +154,9 @@ const fallbackEvents: RegistrationEvent[] = [
     registrationStartsAt: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
     registrationEndsAt: new Date(now + 27 * 60 * 60 * 1000).toISOString(),
     status: "UPCOMING",
+    sourceValidityStatus: "ACTIVE",
+    sourceChangedAt: null,
+    sourceChangeReason: null,
     reminderQueued: false,
     startQueued: false,
   },
@@ -160,6 +170,9 @@ const fallbackEvents: RegistrationEvent[] = [
     registrationStartsAt: new Date(now - 30 * 60 * 1000).toISOString(),
     registrationEndsAt: new Date(now + 90 * 60 * 1000).toISOString(),
     status: "OPEN",
+    sourceValidityStatus: "ACTIVE",
+    sourceChangedAt: null,
+    sourceChangeReason: null,
     reminderQueued: true,
     startQueued: true,
   },
@@ -328,6 +341,10 @@ export async function getEvents(): Promise<RegistrationEvent[]> {
   return request<RegistrationEvent[]>("/api/events");
 }
 
+export async function getPools(): Promise<Pool[]> {
+  return request<Pool[]>("/api/pools");
+}
+
 export async function getNearbyPools(latitude: number, longitude: number, limit = 10): Promise<NearbyPool[]> {
   const params = new URLSearchParams({
     latitude: latitude.toString(),
@@ -410,6 +427,16 @@ export async function adminRequeueStaleNotifications(limit = 50): Promise<AdminA
   });
 }
 
+export async function adminCorrectPoolHomepage(
+  poolId: number,
+  input: { name: string; homepageUrl: string; reason?: string },
+): Promise<AdminPoolHomepageCorrection> {
+  return request<AdminPoolHomepageCorrection>(`/api/admin/pools/${poolId}/homepage`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function adminApprovePoolAddRequest(requestId: number): Promise<PoolAddRequest> {
   return request<PoolAddRequest>(`/api/admin/pool-add-requests/${requestId}/approve`, {
     method: "POST",
@@ -482,6 +509,12 @@ export async function updateSubscriptionPeriod(
   return request<Subscription>(`/api/subscriptions/${subscriptionId}`, {
     method: "PATCH",
     body: JSON.stringify(input),
+  });
+}
+
+export async function confirmSubscriptionSourceReview(subscriptionId: number): Promise<Subscription> {
+  return request<Subscription>(`/api/subscriptions/${subscriptionId}/source-review/confirm`, {
+    method: "POST",
   });
 }
 

@@ -470,6 +470,7 @@ public class NoticeCrawlerService {
 		for (NoticeDetailCandidate candidate : detailCandidates) {
 			PoolNotice existing = existingNoticesByUrl.get(candidate.url());
 			if (existing != null) {
+				existing.confirmCurrentHomepageRevision();
 				if (shouldRefreshExistingNotice(existing)) {
 					trace.add("기존 저장 공지의 구조화 기간을 보강합니다(" + candidate.source() + "): " + candidate.title() + " -> " + candidate.url());
 					notices.add(toResponse(refreshNoticeDetail(existing, pool, candidate)));
@@ -487,7 +488,8 @@ public class NoticeCrawlerService {
 		boolean latestCheckFailed = !pathAvailable;
 		String message;
 		if (notices.isEmpty() && latestCheckFailed) {
-			List<PoolNoticeResponse> previousNotices = noticeRepository.findTop20ByPoolIdOrderByIdDesc(poolId)
+			List<PoolNoticeResponse> previousNotices = noticeRepository
+					.findTop20ByPoolIdAndHomepageRevisionOrderByIdDesc(poolId, pool.getHomepageRevision())
 					.stream()
 					.map(this::toResponse)
 					.toList();
@@ -770,6 +772,12 @@ public class NoticeCrawlerService {
 	private PoolNoticeSource getOrCreateSource(Pool pool, String sourceUrl) {
 		String normalizedUrl = NoticeSourceUrlNormalizer.normalize(sourceUrl);
 		return sourceRepository.findByPoolAndSourceUrl(pool, normalizedUrl)
+				.map(source -> {
+					if (source.getHomepageRevision() != pool.getHomepageRevision()) {
+						source.prepareForHomepageRevision(pool.getHomepageRevision());
+					}
+					return source;
+				})
 				.orElseGet(() -> sourceRepository.save(
 						new PoolNoticeSource(pool, normalizedUrl, NoticeSourceType.NOTICE_PAGE)
 				));

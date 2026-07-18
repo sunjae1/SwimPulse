@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppNavigation } from "@/components/AppNavigation";
 import {
   adminApprovePoolAddRequest,
+  adminCorrectPoolHomepage,
   adminPostprocessPoolAddRequestHomepage,
   adminPostprocessPoolAddRequestImage,
   adminPostprocessPoolAddRequestNotices,
@@ -36,9 +37,10 @@ import {
   getAdminDashboard,
   getAdminOperationsDashboard,
   getAdminServiceDashboard,
+  getPools,
 } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
-import type { AdminActionLog, AdminActionResultStatus, AdminDashboard, AdminMetricCount, InAppNotification, PoolAddRequest } from "@/lib/types";
+import type { AdminActionLog, AdminActionResultStatus, AdminDashboard, AdminMetricCount, InAppNotification, Pool, PoolAddRequest } from "@/lib/types";
 
 const OPERATIONS_POLL_MS = 5000;
 const SERVICE_POLL_MS = 60000;
@@ -48,6 +50,7 @@ const statusLabels: Record<string, string> = {
   SENDING: "발송 중",
   SENT: "성공",
   FAILED: "실패",
+  CANCELLED: "취소",
   CANDIDATE: "후보",
   VERIFIED: "검증됨",
   INACTIVE: "비활성",
@@ -72,6 +75,7 @@ const actionTypeLabels: Record<string, string> = {
   POSTPROCESS_POOL_ADD_REQUEST_HOMEPAGE: "홈페이지 재검증",
   POSTPROCESS_POOL_ADD_REQUEST_IMAGE: "이미지 보강",
   POSTPROCESS_POOL_ADD_REQUEST_NOTICES: "공지 스캔",
+  CORRECT_POOL_HOMEPAGE: "수영장 홈페이지 교정",
 };
 
 const actionTypeOptions = Object.entries(actionTypeLabels).map(([value, label]) => ({
@@ -84,7 +88,8 @@ type PendingAdminAction =
   | { kind: "requeue-failed"; notification: InAppNotification; title: string; description: string; confirmLabel: string; danger?: boolean }
   | { kind: "approve-request"; request: PoolAddRequest; title: string; description: string; confirmLabel: string; danger?: boolean }
   | { kind: "reject-request"; request: PoolAddRequest; title: string; description: string; confirmLabel: string; danger?: boolean }
-  | { kind: "postprocess-request"; request: PoolAddRequest; title: string; description: string; confirmLabel: string; danger?: boolean };
+  | { kind: "postprocess-request"; request: PoolAddRequest; title: string; description: string; confirmLabel: string; danger?: boolean }
+  | { kind: "correct-pool-homepage"; pool: Pool; name: string; homepageUrl: string; reason: string; title: string; description: string; confirmLabel: string; danger?: boolean };
 
 type PostprocessStepKey = "homepage" | "image" | "notices";
 
@@ -106,6 +111,7 @@ const postprocessSteps: PostprocessStepKey[] = ["homepage", "image", "notices"];
 
 export function AdminDashboardClient() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
+  const [pools, setPools] = useState<Pool[]>([]);
   const [operationsGeneratedAt, setOperationsGeneratedAt] = useState<string | null>(null);
   const [serviceGeneratedAt, setServiceGeneratedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -151,15 +157,17 @@ export function AdminDashboardClient() {
     }
     setErrorMessage(null);
     try {
-      const [result, filteredLogs] = await Promise.all([
+      const [result, filteredLogs, poolList] = await Promise.all([
         getAdminDashboard(),
         fetchFilteredActionLogs(),
+        getPools(),
       ]);
       setDashboard({
         ...result,
         recentActionLogs: filteredLogs,
       });
       setActionLogs(filteredLogs);
+      setPools(poolList);
       setOperationsGeneratedAt(result.generatedAt);
       setServiceGeneratedAt(result.generatedAt);
     } catch (error) {
@@ -273,6 +281,16 @@ export function AdminDashboardClient() {
         setNotice(`${result.title} 요청을 반려했습니다.`);
         await refreshService();
       }
+      if (action.kind === "correct-pool-homepage") {
+        const result = await adminCorrectPoolHomepage(action.pool.id, {
+          name: action.name,
+          homepageUrl: action.homepageUrl,
+          reason: action.reason,
+        });
+        setPools(await getPools());
+        setNotice(`${result.pool.name} 홈페이지를 revision ${result.homepageRevision}로 교정했습니다. 검토 대상 구독 ${result.reviewRequiredSubscriptions}건, 취소 알림 ${result.cancelledNotifications}건. 다음 공지 확인에서 새 홈페이지 기준으로 경로를 탐색합니다.`);
+        await Promise.all([refreshOperations(), refreshService(), refreshActionLogs(false)]);
+      }
       setPendingAction(null);
     } catch (error) {
       setNotice(getActionErrorMessage(error));
@@ -381,6 +399,21 @@ export function AdminDashboardClient() {
           <div className="rounded-2xl border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm font-semibold text-[#075985]">
             {notice}
           </div>
+        ) : null}
+
+        {dashboard ? (
+          <PoolHomepageCorrectionPanel
+            pools={pools}
+            busy={actionBusy}
+            onSubmit={(input) => setPendingAction({
+              kind: "correct-pool-homepage",
+              ...input,
+              title: `${input.pool.name} 홈페이지 교정`,
+              description: "기존 공지 경로를 비활성화하고 영향받는 구독을 검토 상태로 전환합니다. 아직 발송되지 않은 접수 알림은 취소됩니다.",
+              confirmLabel: "교정 및 재검증",
+              danger: true,
+            })}
+          />
         ) : null}
 
         {loading ? (
@@ -1181,6 +1214,77 @@ function ChecklistItem({ children, danger }: { children: ReactNode; danger?: boo
       <span className={`mt-1 size-2 rounded-full ${danger ? "bg-[#dc2626]" : "bg-[#0f766e]"}`} />
       <span>{children}</span>
     </li>
+  );
+}
+
+function PoolHomepageCorrectionPanel({
+  pools,
+  busy,
+  onSubmit,
+}: {
+  pools: Pool[];
+  busy: boolean;
+  onSubmit: (input: { pool: Pool; name: string; homepageUrl: string; reason: string }) => void;
+}) {
+  const [poolId, setPoolId] = useState("");
+  const [name, setName] = useState("");
+  const [homepageUrl, setHomepageUrl] = useState("");
+  const [reason, setReason] = useState("잘못 연결된 홈페이지 출처를 올바른 시설 홈페이지로 교정했습니다.");
+  const selectedPool = pools.find((pool) => pool.id.toString() === poolId) ?? pools[0] ?? null;
+  const resolvedName = name || selectedPool?.name || "";
+  const resolvedHomepageUrl = homepageUrl || selectedPool?.homepageUrl || "";
+
+  function selectPool(nextPoolId: string) {
+    const pool = pools.find((candidate) => candidate.id.toString() === nextPoolId);
+    setPoolId(nextPoolId);
+    setName(pool?.name ?? "");
+    setHomepageUrl(pool?.homepageUrl ?? "");
+  }
+
+  return (
+    <section className="rounded-2xl border border-[#f0caca] bg-white p-5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#fff1f2] text-[#be123c]">
+          <AlertTriangle size={20} />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-[#102337]">수영장 홈페이지 교정</h2>
+          <p className="mt-1 text-sm text-[#5f7484]">잘못 연결된 시설명·홈페이지를 수정하고 기존 출처와 영향 구독을 안전하게 검토 상태로 전환합니다.</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <label className="text-sm font-bold text-[#17344a]">
+          수영장
+          <select value={selectedPool?.id.toString() ?? ""} onChange={(event) => selectPool(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]">
+            {pools.map((pool) => <option key={pool.id} value={pool.id}>#{pool.id} {pool.name}</option>)}
+          </select>
+        </label>
+        <label className="text-sm font-bold text-[#17344a]">
+          시설명
+          <input value={resolvedName} onChange={(event) => setName(event.target.value)} maxLength={255} className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]" />
+        </label>
+        <label className="text-sm font-bold text-[#17344a] lg:col-span-2">
+          새 홈페이지 전체 주소
+          <input type="url" value={resolvedHomepageUrl} onChange={(event) => setHomepageUrl(event.target.value)} maxLength={255} placeholder="https://..." className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]" />
+        </label>
+        <label className="text-sm font-bold text-[#17344a] lg:col-span-2">
+          사용자 안내 사유
+          <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={2} maxLength={500} className="mt-2 w-full resize-none rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 py-2 font-medium outline-none focus:border-[#0f766e]" />
+        </label>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 border-t border-[#edf2f5] pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-[#6b7f8d]">현재 revision {selectedPool?.homepageRevision ?? "-"}. 실행 후 이전 공지는 fallback에서 제외됩니다.</p>
+        <button
+          type="button"
+          disabled={busy || !selectedPool || !resolvedName.trim() || !resolvedHomepageUrl.trim()}
+          onClick={() => selectedPool && onSubmit({ pool: selectedPool, name: resolvedName.trim(), homepageUrl: resolvedHomepageUrl.trim(), reason: reason.trim() })}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#be123c] px-4 text-sm font-bold text-white transition hover:bg-[#9f1239] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RefreshCw size={16} />
+          교정 검토
+        </button>
+      </div>
+    </section>
   );
 }
 

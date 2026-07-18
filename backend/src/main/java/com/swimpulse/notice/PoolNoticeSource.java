@@ -36,6 +36,9 @@ public class PoolNoticeSource {
 	@Column(nullable = false, length = 30)
 	private NoticeSourceStatus status;
 
+	@Column(nullable = false)
+	private int homepageRevision;
+
 	private Instant lastScannedAt;
 
 	private Instant lastSuccessAt;
@@ -57,6 +60,7 @@ public class PoolNoticeSource {
 		this.sourceUrl = NoticeSourceUrlNormalizer.normalize(sourceUrl);
 		this.sourceType = sourceType;
 		this.status = NoticeSourceStatus.CANDIDATE;
+		this.homepageRevision = pool.getHomepageRevision();
 		this.failureCount = 0;
 		this.createdAt = Instant.now();
 	}
@@ -67,6 +71,13 @@ public class PoolNoticeSource {
 		this.lastError = null;
 		this.lastScannedAt = Instant.now();
 		this.lastSuccessAt = this.lastScannedAt;
+	}
+
+	public void prepareForHomepageRevision(int revision) {
+		this.homepageRevision = Math.max(1, revision);
+		this.status = NoticeSourceStatus.CANDIDATE;
+		this.failureCount = 0;
+		this.lastError = null;
 	}
 
 	public void markInactive() {
@@ -103,6 +114,10 @@ public class PoolNoticeSource {
 
 	public NoticeSourceStatus getStatus() {
 		return status;
+	}
+
+	public int getHomepageRevision() {
+		return homepageRevision < 1 ? 1 : homepageRevision;
 	}
 
 	public Instant getLastScannedAt() {

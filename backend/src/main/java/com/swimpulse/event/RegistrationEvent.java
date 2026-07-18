@@ -55,6 +55,15 @@ public class RegistrationEvent {
 	@Column(nullable = false, length = 20)
 	private EventStatus status;
 
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 30)
+	private EventSourceValidityStatus sourceValidityStatus = EventSourceValidityStatus.ACTIVE;
+
+	private Instant sourceChangedAt;
+
+	@Column(length = 500)
+	private String sourceChangeReason;
+
 	@Column(nullable = false)
 	private boolean reminderQueued;
 
@@ -107,6 +116,18 @@ public class RegistrationEvent {
 		this.status = status;
 	}
 
+	public void requireSourceReview(String reason) {
+		this.sourceValidityStatus = EventSourceValidityStatus.REVIEW_REQUIRED;
+		this.sourceChangedAt = Instant.now();
+		this.sourceChangeReason = truncate(reason, 500);
+	}
+
+	public void invalidateSource(String reason) {
+		this.sourceValidityStatus = EventSourceValidityStatus.INVALIDATED;
+		this.sourceChangedAt = Instant.now();
+		this.sourceChangeReason = truncate(reason, 500);
+	}
+
 	public void markReminderQueued() {
 		this.reminderQueued = true;
 	}
@@ -155,6 +176,18 @@ public class RegistrationEvent {
 
 	public EventStatus getStatus() {
 		return status;
+	}
+
+	public EventSourceValidityStatus getSourceValidityStatus() {
+		return sourceValidityStatus == null ? EventSourceValidityStatus.ACTIVE : sourceValidityStatus;
+	}
+
+	public Instant getSourceChangedAt() {
+		return sourceChangedAt;
+	}
+
+	public String getSourceChangeReason() {
+		return sourceChangeReason;
 	}
 
 	public boolean isReminderQueued() {

@@ -22,9 +22,23 @@ public class SubscriptionController {
 	private static final Logger log = LoggerFactory.getLogger(SubscriptionController.class);
 
 	private final SubscriptionService subscriptionService;
+	private final SubscriptionReviewService subscriptionReviewService;
 
-	public SubscriptionController(SubscriptionService subscriptionService) {
+	public SubscriptionController(
+			SubscriptionService subscriptionService,
+			SubscriptionReviewService subscriptionReviewService
+	) {
 		this.subscriptionService = subscriptionService;
+		this.subscriptionReviewService = subscriptionReviewService;
+	}
+
+	@PostMapping("/{subscriptionId}/source-review/confirm")
+	public SubscriptionResponse confirmSourceReview(
+			@AuthenticationPrincipal AuthenticatedUser user,
+			@PathVariable Long subscriptionId
+	) {
+		log.info("Subscription source review confirmed. userId={} subscriptionId={}", user.id(), subscriptionId);
+		return subscriptionReviewService.confirmCurrentPeriod(user.id(), subscriptionId);
 	}
 
 	@GetMapping

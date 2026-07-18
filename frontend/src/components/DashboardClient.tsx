@@ -1886,8 +1886,27 @@ function PushNotificationModal({
                 target="_blank"
                 rel="noreferrer"
               >
-                원문 보기
+                {notification.type === "SOURCE_REVIEW_REQUIRED" ? "기존 공지 보기" : "원문 보기"}
                 <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </a>
+            ) : null}
+            {notification.type === "SOURCE_REVIEW_REQUIRED" && notification.currentHomepageUrl ? (
+              <a
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[#d8ddd5] bg-white px-4 text-sm font-semibold text-[#17201d] transition hover:border-[#17201d]"
+                href={notification.currentHomepageUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                새 홈페이지 확인
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </a>
+            ) : null}
+            {notification.type === "SOURCE_REVIEW_REQUIRED" && notification.subscriptionId ? (
+              <a
+                className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#0f766e] px-4 text-sm font-semibold text-white transition hover:bg-[#0b5f59]"
+                href={`/my-page?subscriptionId=${notification.subscriptionId}`}
+              >
+                구독 검토하기
               </a>
             ) : null}
             <button
@@ -2232,13 +2251,27 @@ function PeriodSelectionRow({
     shiftedPeriod && shiftedTitle
       ? subscriptionKey(notice.poolId, shiftedTitle, shiftedPeriod.startsAt, shiftedPeriod.endsAt)
       : null;
-  const subscription = subscriptions.find(
-    (item) =>
-      item.event &&
-      (subscriptionKeyFromEvent(item.event) === key ||
-        (shiftedKey !== null && subscriptionKeyFromEvent(item.event) === shiftedKey)),
-  );
-  const subscribed = subscribedEventKeys.has(key) || (shiftedKey !== null && subscribedEventKeys.has(shiftedKey));
+  const subscription = subscriptions.find((item) => {
+    const event = item.event;
+    if (!event) {
+      return false;
+    }
+
+    // A parsed notice period is the stable identity. Its label or notice title can change
+    // after a source correction, while the linked registration event remains the same.
+    if (period.id !== null && event.noticeRegistrationPeriodId === period.id) {
+      return true;
+    }
+
+    return (
+      subscriptionKeyFromEvent(event) === key ||
+      (shiftedKey !== null && subscriptionKeyFromEvent(event) === shiftedKey)
+    );
+  });
+  const subscribed =
+    subscription !== undefined ||
+    subscribedEventKeys.has(key) ||
+    (shiftedKey !== null && subscribedEventKeys.has(shiftedKey));
   const pending = pendingSubscriptionKey === key || (shiftedKey !== null && pendingSubscriptionKey === shiftedKey);
   const periodLabel = period.label?.trim() || "모집 기간";
 

@@ -12,9 +12,30 @@ public record EventResponse(
 		Instant registrationStartsAt,
 		Instant registrationEndsAt,
 		EventStatus status,
+		EventSourceValidityStatus sourceValidityStatus,
+		Instant sourceChangedAt,
+		String sourceChangeReason,
 		boolean reminderQueued,
 		boolean startQueued
 ) {
+	public EventResponse(
+			Long id,
+			Long noticeRegistrationPeriodId,
+			String noticeUrl,
+			Long poolId,
+			String poolName,
+			String title,
+			Instant registrationStartsAt,
+			Instant registrationEndsAt,
+			EventStatus status,
+			boolean reminderQueued,
+			boolean startQueued
+	) {
+		this(id, noticeRegistrationPeriodId, noticeUrl, poolId, poolName, title,
+				registrationStartsAt, registrationEndsAt, status, EventSourceValidityStatus.ACTIVE,
+				null, null, reminderQueued, startQueued);
+	}
+
 	public static EventResponse from(RegistrationEvent event) {
 		return new EventResponse(
 				event.getId(),
@@ -26,6 +47,9 @@ public record EventResponse(
 				event.getRegistrationStartsAt(),
 				event.getRegistrationEndsAt(),
 				event.getStatus(),
+				event.getSourceValidityStatus(),
+				event.getSourceChangedAt(),
+				event.getSourceChangeReason(),
 				event.isReminderQueued(),
 				event.isStartQueued()
 		);

@@ -17,13 +17,14 @@ import {
   useColorScheme,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import {NavigationContainer, useFocusEffect} from '@react-navigation/native';
+import {createNavigationContainerRef, NavigationContainer, useFocusEffect} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {
   ApiError,
   API_BASE_URL,
   createPoolFromLocationCandidate,
+  confirmSubscriptionSourceReview,
   createSubscription,
   deleteSubscription,
   getEvents,
@@ -89,11 +90,12 @@ const POOL_PAGE_SIZE = 10;
 
 type RootStackParamList = {
   Home: undefined;
-  MyPage: undefined;
+  MyPage: {subscriptionId?: number} | undefined;
   Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 type AppState = {
   user: AppUser | null;
@@ -169,7 +171,7 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <Stack.Navigator
           screenOptions={{
             headerStyle: {backgroundColor: '#f7fbff'},
@@ -199,6 +201,12 @@ function App() {
           fallback={pushFallback}
           loading={pushLoading}
           onClose={closePushNotification}
+          onReview={subscriptionId => {
+            closePushNotification().catch(() => undefined);
+            if (navigationRef.isReady()) {
+              navigationRef.navigate('MyPage', {subscriptionId});
+            }
+          }}
         />
       </NavigationContainer>
     </SafeAreaProvider>
@@ -663,8 +671,11 @@ function NoticeScanModal({
                         title: notice.title,
                         registrationStartsAt: period.startsAt,
                         registrationEndsAt: period.endsAt,
-                        status: 'UPCOMING',
-                        reminderQueued: false,
+                          status: 'UPCOMING',
+                          sourceValidityStatus: 'ACTIVE',
+                          sourceChangedAt: null,
+                          sourceChangeReason: null,
+                          reminderQueued: false,
                         startQueued: false,
                       };
                       const existing = subscribedByKey.get(subscriptionKeyFromEvent(syntheticEvent));
@@ -700,7 +711,11 @@ function NoticeScanModal({
   );
 }
 
-function MyPageScreen({user, setUser}: AppState) {
+function MyPageScreen({
+  user,
+  setUser,
+  route,
+}: AppState & {route: {params?: {subscriptionId?: number}}}) {
   const [data, setData] = useState<MyPageData | null>(null);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [notificationPage, setNotificationPage] = useState({page: 0, totalPages: 0, last: true});
@@ -709,6 +724,8 @@ function MyPageScreen({user, setUser}: AppState) {
   const [editing, setEditing] = useState<Subscription | null>(null);
   const [selectedSubscription, setSelectedSubscription] = useState<Subscription | null>(null);
   const [selectedNotification, setSelectedNotification] = useState<InAppNotification | null>(null);
+  const [handledReviewTarget, setHandledReviewTarget] = useState<number | null>(null);
+  const [confirmingReview, setConfirmingReview] = useState(false);
 
   const load = useCallback(async (page = notificationPage.page) => {
     if (!user) {
@@ -743,6 +760,18 @@ function MyPageScreen({user, setUser}: AppState) {
       load(0);
     }, [load]),
   );
+
+  useEffect(() => {
+    const targetId = route.params?.subscriptionId;
+    if (!targetId || !data || handledReviewTarget === targetId) {
+      return;
+    }
+    const target = data.subscriptions.find(subscription => subscription.id === targetId);
+    setHandledReviewTarget(targetId);
+    if (target) {
+      setSelectedSubscription(target);
+    }
+  }, [data, handledReviewTarget, route.params?.subscriptionId]);
 
   async function logout() {
     await signOutFromGoogle();
@@ -793,6 +822,34 @@ function MyPageScreen({user, setUser}: AppState) {
     }
   }
 
+  function openNotificationDetail(notification: InAppNotification) {
+    if (notification.type === 'SOURCE_REVIEW_REQUIRED' && notification.subscriptionId) {
+      const subscription = data?.subscriptions.find(candidate => candidate.id === notification.subscriptionId);
+      if (subscription) {
+        setSelectedSubscription(subscription);
+        if (!notification.readAt) {
+          readNotification(notification).catch(() => undefined);
+        }
+        return;
+      }
+    }
+    setSelectedNotification(notification);
+  }
+
+  async function confirmCurrentPeriod(subscription: Subscription) {
+    try {
+      setConfirmingReview(true);
+      const updated = await confirmSubscriptionSourceReview(subscription.id);
+      setSelectedSubscription(updated);
+      await load(0);
+      Alert.alert('구독 검토 완료', '현재 기간 기준으로 알림이 다시 동작합니다.');
+    } catch (error) {
+      showError('구독 검토를 완료하지 못했습니다.', error);
+    } finally {
+      setConfirmingReview(false);
+    }
+  }
+
   if (!user) {
     return (
       <Screen>
@@ -813,7 +870,10 @@ function MyPageScreen({user, setUser}: AppState) {
     );
   }
 
-  const activeSubscriptions = data?.subscriptions.filter(subscription => !isEventClosed(subscription.event)) ?? [];
+  const reviewRequiredSubscriptions = data?.subscriptions.filter(subscription => subscription.reviewStatus === 'REVIEW_REQUIRED') ?? [];
+  const activeSubscriptions = [...(data?.subscriptions ?? [])]
+    .filter(subscription => !isEventClosed(subscription.event))
+    .sort((left, right) => Number(right.reviewStatus === 'REVIEW_REQUIRED') - Number(left.reviewStatus === 'REVIEW_REQUIRED'));
   const closedSubscriptions = data?.subscriptions.filter(subscription => isEventClosed(subscription.event)) ?? [];
 
   return (
@@ -836,6 +896,13 @@ function MyPageScreen({user, setUser}: AppState) {
             <Metric label="안읽음" value={data.metrics.unreadNotificationCount} />
             <Metric label="기기" value={data.metrics.activeDeviceCount} />
           </View>
+        ) : null}
+
+        {reviewRequiredSubscriptions.length > 0 ? (
+          <NoticeBanner
+            tone="amber"
+            text={`홈페이지 출처 변경으로 구독 검토가 필요합니다. 잘못 연결된 홈페이지 출처를 올바른 시설 홈페이지로 교정했습니다. 검토 대상 ${reviewRequiredSubscriptions.length}건이 진행 중인 구독 상단에 표시됩니다.`}
+          />
         ) : null}
 
         <Section title="진행 중인 구독">
@@ -881,7 +948,7 @@ function MyPageScreen({user, setUser}: AppState) {
               <Pressable
                 key={notification.id}
                 accessibilityRole="button"
-                onPress={() => setSelectedNotification(notification)}
+                onPress={() => openNotificationDetail(notification)}
                 style={styles.notificationCard}>
                 <View style={styles.rowBetween}>
                   <Text style={styles.noticeTitle}>{notification.title}</Text>
@@ -945,12 +1012,21 @@ function MyPageScreen({user, setUser}: AppState) {
           setSelectedSubscription(null);
           removeSubscription(subscription);
         }}
+        confirmingReview={confirmingReview}
+        onConfirmCurrent={confirmCurrentPeriod}
       />
       <PushNotificationModal
         notification={selectedNotification}
         fallback={null}
         loading={false}
         onClose={closeNotificationDetail}
+        onReview={subscriptionId => {
+          const subscription = data?.subscriptions.find(candidate => candidate.id === subscriptionId);
+          setSelectedNotification(null);
+          if (subscription) {
+            setSelectedSubscription(subscription);
+          }
+        }}
       />
     </Screen>
   );
@@ -1312,16 +1388,21 @@ function PushNotificationModal({
   fallback,
   loading,
   onClose,
+  onReview,
 }: {
   notification: InAppNotification | null;
   fallback: ReceivedPushMessage | null;
   loading: boolean;
   onClose: () => void;
+  onReview?: (subscriptionId: number) => void;
 }) {
   const visible = loading || Boolean(notification || fallback);
   const title = notification?.title ?? fallback?.title ?? 'SwimPulse 알림';
   const message = notification?.message ?? fallback?.body ?? '새 알림이 도착했습니다.';
   const noticeUrl = notification?.noticeUrl ?? fallback?.noticeUrl;
+  const currentHomepageUrl = notification?.currentHomepageUrl ?? fallback?.currentHomepageUrl;
+  const subscriptionId = notification?.subscriptionId ?? Number(fallback?.subscriptionId);
+  const sourceReview = notification?.type === 'SOURCE_REVIEW_REQUIRED' || fallback?.type === 'SOURCE_REVIEW_REQUIRED';
   const poolName = notification?.poolName;
   const eventTitle = notification?.eventTitle;
   const arrivedAt = notification?.createdAt ? formatDateTime(notification.createdAt) : null;
@@ -1358,9 +1439,15 @@ function PushNotificationModal({
               <View style={styles.buttonRow}>
                 {noticeUrl ? (
                   <SecondaryButton
-                    label="원문 보기"
+                    label={sourceReview ? '기존 공지 보기' : '원문 보기'}
                     onPress={() => Linking.openURL(noticeUrl)}
                   />
+                ) : null}
+                {sourceReview && currentHomepageUrl ? (
+                  <SecondaryButton label="새 홈페이지 확인" onPress={() => Linking.openURL(currentHomepageUrl)} />
+                ) : null}
+                {sourceReview && Number.isInteger(subscriptionId) && subscriptionId > 0 && onReview ? (
+                  <ActionButton label="구독 검토하기" onPress={() => onReview(subscriptionId)} />
                 ) : null}
                 <ActionButton label="확인" onPress={onClose} />
               </View>
@@ -1378,11 +1465,15 @@ function SubscriptionDetailModal({
   onClose,
   onEdit,
   onDelete,
+  confirmingReview,
+  onConfirmCurrent,
 }: {
   subscription: Subscription | null;
   onClose: () => void;
   onEdit: (subscription: Subscription) => void;
   onDelete: (subscription: Subscription) => void;
+  confirmingReview: boolean;
+  onConfirmCurrent: (subscription: Subscription) => void;
 }) {
   if (!subscription) {
     return null;
@@ -1418,9 +1509,26 @@ function SubscriptionDetailModal({
             <Text style={styles.mutedText}>구독 생성 {formatDateTime(subscription.createdAt)}</Text>
           </View>
 
+          {subscription.reviewStatus === 'REVIEW_REQUIRED' ? (
+            <NoticeBanner
+              text={subscription.reviewReason ?? '홈페이지 출처가 변경되었습니다. 기존 공지와 새 홈페이지를 비교해 구독 기간을 검토해주세요.'}
+              tone="amber"
+            />
+          ) : null}
+
           <View style={styles.buttonRow}>
             {event?.noticeUrl ? (
-              <SecondaryButton label="원문 보기" onPress={() => Linking.openURL(event.noticeUrl!)} />
+              <SecondaryButton label="기존 공지 보기" onPress={() => Linking.openURL(event.noticeUrl!)} />
+            ) : null}
+            {subscription.pool.homepageUrl ? (
+              <SecondaryButton label="새 홈페이지 확인" onPress={() => Linking.openURL(subscription.pool.homepageUrl!)} />
+            ) : null}
+            {subscription.reviewStatus === 'REVIEW_REQUIRED' ? (
+              <ActionButton
+                label={confirmingReview ? '처리 중...' : '현재 기간 유지'}
+                onPress={() => onConfirmCurrent(subscription)}
+                disabled={confirmingReview}
+              />
             ) : null}
             {canEdit ? <SecondaryButton label="기간 수정" onPress={() => onEdit(subscription)} /> : null}
             <ActionButton label="구독 해제" onPress={() => onDelete(subscription)} disabled={!event} />
@@ -1549,17 +1657,33 @@ function SubscriptionCard({
   onDelete: () => void;
 }) {
   const event = subscription.event;
+  const needsReview = subscription.reviewStatus === 'REVIEW_REQUIRED';
   return (
-    <Pressable accessibilityRole="button" onPress={onOpen} style={styles.poolCard}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onOpen}
+      style={[styles.poolCard, needsReview ? styles.reviewSubscriptionCard : null]}>
       <View style={styles.rowBetween}>
         <Text style={styles.poolName}>{subscriptionTitle(subscription)}</Text>
-        <Text style={styles.statusPill}>{event ? eventStatusLabel(event.status) : '수동'}</Text>
+        <View style={styles.badgeRow}>
+          {needsReview ? <Text style={styles.reviewStatusPill}>검토 필요</Text> : null}
+          <Text style={styles.statusPill}>{event ? eventStatusLabel(event.status) : '수동'}</Text>
+        </View>
       </View>
       <Text style={styles.mutedText}>{subscription.pool.name}</Text>
       {event ? (
         <Text style={styles.periodText}>
           {formatShortPeriod(event.registrationStartsAt, event.registrationEndsAt)}
         </Text>
+      ) : null}
+      {needsReview ? (
+        <View style={styles.reviewSubscriptionNotice}>
+          <Text style={styles.reviewSubscriptionTitle}>홈페이지 출처 변경으로 구독 검토가 필요합니다.</Text>
+          <Text style={styles.reviewSubscriptionText}>
+            {subscription.reviewReason ?? '잘못 연결된 홈페이지 출처를 올바른 시설 홈페이지로 교정했습니다. 기존 공지와 새 홈페이지를 확인해주세요.'}
+          </Text>
+          <SecondaryButton label="검토하기" onPress={onOpen} />
+        </View>
       ) : null}
       <View style={styles.buttonRow}>
         {event?.noticeUrl ? (
@@ -1817,6 +1941,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d6e5eb',
   },
+  reviewSubscriptionCard: {
+    borderColor: '#fdba74',
+    backgroundColor: '#fffaf3',
+  },
+  reviewSubscriptionNotice: {
+    gap: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    backgroundColor: '#fff7ed',
+    padding: 12,
+  },
+  reviewSubscriptionTitle: {
+    color: '#9a3412',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  reviewSubscriptionText: {
+    color: '#9a3412',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   eventCard: {
     gap: 8,
     borderRadius: 16,
@@ -1887,6 +2033,16 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#e5f5f4',
     color: '#047c86',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  reviewStatusPill: {
+    overflow: 'hidden',
+    borderRadius: 12,
+    backgroundColor: '#ffedd5',
+    color: '#9a3412',
     paddingHorizontal: 8,
     paddingVertical: 4,
     fontSize: 12,

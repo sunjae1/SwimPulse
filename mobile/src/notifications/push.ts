@@ -11,9 +11,12 @@ export type PushRegistrationResult = {
 
 export type ReceivedPushMessage = {
   notificationId?: string;
+  subscriptionId?: string;
+  type?: string;
   title: string;
   body: string;
   noticeUrl?: string;
+  currentHomepageUrl?: string;
 };
 
 async function requestAndroidPostNotificationPermission() {
@@ -94,12 +97,16 @@ function toReceivedPushMessage(
   const dataTitle = stringValue(remoteMessage.data?.title);
   const dataBody = stringValue(remoteMessage.data?.body);
   const dataNoticeUrl = stringValue(remoteMessage.data?.noticeUrl);
+  const dataCurrentHomepageUrl = stringValue(remoteMessage.data?.currentHomepageUrl);
 
   return {
     notificationId: dataNotificationId,
+    subscriptionId: stringValue(remoteMessage.data?.subscriptionId),
+    type: stringValue(remoteMessage.data?.type),
     title: remoteMessage.notification?.title ?? dataTitle ?? 'SwimPulse 알림',
     body: remoteMessage.notification?.body ?? dataBody ?? '새 알림이 도착했습니다.',
     noticeUrl: dataNoticeUrl,
+    currentHomepageUrl: dataCurrentHomepageUrl,
   };
 }
 

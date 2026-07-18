@@ -69,13 +69,17 @@ public class NotificationService {
 		int created = 0;
 		int skipped = 0;
 		for (Subscription subscription : subscriptions) {
+			if (!subscription.allowsNotifications()) {
+				skipped++;
+				continue;
+			}
 			String dedupeKey = scheduledDedupeKey(subscription.getUser().getId(), event.getId(), type);
 			Optional<Notification> existing = notificationRepository.findByDedupeKey(dedupeKey);
 			if (existing.isPresent()) {
 				skipped++;
 				continue;
 			}
-			Notification notification = notificationRepository.save(createNotification(subscription.getUser(), event, type, dedupeKey));
+			Notification notification = notificationRepository.save(createNotification(subscription, type, dedupeKey));
 			queuePublisher.publishAfterCommit(notification.getId());
 			meterRegistry.counter("swimpulse.notification.queue.published", "type", type.name()).increment();
 			created++;
@@ -181,12 +185,11 @@ public class NotificationService {
 				.orElseThrow(() -> new BadRequestException("테스트 알림을 보내기 전에 원하는 수영장 공지를 확인하고 모집 기간을 구독해주세요."));
 		RegistrationEvent event = subscription.getEvent();
 		Notification notification = notificationRepository.save(new Notification(
-				user,
-				subscription.getPool(),
-				event,
+				subscription,
 				NotificationType.REGISTRATION_OPEN,
 				"SwimPulse 테스트 푸시",
-				subscription.getPool().getName() + " 테스트 알림입니다. 실제 FCM 설정이 연결되어 있으면 브라우저 푸시로 도착합니다."
+				subscription.getPool().getName() + " 테스트 알림입니다. 실제 FCM 설정이 연결되어 있으면 브라우저 또는 앱 푸시로 도착합니다.",
+				null
 		));
 		queuePublisher.publishAfterCommit(notification.getId());
 		meterRegistry.counter("swimpulse.notification.queue.published", "type", notification.getType().name()).increment();
@@ -219,6 +222,8 @@ public class NotificationService {
 								"poolName", work.poolName(),
 								"eventTitle", work.eventTitle(),
 								"noticeUrl", work.noticeUrl() == null ? "" : work.noticeUrl(),
+								"currentHomepageUrl", work.currentHomepageUrl() == null ? "" : work.currentHomepageUrl(),
+								"subscriptionId", work.subscriptionId() == null ? "" : work.subscriptionId().toString(),
 								"type", work.type().name()
 						)
 				)));
@@ -275,6 +280,8 @@ public class NotificationService {
 				notification.getEvent().getId(),
 				notification.getEvent().getTitle(),
 				noticeUrl(notification),
+				notification.getPool().getHomepageUrl(),
+				notification.getSubscription() == null ? null : notification.getSubscription().getId(),
 				notification.getType(),
 				notification.getTitle(),
 				notification.getMessage(),
@@ -387,16 +394,83 @@ public class NotificationService {
 		return staleNotifications.size();
 	}
 
-	private Notification createNotification(AppUser user, RegistrationEvent event, NotificationType type, String dedupeKey) {
+	@Transactional
+	public int cancelQueuedForSubscriptions(List<Subscription> subscriptions) {
+		List<Long> subscriptionIds = subscriptions.stream().map(Subscription::getId).toList();
+		if (subscriptionIds.isEmpty()) {
+			return 0;
+		}
+		int cancelled = 0;
+		for (Notification notification : notificationRepository.findBySubscription_IdInAndStatus(
+				subscriptionIds,
+				NotificationStatus.QUEUED
+		)) {
+			if (notification.getType() != NotificationType.SOURCE_REVIEW_REQUIRED && notification.cancelIfQueued()) {
+				cancelled++;
+			}
+		}
+		return cancelled;
+	}
+
+	@Transactional
+	public int createSourceReviewNotifications(List<Subscription> subscriptions, int homepageRevision) {
+		int created = 0;
+		for (Subscription subscription : subscriptions) {
+			String dedupeKey = "source-review:" + subscription.getId() + ":" + homepageRevision;
+			if (notificationRepository.findByDedupeKey(dedupeKey).isPresent()) {
+				continue;
+			}
+			Notification notification = notificationRepository.save(new Notification(
+					subscription,
+					NotificationType.SOURCE_REVIEW_REQUIRED,
+					"수영장 홈페이지 정보가 변경되었습니다",
+					subscription.getPool().getName()
+							+ " 홈페이지 출처를 수정했습니다. 기존 공지와 새 홈페이지를 확인하고 구독 기간을 검토해 주세요.",
+					dedupeKey
+			));
+			queuePublisher.publishAfterCommit(notification.getId());
+			meterRegistry.counter("swimpulse.notification.queue.published", "type", notification.getType().name()).increment();
+			created++;
+		}
+		return created;
+	}
+
+	@Transactional
+	public int resumeCancelledForSubscription(Long subscriptionId) {
+		int resumed = 0;
+		Instant now = Instant.now();
+		for (Notification notification : notificationRepository.findBySubscription_IdInAndStatus(
+				List.of(subscriptionId),
+				NotificationStatus.CANCELLED
+		)) {
+			boolean stillRelevant = switch (notification.getType()) {
+				case REGISTRATION_REMINDER -> notification.getEvent().getRegistrationStartsAt().isAfter(now);
+				case REGISTRATION_OPEN -> !notification.getEvent().getRegistrationStartsAt().isAfter(now)
+						&& notification.getEvent().getRegistrationEndsAt().isAfter(now);
+				case SOURCE_REVIEW_REQUIRED -> false;
+			};
+			if (stillRelevant) {
+				notification.markQueued();
+				queuePublisher.publishAfterCommit(notification.getId());
+				resumed++;
+			}
+		}
+		return resumed;
+	}
+
+	private Notification createNotification(Subscription subscription, NotificationType type, String dedupeKey) {
+		RegistrationEvent event = subscription.getEvent();
 		String title = switch (type) {
 			case REGISTRATION_REMINDER -> "수영장 접수 시작이 곧 다가옵니다";
 			case REGISTRATION_OPEN -> "지금 수영장 접수가 시작됐습니다";
+			case SOURCE_REVIEW_REQUIRED -> "수영장 홈페이지 정보가 변경되었습니다";
 		};
 		String message = switch (type) {
 			case REGISTRATION_REMINDER -> event.getPool().getName() + " " + event.getTitle() + " 접수가 곧 시작됩니다.";
 			case REGISTRATION_OPEN -> event.getPool().getName() + " " + event.getTitle() + " 접수가 시작됐습니다. 지금 확인하세요.";
+			case SOURCE_REVIEW_REQUIRED -> event.getPool().getName() + " 홈페이지 출처가 변경되어 구독 검토가 필요합니다.";
 		};
-		return new Notification(user, event.getPool(), event, type, title, message, dedupeKey);
+		return new Notification(subscription, type, title, message, dedupeKey);
 	}
 
 	private String scheduledDedupeKey(Long userId, Long eventId, NotificationType type) {
@@ -433,6 +507,8 @@ public class NotificationService {
 			Long eventId,
 			String eventTitle,
 			String noticeUrl,
+			String currentHomepageUrl,
+			Long subscriptionId,
 			NotificationType type,
 			String title,
 			String message,
@@ -440,7 +516,7 @@ public class NotificationService {
 			boolean skip
 	) {
 		public static DeliveryWork skip(Long notificationId) {
-			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, null, List.of(), true);
+			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, null, null, null, List.of(), true);
 		}
 	}
 }

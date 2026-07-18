@@ -2,6 +2,7 @@ package com.swimpulse.notification;
 
 import com.swimpulse.event.RegistrationEvent;
 import com.swimpulse.pool.Pool;
+import com.swimpulse.subscription.Subscription;
 import com.swimpulse.user.AppUser;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -34,6 +35,10 @@ public class Notification {
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "event_id", nullable = false)
 	private RegistrationEvent event;
+
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "subscription_id")
+	private Subscription subscription;
 
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 30)
@@ -80,9 +85,42 @@ public class Notification {
 	}
 
 	public Notification(AppUser user, Pool pool, RegistrationEvent event, NotificationType type, String title, String message, String dedupeKey) {
+		this(user, pool, event, null, type, title, message, dedupeKey);
+	}
+
+	public Notification(
+			Subscription subscription,
+			NotificationType type,
+			String title,
+			String message,
+			String dedupeKey
+	) {
+		this(
+				subscription.getUser(),
+				subscription.getPool(),
+				subscription.getEvent(),
+				subscription,
+				type,
+				title,
+				message,
+				dedupeKey
+		);
+	}
+
+	private Notification(
+			AppUser user,
+			Pool pool,
+			RegistrationEvent event,
+			Subscription subscription,
+			NotificationType type,
+			String title,
+			String message,
+			String dedupeKey
+	) {
 		this.user = user;
 		this.pool = pool;
 		this.event = event;
+		this.subscription = subscription;
 		this.type = type;
 		this.title = title;
 		this.message = message;
@@ -122,6 +160,15 @@ public class Notification {
 		this.processingStartedAt = null;
 	}
 
+	public boolean cancelIfQueued() {
+		if (this.status != NotificationStatus.QUEUED) {
+			return false;
+		}
+		this.status = NotificationStatus.CANCELLED;
+		this.processingStartedAt = null;
+		return true;
+	}
+
 	public void markRead() {
 		this.readAt = Instant.now();
 	}
@@ -140,6 +187,10 @@ public class Notification {
 
 	public RegistrationEvent getEvent() {
 		return event;
+	}
+
+	public Subscription getSubscription() {
+		return subscription;
 	}
 
 	public NotificationType getType() {

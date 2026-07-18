@@ -3,7 +3,10 @@ package com.swimpulse.subscription;
 import com.swimpulse.event.RegistrationEvent;
 import com.swimpulse.pool.Pool;
 import com.swimpulse.user.AppUser;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -37,6 +40,17 @@ public class Subscription {
 	private RegistrationEvent event;
 
 	private Instant createdAt;
+
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false, length = 30)
+	private SubscriptionReviewStatus reviewStatus = SubscriptionReviewStatus.ACTIVE;
+
+	private Instant reviewRequestedAt;
+
+	private Instant reviewedAt;
+
+	@Column(length = 500)
+	private String reviewReason;
 
 	protected Subscription() {
 	}
@@ -74,5 +88,53 @@ public class Subscription {
 
 	public void reassignEvent(RegistrationEvent event) {
 		this.event = event;
+		this.reviewStatus = SubscriptionReviewStatus.CONFIRMED;
+		this.reviewedAt = Instant.now();
+	}
+
+	public void requireReview(String reason) {
+		this.reviewStatus = SubscriptionReviewStatus.REVIEW_REQUIRED;
+		this.reviewRequestedAt = Instant.now();
+		this.reviewedAt = null;
+		this.reviewReason = truncate(reason, 500);
+	}
+
+	public void confirmReview() {
+		this.reviewStatus = SubscriptionReviewStatus.CONFIRMED;
+		this.reviewedAt = Instant.now();
+	}
+
+	public void invalidate(String reason) {
+		this.reviewStatus = SubscriptionReviewStatus.INVALIDATED;
+		this.reviewedAt = Instant.now();
+		this.reviewReason = truncate(reason, 500);
+	}
+
+	public boolean allowsNotifications() {
+		return getReviewStatus() == SubscriptionReviewStatus.ACTIVE
+				|| getReviewStatus() == SubscriptionReviewStatus.CONFIRMED;
+	}
+
+	public SubscriptionReviewStatus getReviewStatus() {
+		return reviewStatus == null ? SubscriptionReviewStatus.ACTIVE : reviewStatus;
+	}
+
+	public Instant getReviewRequestedAt() {
+		return reviewRequestedAt;
+	}
+
+	public Instant getReviewedAt() {
+		return reviewedAt;
+	}
+
+	public String getReviewReason() {
+		return reviewReason;
+	}
+
+	private String truncate(String value, int maxLength) {
+		if (value == null || value.length() <= maxLength) {
+			return value;
+		}
+		return value.substring(0, maxLength);
 	}
 }

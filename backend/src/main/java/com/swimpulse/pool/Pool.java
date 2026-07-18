@@ -80,6 +80,9 @@ public class Pool {
 	@Column(length = 40)
 	private HomepageVerificationStatus homepageStatus = HomepageVerificationStatus.UNVERIFIED;
 
+	@Column(nullable = false)
+	private int homepageRevision = 1;
+
 	private Instant homepageVerifiedAt;
 
 	@Column(length = 500)
@@ -181,6 +184,23 @@ public class Pool {
 
 	public void updateHomepageUrl(String homepageUrl) {
 		this.homepageUrl = homepageUrl;
+	}
+
+	public HomepageCorrection correctHomepage(String name, String homepageUrl) {
+		String previousName = this.name;
+		String previousHomepageUrl = this.homepageUrl;
+		int previousRevision = getHomepageRevision();
+		this.name = name;
+		this.homepageUrl = homepageUrl;
+		this.homepageSource = HomepageSource.MANUAL;
+		this.homepageStatus = HomepageVerificationStatus.VERIFIED;
+		this.homepageVerifiedAt = Instant.now();
+		this.homepageCandidateTitle = null;
+		this.homepageCandidateAddress = null;
+		this.homepageCandidateLink = null;
+		this.homepageRevision = previousRevision + 1;
+		this.lastNoticeDiscoveryAt = null;
+		return new HomepageCorrection(previousName, previousHomepageUrl, previousRevision, homepageRevision);
 	}
 
 	public void updateHomepageUrl(
@@ -292,6 +312,10 @@ public class Pool {
 
 	public HomepageVerificationStatus getHomepageStatus() {
 		return homepageStatus == null ? HomepageVerificationStatus.UNVERIFIED : homepageStatus;
+	}
+
+	public int getHomepageRevision() {
+		return homepageRevision < 1 ? 1 : homepageRevision;
 	}
 
 	public Instant getHomepageVerifiedAt() {
@@ -441,5 +465,13 @@ public class Pool {
 
 	private boolean hasText(String value) {
 		return value != null && !value.isBlank();
+	}
+
+	public record HomepageCorrection(
+			String previousName,
+			String previousHomepageUrl,
+			int previousRevision,
+			int currentRevision
+	) {
 	}
 }

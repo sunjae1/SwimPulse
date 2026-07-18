@@ -58,6 +58,9 @@ public class PoolNotice {
 	@Column(nullable = false)
 	private int parserVersion;
 
+	@Column(nullable = false)
+	private int homepageRevision;
+
 	private Instant lastAnalyzedAt;
 
 	@Enumerated(EnumType.STRING)
@@ -124,6 +127,7 @@ public class PoolNotice {
 		this.reason = reason;
 		this.registrationPeriodsJson = registrationPeriodsJson;
 		this.parserVersion = 0;
+		this.homepageRevision = pool.getHomepageRevision();
 		this.ocrStatus = NoticeOcrStatus.NOT_REQUIRED;
 		this.createdAt = Instant.now();
 	}
@@ -249,6 +253,14 @@ public class PoolNotice {
 
 	public int getParserVersion() {
 		return parserVersion;
+	}
+
+	public int getHomepageRevision() {
+		return homepageRevision < 1 ? 1 : homepageRevision;
+	}
+
+	public void confirmCurrentHomepageRevision() {
+		this.homepageRevision = pool.getHomepageRevision();
 	}
 
 	public Instant getLastAnalyzedAt() {

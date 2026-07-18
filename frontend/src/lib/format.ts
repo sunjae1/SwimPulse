@@ -58,5 +58,6 @@ export function notificationStatusLabel(status: NotificationStatus) {
     SENDING: "발송 중",
     SENT: "전송",
     FAILED: "실패",
+    CANCELLED: "취소",
   }[status];
 }

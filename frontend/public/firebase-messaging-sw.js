@@ -22,10 +22,15 @@ self.addEventListener("push", (event) => {
   const eventId = data.eventId;
   const poolId = data.poolId;
   const noticeUrl = data.noticeUrl;
-  const targetUrl = notificationId ? `/?notificationId=${notificationId}` : "/";
+  const subscriptionId = data.subscriptionId;
+  const targetUrl = type === "SOURCE_REVIEW_REQUIRED" && subscriptionId
+    ? `/my-page?subscriptionId=${subscriptionId}`
+    : notificationId ? `/?notificationId=${notificationId}` : "/";
   const title = notification.title ?? data.title ?? titleForType(type);
   const body = notification.body ?? data.body ?? "새 알림이 도착했습니다.";
-  const badgeText = type === "REGISTRATION_REMINDER" ? "곧 시작" : "접수 시작";
+  const badgeText = type === "SOURCE_REVIEW_REQUIRED"
+    ? "확인 필요"
+    : type === "REGISTRATION_REMINDER" ? "곧 시작" : "접수 시작";
   const actions = [
     {
       action: "open",
@@ -70,14 +75,25 @@ self.addEventListener("notificationclick", (event) => {
     return;
   }
 
-  const targetUrl = event.notification.data?.url ?? "/";
+  const targetPath = event.notification.data?.url ?? "/";
+  const targetUrl = new URL(targetPath, self.location.origin).href;
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clientList) => {
-      for (const client of clientList) {
-        if ("navigate" in client && "focus" in client) {
-          const navigatedClient = await client.navigate(targetUrl);
-          return (navigatedClient ?? client).focus();
+      const sameOriginClient = clientList.find((client) => {
+        try {
+          return new URL(client.url).origin === self.location.origin;
+        } catch {
+          return false;
+        }
+      });
+
+      if (sameOriginClient && "navigate" in sameOriginClient && "focus" in sameOriginClient) {
+        try {
+          const navigatedClient = await sameOriginClient.navigate(targetUrl);
+          return (navigatedClient ?? sameOriginClient).focus();
+        } catch {
+          // A stale/uncontrolled tab can reject navigation. Open a fresh target instead.
         }
       }
       return clients.openWindow(targetUrl);
@@ -91,6 +107,8 @@ function titleForType(type) {
       return "접수 시작이 곧 다가옵니다";
     case "REGISTRATION_OPEN":
       return "지금 접수가 시작됐습니다";
+    case "SOURCE_REVIEW_REQUIRED":
+      return "수영장 홈페이지 정보가 변경되었습니다";
     default:
       return "SwimPulse 알림";
   }

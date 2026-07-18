@@ -1,5 +1,6 @@
 package com.swimpulse.notification;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -14,6 +15,8 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 	Page<Notification> findByUser_IdOrderByCreatedAtDesc(Long userId, Pageable pageable);
 
 	Optional<Notification> findByDedupeKey(String dedupeKey);
+
+	List<Notification> findBySubscription_IdInAndStatus(Collection<Long> subscriptionIds, NotificationStatus status);
 
 	long countByUser_Id(Long userId);
 
