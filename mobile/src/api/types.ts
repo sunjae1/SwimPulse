@@ -69,6 +69,12 @@ export type LocationSearchCandidate = {
   homepageUrl: string | null;
 };
 
+export type GeocodedLocation = {
+  address: string;
+  latitude: number;
+  longitude: number;
+};
+
 export type PoolLocationCandidate = LocationSearchCandidate & {
   alreadyExists: boolean;
   matchedPoolId: number | null;

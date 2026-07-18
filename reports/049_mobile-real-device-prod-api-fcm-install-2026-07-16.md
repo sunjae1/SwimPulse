@@ -187,6 +187,52 @@ cd C:\sp\mobile\android
 
 ### 방법 A. adb 설치
 
+#### 1. SuperDisplay ADB 충돌 확인
+
+이 PC에는 `SuperDisplay`가 설치되어 있으며, 해당 PC 서비스가 구버전 ADB server를 별도로 실행할 수 있다. Android SDK ADB와 SuperDisplay ADB의 버전이 다르면 다음 오류가 반복된다.
+
+```text
+adb server version (40) doesn't match this client (41)
+protocol fault (couldn't read status): connection reset
+```
+
+이는 APK, 에뮬레이터, 실폰의 문제가 아니라 PC에서 두 ADB server가 기본 포트 `5037`을 두고 충돌하는 문제다. SuperDisplay PC 프로그램을 최신 버전으로 업데이트하는 것이 근본 해결책이다.
+
+업데이트 전 ADB 설치 작업을 할 때는 **관리자 PowerShell**에서 SuperDisplay 서비스를 임시로 멈춘다.
+
+```powershell
+Stop-Service -Name SuperDisplay -Force
+
+taskkill /F /IM adb.exe
+
+Start-Sleep -Seconds 2
+
+$androidAdb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+
+& $androidAdb start-server
+
+& $androidAdb devices
+```
+
+이후 연결할 기기가 모두 아래처럼 `device` 상태인지 확인한다.
+
+```text
+R3CN2018C3J     device
+emulator-5554   device
+```
+
+실폰이 `offline`이면 USB를 다시 연결하고, 실폰에 표시되는 USB 디버깅 RSA 승인 창을 허용한다. 필요하면 개발자 옵션에서 `USB 디버깅 승인 취소` 후 다시 연결한다.
+
+SuperDisplay가 필요해 다시 사용할 때는 아래처럼 서비스를 시작한다.
+
+```powershell
+Start-Service -Name SuperDisplay
+```
+
+다시 시작하면 ADB 충돌이 재발할 수 있으므로, 앱 설치/디버깅 작업 중에는 서비스를 중지한 상태로 둔다.
+
+#### 2. USB 디버깅 설정
+
 실폰에서 먼저 설정한다.
 
 ```text
@@ -200,20 +246,25 @@ cd C:\sp\mobile\android
 PC에 연결 후 확인한다.
 
 ```powershell
-adb devices
+$androidAdb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $androidAdb devices
 ```
 
 기기가 보이면 설치한다.
 
 ```powershell
-adb install -r C:\sp\mobile\android\app\build\outputs\apk\release\app-release.apk
+& $androidAdb -s emulator-5554 install -r "C:\sp\mobile\android\app\build\outputs\apk\release\app-release.apk"
+
+& $androidAdb -s R3CN2018C3J install -r "C:\sp\mobile\android\app\build\outputs\apk\release\app-release.apk"
 ```
+
+에뮬레이터와 실폰이 동시에 연결된 경우에는 `-s <device-id>`를 반드시 넣는다. `adb install`만 실행하면 대상이 둘 이상이라 설치가 실패하거나 의도하지 않은 대상에 설치될 수 있다.
 
 서명 충돌이 나면 기존 앱을 지우고 다시 설치한다.
 
 ```powershell
-adb uninstall com.swimpulsemobile
-adb install C:\sp\mobile\android\app\build\outputs\apk\release\app-release.apk
+& $androidAdb -s R3CN2018C3J uninstall com.swimpulsemobile
+& $androidAdb -s R3CN2018C3J install "C:\sp\mobile\android\app\build\outputs\apk\release\app-release.apk"
 ```
 
 `adb install -r`은 같은 `applicationId`인 `com.swimpulsemobile` 앱을 덮어쓴다. 같은 앱이 두 개 생기지는 않는다.

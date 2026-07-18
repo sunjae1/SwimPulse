@@ -1,6 +1,7 @@
 import {getAccessToken} from '../auth/tokenStore';
 import type {
   AppUser,
+  GeocodedLocation,
   InAppNotification,
   LocationSearchCandidate,
   MobileLoginResponse,
@@ -167,6 +168,11 @@ export async function searchLocations(
     params.set('longitude', location.longitude.toString());
   }
   return request(`/api/locations/search?${params.toString()}`, {auth: false});
+}
+
+export async function geocodeLocation(address: string): Promise<GeocodedLocation> {
+  const params = new URLSearchParams({address});
+  return request(`/api/locations/geocode?${params.toString()}`, {auth: false});
 }
 
 export async function getPoolLocationCandidates(

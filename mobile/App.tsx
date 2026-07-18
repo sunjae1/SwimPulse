@@ -1,7 +1,8 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
+  ImageBackground,
   Linking,
   Modal,
   PermissionsAndroid,
@@ -9,11 +10,13 @@ import {
   Pressable,
   ScrollView,
   StatusBar,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  ViewStyle,
   useColorScheme,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
@@ -28,9 +31,11 @@ import {
   createSubscription,
   deleteSubscription,
   getEvents,
+  geocodeLocation,
   getMe,
   getMyPage,
   getNearbyPools,
+  getPoolLocationCandidates,
   getNotification,
   getNotificationPage,
   getPools,
@@ -225,28 +230,48 @@ function HomeScreen({
   const [nearbyPools, setNearbyPools] = useState<NearbyPool[]>([]);
   const [locationQuery, setLocationQuery] = useState('');
   const [locationResults, setLocationResults] = useState<LocationSearchCandidate[]>([]);
+  const [locationSearching, setLocationSearching] = useState(false);
+  const [selectingLocationTitle, setSelectingLocationTitle] = useState<string | null>(null);
+  const [locationSearchFeedback, setLocationSearchFeedback] = useState<string | null>(null);
+  const [nearbyOriginLabel, setNearbyOriginLabel] = useState('현재 위치');
+  const [facilityCandidates, setFacilityCandidates] = useState<PoolLocationCandidate[]>([]);
+  const [facilityCandidatesOpen, setFacilityCandidatesOpen] = useState(false);
+  const [facilityCandidateToAdd, setFacilityCandidateToAdd] = useState<PoolLocationCandidate | null>(null);
+  const [addingFacilityTitle, setAddingFacilityTitle] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [scanningPoolId, setScanningPoolId] = useState<number | null>(null);
   const [scanResult, setScanResult] = useState<NoticeScanResponse | null>(null);
   const [scanVisible, setScanVisible] = useState(false);
   const [poolPage, setPoolPage] = useState(1);
+  const [poolListMode, setPoolListMode] = useState<'NEARBY' | 'ALL'>('NEARBY');
+  const [nearbyLoading, setNearbyLoading] = useState(false);
+  const initialNearbyRequested = useRef(false);
+  const isAdmin = user?.role === 'ADMIN';
 
   const subscribedKeys = useMemo(() => {
     return new Set(subscriptions.map(subscriptionKey));
   }, [subscriptions]);
-  const poolTotalPages = Math.max(1, Math.ceil(pools.length / POOL_PAGE_SIZE));
+  const poolListItems = useMemo(
+    () =>
+      poolListMode === 'NEARBY'
+        ? nearbyPools
+        : pools.map(pool => ({pool, distanceMeters: undefined})),
+    [nearbyPools, poolListMode, pools],
+  );
+  const poolTotalPages = Math.max(1, Math.ceil(poolListItems.length / POOL_PAGE_SIZE));
   const safePoolPage = Math.min(poolPage, poolTotalPages);
-  const visiblePools = useMemo(() => {
+  const visiblePoolItems = useMemo(() => {
     const startIndex = (safePoolPage - 1) * POOL_PAGE_SIZE;
-    return pools.slice(startIndex, startIndex + POOL_PAGE_SIZE);
-  }, [safePoolPage, pools]);
+    return poolListItems.slice(startIndex, startIndex + POOL_PAGE_SIZE);
+  }, [poolListItems, safePoolPage]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
       const [poolResult, eventResult, subscriptionResult] = await Promise.all([
         getPools(),
-        getEvents(),
+        isAdmin ? getEvents() : Promise.resolve([] as RegistrationEvent[]),
         user ? getSubscriptions() : Promise.resolve([] as Subscription[]),
       ]);
       setPools(poolResult);
@@ -258,11 +283,83 @@ function HomeScreen({
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [isAdmin, user]);
+
+  const requestNearbyPools = useCallback(async (options: {silent?: boolean} = {}) => {
+    const silent = options.silent ?? false;
+    try {
+      setNearbyLoading(true);
+      if (!silent) {
+        setBusyMessage('현재 위치를 확인하고 있습니다.');
+      }
+      const granted = await requestLocationPermission();
+      if (!granted) {
+        setPoolListMode('ALL');
+        setPoolPage(1);
+        if (!silent) {
+          Alert.alert('위치 권한이 필요합니다.', '주변 수영장 검색을 위해 위치 권한을 허용해 주세요.');
+        }
+        return;
+      }
+
+      Geolocation.getCurrentPosition(
+        async position => {
+          try {
+            const result = await getNearbyPools(
+              position.coords.latitude,
+              position.coords.longitude,
+              10,
+            );
+            setNearbyPools(result);
+            setNearbyOriginLabel('현재 위치');
+            setFacilityCandidates([]);
+            setFacilityCandidatesOpen(false);
+            setPoolListMode('NEARBY');
+            setPoolPage(1);
+          } catch (error) {
+            setPoolListMode('ALL');
+            setPoolPage(1);
+            if (!silent) {
+              showError('주변 수영장을 불러오지 못했습니다.', error);
+            }
+          } finally {
+            setNearbyLoading(false);
+            setBusyMessage(null);
+          }
+        },
+        error => {
+          setPoolListMode('ALL');
+          setPoolPage(1);
+          setNearbyLoading(false);
+          setBusyMessage(null);
+          if (!silent) {
+            Alert.alert('위치 확인 실패', error.message);
+          }
+        },
+        {enableHighAccuracy: true, timeout: 10000, maximumAge: 60000},
+      );
+    } catch (error) {
+      setPoolListMode('ALL');
+      setPoolPage(1);
+      setNearbyLoading(false);
+      setBusyMessage(null);
+      if (!silent) {
+        showError('위치 권한 처리에 실패했습니다.', error);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (loading || pools.length === 0 || initialNearbyRequested.current) {
+      return;
+    }
+    initialNearbyRequested.current = true;
+    requestNearbyPools({silent: true}).catch(() => undefined);
+  }, [loading, pools.length, requestNearbyPools]);
 
   async function login() {
     try {
@@ -277,15 +374,18 @@ function HomeScreen({
   }
 
   async function openNoticeScan(pool: Pool) {
+    if (scanningPoolId !== null) {
+      return;
+    }
     try {
-      setBusyMessage(`${pool.name} 공지를 확인하고 있습니다.`);
+      setScanningPoolId(pool.id);
       const result = await scanPoolNotices(pool.id);
       setScanResult(result);
       setScanVisible(true);
     } catch (error) {
       showError('공지 확인에 실패했습니다.', error);
     } finally {
-      setBusyMessage(null);
+      setScanningPoolId(null);
     }
   }
 
@@ -302,72 +402,94 @@ function HomeScreen({
   }
 
   async function searchByKeyword() {
-    if (!locationQuery.trim()) {
+    const query = locationQuery.trim();
+    if (!query || locationSearching) {
+      if (!query) {
+        setLocationSearchFeedback('검색할 장소 또는 주소를 입력해 주세요.');
+      }
       return;
     }
     try {
-      setBusyMessage('장소를 검색하고 있습니다.');
-      setLocationResults(await searchLocations(locationQuery.trim(), 8));
-    } catch (error) {
-      showError('장소 검색에 실패했습니다.', error);
-    } finally {
-      setBusyMessage(null);
-    }
-  }
-
-  async function requestNearbyPools() {
-    try {
-      setBusyMessage('현재 위치를 확인하고 있습니다.');
-      const granted = await requestLocationPermission();
-      if (!granted) {
-        Alert.alert('위치 권한이 필요합니다.', '주변 수영장 검색을 위해 위치 권한을 허용해 주세요.');
-        return;
-      }
-
-      Geolocation.getCurrentPosition(
-        async position => {
-          try {
-            const result = await getNearbyPools(
-              position.coords.latitude,
-              position.coords.longitude,
-              10,
-            );
-            setNearbyPools(result);
-          } catch (error) {
-            showError('주변 수영장을 불러오지 못했습니다.', error);
-          } finally {
-            setBusyMessage(null);
-          }
-        },
-        error => {
-          setBusyMessage(null);
-          Alert.alert('위치 확인 실패', error.message);
-        },
-        {enableHighAccuracy: true, timeout: 10000, maximumAge: 60000},
+      setLocationSearching(true);
+      setLocationSearchFeedback(null);
+      setFacilityCandidates([]);
+      setFacilityCandidatesOpen(false);
+      const results = await searchLocations(query, 8);
+      setLocationResults(results);
+      setLocationSearchFeedback(
+        results.length > 0
+          ? '검색 결과에서 위치를 선택하면 가까운 수영장 목록을 보여드려요.'
+          : '검색 결과가 없습니다. 장소명이나 주소를 조금 다르게 입력해 주세요.',
       );
     } catch (error) {
-      setBusyMessage(null);
-      showError('위치 권한 처리에 실패했습니다.', error);
+      setLocationSearchFeedback('장소 검색에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+      showError('장소 검색에 실패했습니다.', error);
+    } finally {
+      setLocationSearching(false);
     }
   }
 
-  async function requestPoolAdd(candidate: PoolLocationCandidate | LocationSearchCandidate) {
+  async function selectLocationCandidate(candidate: LocationSearchCandidate) {
+    const address = candidate.roadAddress ?? candidate.address;
+    if (!address || selectingLocationTitle) {
+      if (!address) {
+        setLocationSearchFeedback('선택한 검색 결과에 사용할 주소가 없습니다. 다른 결과를 선택해 주세요.');
+      }
+      return;
+    }
+
+    try {
+      setSelectingLocationTitle(candidate.title);
+      setFacilityCandidates([]);
+      setFacilityCandidatesOpen(false);
+      setLocationSearchFeedback(`${candidate.title} 기준 가까운 수영장과 추가 후보를 찾고 있습니다.`);
+      const geocoded = await geocodeLocation(address);
+      const [nearby, facilities] = await Promise.all([
+        getNearbyPools(geocoded.latitude, geocoded.longitude, 10),
+        getPoolLocationCandidates(geocoded.latitude, geocoded.longitude, 5000, '체육센터', 10),
+      ]);
+      setNearbyPools(nearby);
+      setNearbyOriginLabel(candidate.title);
+      setFacilityCandidates(facilities.filter(item => !item.alreadyExists));
+      setPoolListMode('NEARBY');
+      setPoolPage(1);
+      setLocationQuery(candidate.title);
+      setLocationResults([]);
+      setLocationSearchFeedback(
+        `${candidate.title} 기준 가까운 수영장 ${nearby.length}개를 보여드려요.`,
+      );
+    } catch (error) {
+      setLocationSearchFeedback('선택한 위치 기준 수영장을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      showError('주변 수영장을 불러오지 못했습니다.', error);
+    } finally {
+      setSelectingLocationTitle(null);
+    }
+  }
+
+  function showAllPools() {
+    setPoolListMode('ALL');
+    setPoolPage(1);
+  }
+
+  function requestPoolAdd(candidate: PoolLocationCandidate) {
     if (!user) {
       Alert.alert('로그인이 필요합니다.', '시설 추가 요청은 로그인 후 사용할 수 있습니다.');
       return;
     }
+    setFacilityCandidateToAdd(candidate);
+  }
+
+  async function submitPoolAdd(candidate: PoolLocationCandidate) {
     try {
-      setBusyMessage('시설 추가 요청을 등록하고 있습니다.');
-      await createPoolFromLocationCandidate({
-        ...candidate,
-        alreadyExists: false,
-        matchedPoolId: null,
-      });
+      setAddingFacilityTitle(candidate.title);
+      await createPoolFromLocationCandidate(candidate);
+      setFacilityCandidates(items => items.filter(item => item !== candidate));
+      setFacilityCandidateToAdd(null);
       Alert.alert('요청 완료', '관리자가 검토 후 시설을 추가합니다.');
     } catch (error) {
       showError('시설 추가 요청에 실패했습니다.', error);
     } finally {
-      setBusyMessage(null);
+      setAddingFacilityTitle(null);
     }
   }
 
@@ -376,22 +498,28 @@ function HomeScreen({
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.screenContent}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>SWIMPULSE MOBILE</Text>
-          <Text style={styles.heroTitle}>수영장 접수 알림을 모바일에서도</Text>
-          <Text style={styles.heroText}>
-            주변 수영장 공지를 확인하고, 모집 기간을 구독해 푸시 알림으로 받아보세요.
-          </Text>
-          <View style={styles.heroActions}>
-            {user ? (
-              <Text style={styles.userBadge}>{user.displayName}님</Text>
-            ) : (
-              <ActionButton label="Google 로그인" onPress={login} />
-            )}
-            <SecondaryButton label="마이페이지" onPress={() => navigation.navigate('MyPage')} />
-            <SecondaryButton label="설정" onPress={() => navigation.navigate('Settings')} />
+        <ImageBackground
+          source={require('./src/assets/pool-discovery-hero.png')}
+          resizeMode="cover"
+          imageStyle={styles.heroImage}
+          style={styles.hero}>
+          <View style={styles.heroOverlay}>
+            <Text style={styles.heroEyebrow}>SWIMPULSE</Text>
+            <Text style={styles.heroTitle}>가까운 수영장 접수를 놓치지 마세요.</Text>
+            <Text style={styles.heroText}>
+              위치를 찾고 공지의 모집 기간을 확인해 보세요.
+            </Text>
+            <View style={styles.heroActions}>
+              {user ? (
+                <Text style={styles.userBadge}>{user.displayName}님</Text>
+              ) : (
+                <ActionButton label="Google 로그인" onPress={login} />
+              )}
+              <SecondaryButton label="마이페이지" onPress={() => navigation.navigate('MyPage')} />
+              <SecondaryButton label="설정" onPress={() => navigation.navigate('Settings')} />
+            </View>
           </View>
-        </View>
+        </ImageBackground>
 
         {booting || loading ? <ActivityIndicator color="#047c86" /> : null}
         {busyMessage ? <NoticeBanner text={busyMessage} /> : null}
@@ -400,72 +528,120 @@ function HomeScreen({
           <View style={styles.searchRow}>
             <TextInput
               value={locationQuery}
-              onChangeText={setLocationQuery}
+              onChangeText={value => {
+                setLocationQuery(value);
+                setLocationResults([]);
+                setFacilityCandidates([]);
+                setFacilityCandidatesOpen(false);
+                setLocationSearchFeedback(null);
+              }}
               placeholder="수원 수영장, 부천 체육센터"
               placeholderTextColor="#7a8a99"
               style={styles.searchInput}
               returnKeyType="search"
               onSubmitEditing={searchByKeyword}
             />
-            <ActionButton label="검색" onPress={searchByKeyword} />
+            <ActionButton label={locationSearching ? '검색 중...' : '검색'} onPress={searchByKeyword} disabled={locationSearching} />
           </View>
-          <SecondaryButton label="현재 위치 주변 수영장" onPress={requestNearbyPools} />
-          {locationResults.map(candidate => (
-            <CandidateCard
-              key={`${candidate.title}:${candidate.address}`}
-              candidate={candidate}
-              onRequestAdd={() => requestPoolAdd(candidate)}
-            />
-          ))}
-        {nearbyPools.map(item => (
-            <PoolCard
-              key={`nearby:${item.pool.id}`}
-              pool={item.pool}
-              distanceMeters={item.distanceMeters}
-              onScan={() => openNoticeScan(item.pool)}
-            />
-          ))}
-        </Section>
-
-        <Section title="최근 모집 일정">
-          {featuredEvents.length === 0 ? (
-            <EmptyText text="아직 표시할 모집 일정이 없습니다." />
-          ) : (
-            featuredEvents.map(event => (
-              <View key={event.id} style={styles.eventCard}>
-                <View style={styles.rowBetween}>
-                  <Text style={styles.eventTitle}>{event.title}</Text>
-                  <Text style={styles.statusPill}>{eventStatusLabel(event.status)}</Text>
+          {locationSearchFeedback ? <NoticeBanner text={locationSearchFeedback} /> : null}
+          {locationResults.length > 0 ? (
+            <View style={styles.locationResults}>
+              <View style={styles.locationResultsHeader}>
+                <View>
+                  <Text style={styles.locationResultsEyebrow}>SEARCH RESULTS</Text>
+                  <Text style={styles.locationResultsTitle}>어디를 기준으로 찾을까요?</Text>
                 </View>
-                <Text style={styles.mutedText}>{event.poolName}</Text>
-                <Text style={styles.periodText}>
-                  {formatShortPeriod(event.registrationStartsAt, event.registrationEndsAt)}
-                </Text>
-                {subscribedKeys.has(subscriptionKeyFromEvent(event)) ? (
-                  <Text style={styles.subscribedText}>구독 중</Text>
-                ) : null}
+                <Text style={styles.locationResultsCount}>{locationResults.length}곳</Text>
               </View>
-            ))
-          )}
+              {locationResults.map(candidate => (
+                <CandidateCard
+                  key={`${candidate.title}:${candidate.address}`}
+                  candidate={candidate}
+                  selecting={selectingLocationTitle === candidate.title}
+                  selectionDisabled={selectingLocationTitle !== null && selectingLocationTitle !== candidate.title}
+                  onSelect={() => selectLocationCandidate(candidate)}
+                />
+              ))}
+            </View>
+          ) : null}
+          {facilityCandidates.length > 0 ? (
+            <FacilityCandidateAccordion
+              originLabel={nearbyOriginLabel}
+              candidates={facilityCandidates}
+              open={facilityCandidatesOpen}
+              addingTitle={addingFacilityTitle}
+              onToggle={() => setFacilityCandidatesOpen(open => !open)}
+              onAdd={requestPoolAdd}
+            />
+          ) : null}
         </Section>
 
         <Section title="수영장 목록">
-          <Text style={styles.mutedText}>
-            전체 {pools.length.toLocaleString('ko-KR')}개 중 {visiblePools.length.toLocaleString('ko-KR')}개 표시
-          </Text>
-          {visiblePools.map(pool => (
-            <PoolCard key={pool.id} pool={pool} onScan={() => openNoticeScan(pool)} />
+          <View style={styles.poolListHeader}>
+            <Text style={styles.mutedText}>
+              {poolListMode === 'NEARBY'
+                ? nearbyLoading
+                  ? '현재 위치를 기준으로 가까운 수영장을 찾고 있습니다.'
+                  : `${nearbyOriginLabel} 기준 가까운 ${poolListItems.length.toLocaleString('ko-KR')}개`
+                : `전체 ${pools.length.toLocaleString('ko-KR')}개 중 ${visiblePoolItems.length.toLocaleString('ko-KR')}개 표시`}
+            </Text>
+            <View style={styles.poolListModeRow}>
+              <PoolListModeButton
+                label="가까운 순"
+                active={poolListMode === 'NEARBY'}
+                disabled={nearbyLoading}
+                onPress={() => requestNearbyPools()}
+              />
+              <PoolListModeButton label="전체 보기" active={poolListMode === 'ALL'} onPress={showAllPools} />
+            </View>
+          </View>
+          {poolListMode === 'NEARBY' && !nearbyLoading && poolListItems.length === 0 ? (
+            <EmptyText text="현재 위치 기준 가까운 수영장을 찾지 못했습니다. 전체 보기에서 모든 수영장을 확인할 수 있습니다." />
+          ) : null}
+          {visiblePoolItems.map(item => (
+            <PoolCard
+              key={item.pool.id}
+              pool={item.pool}
+              distanceMeters={item.distanceMeters}
+              onScan={() => openNoticeScan(item.pool)}
+              scanning={scanningPoolId === item.pool.id}
+              scanDisabled={scanningPoolId !== null && scanningPoolId !== item.pool.id}
+            />
           ))}
-          {pools.length > POOL_PAGE_SIZE ? (
+          {poolListItems.length > POOL_PAGE_SIZE ? (
             <MobilePaginationControls
               page={safePoolPage}
               totalPages={poolTotalPages}
-              totalItems={pools.length}
+              totalItems={poolListItems.length}
               pageSize={POOL_PAGE_SIZE}
               onPageChange={setPoolPage}
             />
           ) : null}
         </Section>
+
+        {isAdmin ? (
+          <Section title="최근 모집 일정">
+            {featuredEvents.length === 0 ? (
+              <EmptyText text="아직 표시할 모집 일정이 없습니다." />
+            ) : (
+              featuredEvents.map(event => (
+                <View key={event.id} style={styles.eventCard}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.eventTitle}>{event.title}</Text>
+                    <Text style={styles.statusPill}>{eventStatusLabel(event.status)}</Text>
+                  </View>
+                  <Text style={styles.mutedText}>{event.poolName}</Text>
+                  <Text style={styles.periodText}>
+                    {formatShortPeriod(event.registrationStartsAt, event.registrationEndsAt)}
+                  </Text>
+                  {subscribedKeys.has(subscriptionKeyFromEvent(event)) ? (
+                    <Text style={styles.subscribedText}>구독 중</Text>
+                  ) : null}
+                </View>
+              ))
+            )}
+          </Section>
+        ) : null}
       </ScrollView>
 
       {scanResult ? (
@@ -480,6 +656,16 @@ function HomeScreen({
           onLogin={login}
         />
       ) : null}
+      <NoticeScanLoadingModal
+        visible={scanningPoolId !== null}
+        poolName={pools.find(pool => pool.id === scanningPoolId)?.name ?? nearbyPools.find(item => item.pool.id === scanningPoolId)?.pool.name ?? null}
+      />
+      <FacilityAddRequestModal
+        candidate={facilityCandidateToAdd}
+        submitting={addingFacilityTitle !== null}
+        onClose={() => setFacilityCandidateToAdd(null)}
+        onConfirm={submitPoolAdd}
+      />
     </Screen>
   );
 }
@@ -643,7 +829,11 @@ function NoticeScanModal({
           <NoticeBanner text={result.message || '공지 확인 결과입니다.'} />
           {pollMessage ? <NoticeBanner text={pollMessage} tone="amber" /> : null}
           {result.notices.length === 0 ? (
-            <EmptyText text="기간을 찾은 공지가 없습니다. 원문 공지를 확인해 주세요." />
+            <EmptyText
+              text={
+                '현재 시설에서 확인 가능한 공지 경로를 찾지 못했습니다.\n시설 홈페이지의 공지 메뉴를 직접 확인하거나,\n나중에 다시 시도해 주세요.'
+              }
+            />
           ) : (
             result.notices.map(notice => {
               const periods = normalizeNoticePeriods(notice);
@@ -1411,7 +1601,7 @@ function PushNotificationModal({
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.dimmed}>
-        <View style={styles.dialog}>
+        <View style={[styles.dialog, sourceReview ? styles.sourceReviewDialog : null]}>
           {loading && !notification ? (
             <View style={styles.centeredDialogContent}>
               <ActivityIndicator color="#047c86" />
@@ -1426,9 +1616,16 @@ function PushNotificationModal({
                 </Text>
               </View>
               <Text style={styles.modalTitle}>{title}</Text>
-              <Text style={styles.heroText}>{message}</Text>
+              <Text style={styles.modalMessage}>{message}</Text>
 
-              {poolName || eventTitle || arrivedAt ? (
+              {sourceReview ? (
+                <View style={styles.sourceReviewGuide}>
+                  <Text style={styles.sourceReviewGuideTitle}>검토가 필요한 이유</Text>
+                  <Text style={styles.sourceReviewGuideText}>
+                    기존 공지는 이전 홈페이지에서 수집되었습니다. 원문과 새 홈페이지를 비교한 뒤 현재 기간을 유지하거나 수정해주세요.
+                  </Text>
+                </View>
+              ) : poolName || eventTitle || arrivedAt ? (
                 <View style={styles.notificationPreview}>
                   {poolName ? <Text style={styles.noticeTitle}>{poolName}</Text> : null}
                   {eventTitle ? <Text style={styles.mutedText}>{eventTitle}</Text> : null}
@@ -1436,24 +1633,65 @@ function PushNotificationModal({
                 </View>
               ) : null}
 
-              <View style={styles.buttonRow}>
-                {noticeUrl ? (
-                  <SecondaryButton
-                    label={sourceReview ? '기존 공지 보기' : '원문 보기'}
-                    onPress={() => Linking.openURL(noticeUrl)}
-                  />
-                ) : null}
-                {sourceReview && currentHomepageUrl ? (
-                  <SecondaryButton label="새 홈페이지 확인" onPress={() => Linking.openURL(currentHomepageUrl)} />
-                ) : null}
-                {sourceReview && Number.isInteger(subscriptionId) && subscriptionId > 0 && onReview ? (
-                  <ActionButton label="구독 검토하기" onPress={() => onReview(subscriptionId)} />
-                ) : null}
-                <ActionButton label="확인" onPress={onClose} />
-              </View>
+              {sourceReview ? (
+                <View style={styles.sourceReviewActions}>
+                  <View style={styles.sourceReviewLinkRow}>
+                    {noticeUrl ? (
+                      <SecondaryButton
+                        label="기존 공지 보기"
+                        onPress={() => Linking.openURL(noticeUrl)}
+                        style={styles.sourceReviewHalfButton}
+                      />
+                    ) : null}
+                    {currentHomepageUrl ? (
+                      <SecondaryButton
+                        label="새 홈페이지 확인"
+                        onPress={() => Linking.openURL(currentHomepageUrl)}
+                        style={styles.sourceReviewHalfButton}
+                      />
+                    ) : null}
+                  </View>
+                  {Number.isInteger(subscriptionId) && subscriptionId > 0 && onReview ? (
+                    <ActionButton
+                      label="구독 검토하기"
+                      onPress={() => onReview(subscriptionId)}
+                      style={styles.sourceReviewFullButton}
+                    />
+                  ) : null}
+                  <SecondaryButton label="확인" onPress={onClose} style={styles.sourceReviewFullButton} />
+                </View>
+              ) : (
+                <View style={styles.buttonRow}>
+                  {noticeUrl ? <SecondaryButton label="원문 보기" onPress={() => Linking.openURL(noticeUrl)} /> : null}
+                  <ActionButton label="확인" onPress={onClose} />
+                </View>
+              )}
               <Text style={styles.helperText}>확인하면 읽음 처리됩니다.</Text>
             </>
           )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function NoticeScanLoadingModal({
+  visible,
+  poolName,
+}: {
+  visible: boolean;
+  poolName: string | null;
+}) {
+  return (
+    <Modal visible={visible} animationType="fade" transparent>
+      <View style={styles.scanLoadingBackdrop}>
+        <View style={styles.scanLoadingDialog}>
+          <ActivityIndicator size="large" color="#047c86" />
+          <Text style={styles.scanLoadingTitle}>공지 확인 중</Text>
+          <Text style={styles.scanLoadingText}>
+            {poolName ? `${poolName}의 홈페이지와 최근 공지를 확인하고 있습니다.` : '시설 홈페이지와 최근 공지를 확인하고 있습니다.'}
+          </Text>
+          <Text style={styles.scanLoadingHint}>이미지 공지는 분석 결과가 준비되면 이어서 안내합니다.</Text>
         </View>
       </View>
     </Modal>
@@ -1586,10 +1824,14 @@ function PoolCard({
   pool,
   distanceMeters,
   onScan,
+  scanning = false,
+  scanDisabled = false,
 }: {
   pool: Pool;
   distanceMeters?: number;
   onScan: () => void;
+  scanning?: boolean;
+  scanDisabled?: boolean;
 }) {
   const canScanNotices = Boolean(pool.homepageUrl);
   return (
@@ -1617,7 +1859,11 @@ function PoolCard({
         {pool.homepageUrl ? (
           <SecondaryButton label="홈페이지" onPress={() => Linking.openURL(pool.homepageUrl!)} />
         ) : null}
-        <ActionButton label="공지 확인" onPress={onScan} disabled={!canScanNotices} />
+        <ActionButton
+          label={scanning ? '공지 확인 중...' : '공지 확인'}
+          onPress={onScan}
+          disabled={!canScanNotices || scanning || scanDisabled}
+        />
       </View>
     </View>
   );
@@ -1625,20 +1871,158 @@ function PoolCard({
 
 function CandidateCard({
   candidate,
-  onRequestAdd,
+  selecting,
+  selectionDisabled,
+  onSelect,
 }: {
   candidate: LocationSearchCandidate;
-  onRequestAdd: () => void;
+  selecting: boolean;
+  selectionDisabled: boolean;
+  onSelect: () => void;
 }) {
   return (
-    <View style={styles.poolCard}>
-      <Text style={styles.poolName}>{candidate.title}</Text>
-      <Text style={styles.mutedText}>{candidate.roadAddress || candidate.address || '주소 정보 없음'}</Text>
-      <Text style={styles.periodText}>{candidate.category || '시설'}</Text>
-      <View style={styles.buttonRow}>
-        {candidate.link ? <SecondaryButton label="원문 보기" onPress={() => Linking.openURL(candidate.link!)} /> : null}
-        <ActionButton label="이 시설 추가" onPress={onRequestAdd} />
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${candidate.title}을 기준 위치로 선택`}
+      disabled={selectionDisabled || selecting}
+      onPress={onSelect}
+      style={({pressed}) => [
+        styles.locationCandidateCard,
+        pressed ? styles.locationCandidateCardPressed : null,
+        selectionDisabled ? styles.disabledButton : null,
+      ]}>
+      <View style={styles.rowBetween}>
+        <Text style={styles.locationCandidateEyebrow}>기준 위치</Text>
+        <Text style={styles.locationCandidateCategory}>{candidate.category || '시설'}</Text>
       </View>
+      <Text style={styles.locationCandidateTitle}>{candidate.title}</Text>
+      <Text style={styles.locationCandidateAddress}>{candidate.roadAddress || candidate.address || '주소 정보 없음'}</Text>
+      <Text style={styles.locationCandidateAction}>
+        {selecting ? '가까운 수영장과 후보를 찾는 중...' : '눌러서 이 위치를 기준으로 선택'}
+      </Text>
+    </Pressable>
+  );
+}
+
+function FacilityAddRequestModal({
+  candidate,
+  submitting,
+  onClose,
+  onConfirm,
+}: {
+  candidate: PoolLocationCandidate | null;
+  submitting: boolean;
+  onClose: () => void;
+  onConfirm: (candidate: PoolLocationCandidate) => void;
+}) {
+  if (!candidate) {
+    return null;
+  }
+
+  const address = candidate.roadAddress || candidate.address || '주소 정보 없음';
+
+  return (
+    <Modal visible animationType="fade" transparent onRequestClose={submitting ? () => undefined : onClose}>
+      <View style={styles.dimmed}>
+        <View style={[styles.dialog, styles.facilityAddDialog]}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.facilityAddEyebrow}>FACILITY REQUEST</Text>
+            <Text style={styles.facilityCandidateBadge}>추가 후보</Text>
+          </View>
+          <Text style={styles.modalTitle}>이 시설을 추가할까요?</Text>
+          <Text style={styles.modalMessage}>
+            아직 SwimPulse에 등록되지 않은 시설입니다. 요청을 보내면 관리자가 확인한 뒤 목록에 반영합니다.
+          </Text>
+
+          <View style={styles.facilityAddPreview}>
+            <Text style={styles.facilityAddPreviewLabel}>추가 요청 시설</Text>
+            <Text style={styles.facilityAddPreviewTitle}>{candidate.title}</Text>
+            <Text style={styles.facilityAddPreviewAddress}>{address}</Text>
+            <View style={styles.facilityCandidateMetaRow}>
+              {candidate.category ? <Text style={styles.facilityCandidateMeta}>{candidate.category}</Text> : null}
+              {candidate.distanceMeters !== null ? (
+                <Text style={styles.facilityCandidateDistance}>{formatDistance(candidate.distanceMeters)}</Text>
+              ) : null}
+            </View>
+          </View>
+
+          <Text style={styles.helperText}>이미 등록된 시설은 요청할 수 없으며, 중복 여부는 서버에서 다시 확인합니다.</Text>
+          <View style={styles.facilityAddActions}>
+            <SecondaryButton label="취소" onPress={onClose} disabled={submitting} style={styles.facilityAddHalfButton} />
+            <ActionButton
+              label={submitting ? '요청 중...' : '요청하기'}
+              onPress={() => onConfirm(candidate)}
+              disabled={submitting}
+              style={styles.facilityAddHalfButton}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function FacilityCandidateAccordion({
+  originLabel,
+  candidates,
+  open,
+  addingTitle,
+  onToggle,
+  onAdd,
+}: {
+  originLabel: string;
+  candidates: PoolLocationCandidate[];
+  open: boolean;
+  addingTitle: string | null;
+  onToggle: () => void;
+  onAdd: (candidate: PoolLocationCandidate) => void;
+}) {
+  return (
+    <View style={styles.facilityCandidatePanel}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{expanded: open}}
+        onPress={onToggle}
+        style={({pressed}) => [styles.facilityCandidateToggle, pressed ? styles.locationCandidateCardPressed : null]}>
+        <View style={styles.flexOne}>
+          <Text style={styles.facilityCandidateToggleTitle}>DB에 없는 수영장 후보 {candidates.length}곳</Text>
+          <Text style={styles.facilityCandidateToggleText}>{originLabel} 주변 검색 결과</Text>
+        </View>
+        <Text style={styles.facilityCandidateToggleAction}>{open ? '접기' : '보기'}</Text>
+      </Pressable>
+
+      {open ? (
+        <View style={styles.facilityCandidateList}>
+          <Text style={styles.facilityCandidateGuide}>
+            {'아직 SwimPulse에 등록되지 않은 시설입니다.\n필요한 시설만 추가 요청해주세요.\n 관리자 검토 후 승인/반려 될 수 있습니다.'}
+          </Text>
+          {candidates.map((candidate, index) => {
+            const address = candidate.roadAddress || candidate.address || '주소 정보 없음';
+            const adding = addingTitle === candidate.title;
+            return (
+              <View key={`${candidate.title}:${address}:${index}`} style={styles.facilityCandidateCard}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.facilityCandidateTitle}>{candidate.title}</Text>
+                  <Text style={styles.facilityCandidateBadge}>추가 가능</Text>
+                </View>
+                <Text style={styles.facilityCandidateAddress}>{address}</Text>
+                <View style={styles.facilityCandidateMetaRow}>
+                  {candidate.category ? <Text style={styles.facilityCandidateMeta}>{candidate.category}</Text> : null}
+                  {candidate.distanceMeters !== null ? (
+                    <Text style={styles.facilityCandidateDistance}>{formatDistance(candidate.distanceMeters)}</Text>
+                  ) : null}
+                </View>
+                <ActionButton
+                  label={adding ? '요청 중...' : '이 시설 추가'}
+                  onPress={() => onAdd(candidate)}
+                  disabled={addingTitle !== null}
+                  style={styles.facilityCandidateAddButton}
+                />
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1762,17 +2146,19 @@ function ActionButton({
   label,
   onPress,
   disabled,
+  style,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
 }) {
   return (
     <TouchableOpacity
       accessibilityRole="button"
       onPress={onPress}
       disabled={disabled}
-      style={[styles.actionButton, disabled ? styles.disabledButton : null]}>
+      style={[styles.actionButton, style, disabled ? styles.disabledButton : null]}>
       <Text style={styles.actionButtonText}>{label}</Text>
     </TouchableOpacity>
   );
@@ -1782,18 +2168,49 @@ function SecondaryButton({
   label,
   onPress,
   disabled,
+  style,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
       disabled={disabled}
-      style={[styles.secondaryButton, disabled ? styles.disabledButton : null]}>
+      style={[styles.secondaryButton, style, disabled ? styles.disabledButton : null]}>
       <Text style={styles.secondaryButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function PoolListModeButton({
+  label,
+  active,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{selected: active, disabled}}
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.poolListModeButton,
+        active ? styles.poolListModeButtonActive : null,
+        disabled ? styles.disabledButton : null,
+      ]}>
+      <Text style={[styles.poolListModeButtonText, active ? styles.poolListModeButtonTextActive : null]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -1808,6 +2225,13 @@ function NoticeBanner({text, tone = 'blue'}: {text: string; tone?: 'blue' | 'amb
 
 function EmptyText({text}: {text: string}) {
   return <Text style={styles.emptyText}>{text}</Text>;
+}
+
+function formatDistance(distanceMeters: number) {
+  if (distanceMeters >= 1000) {
+    return `${(distanceMeters / 1000).toFixed(1)}km`;
+  }
+  return `${Math.round(distanceMeters)}m`;
 }
 
 async function requestLocationPermission() {
@@ -1839,12 +2263,26 @@ const styles = StyleSheet.create({
     paddingBottom: 36,
   },
   hero: {
-    gap: 12,
+    minHeight: 270,
     borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#1f6f7a',
+  },
+  heroImage: {
+    borderRadius: 20,
+  },
+  heroOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    gap: 12,
     padding: 20,
-    backgroundColor: '#dff3f5',
-    borderWidth: 1,
-    borderColor: '#c4e4e8',
+    backgroundColor: 'rgba(6, 63, 70, 0.68)',
+  },
+  heroEyebrow: {
+    color: '#a7f3d0',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.4,
   },
   eyebrow: {
     color: '#047c86',
@@ -1852,12 +2290,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   heroTitle: {
-    color: '#112d42',
+    color: '#ffffff',
     fontSize: 24,
     fontWeight: '900',
   },
   heroText: {
-    color: '#3f596c',
+    color: '#e2f5f7',
     fontSize: 15,
     lineHeight: 22,
   },
@@ -1882,6 +2320,35 @@ const styles = StyleSheet.create({
     color: '#112d42',
     fontSize: 18,
     fontWeight: '900',
+  },
+  poolListHeader: {
+    gap: 10,
+  },
+  poolListModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  poolListModeButton: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#b7ced9',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+  },
+  poolListModeButtonActive: {
+    borderColor: '#047c86',
+    backgroundColor: '#047c86',
+  },
+  poolListModeButtonText: {
+    color: '#244a5f',
+    fontWeight: '900',
+  },
+  poolListModeButtonTextActive: {
+    color: '#ffffff',
   },
   searchRow: {
     flexDirection: 'row',
@@ -1940,6 +2407,192 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#d6e5eb',
+  },
+  locationResults: {
+    gap: 12,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#7dd3fc',
+    borderTopWidth: 4,
+    borderTopColor: '#0284c7',
+    padding: 10,
+    elevation: 2,
+  },
+  locationResultsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderRadius: 13,
+    backgroundColor: '#075985',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  locationResultsEyebrow: {
+    color: '#bae6fd',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  locationResultsTitle: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  locationResultsCount: {
+    overflow: 'hidden',
+    borderRadius: 12,
+    backgroundColor: '#e0f2fe',
+    color: '#075985',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  locationCandidateCard: {
+    gap: 9,
+    borderRadius: 14,
+    backgroundColor: '#f8fcff',
+    borderWidth: 1,
+    borderColor: '#d2eaf7',
+    padding: 14,
+  },
+  locationCandidateCardPressed: {
+    backgroundColor: '#e0f2fe',
+    borderColor: '#38bdf8',
+  },
+  locationCandidateEyebrow: {
+    color: '#0369a1',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  locationCandidateCategory: {
+    overflow: 'hidden',
+    maxWidth: '62%',
+    borderRadius: 10,
+    backgroundColor: '#e0f2fe',
+    color: '#075985',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  locationCandidateTitle: {
+    color: '#0c4a6e',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  locationCandidateAddress: {
+    color: '#365b70',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  locationCandidateAction: {
+    color: '#0369a1',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  facilityCandidatePanel: {
+    overflow: 'hidden',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#f1c27d',
+    backgroundColor: '#fffaf3',
+  },
+  facilityCandidateToggle: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  facilityCandidateToggleTitle: {
+    color: '#7c4a12',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  facilityCandidateToggleText: {
+    color: '#8a6a45',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  facilityCandidateToggleAction: {
+    overflow: 'hidden',
+    borderRadius: 10,
+    backgroundColor: '#ffedd5',
+    color: '#9a3412',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  facilityCandidateList: {
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#fed7aa',
+    padding: 12,
+  },
+  facilityCandidateGuide: {
+    color: '#7c5b36',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  facilityCandidateCard: {
+    gap: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    backgroundColor: '#ffffff',
+    padding: 13,
+  },
+  facilityCandidateTitle: {
+    flex: 1,
+    color: '#3f2a14',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  facilityCandidateBadge: {
+    overflow: 'hidden',
+    borderRadius: 10,
+    backgroundColor: '#ffedd5',
+    color: '#9a3412',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  facilityCandidateAddress: {
+    color: '#6f6254',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  facilityCandidateMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
+  facilityCandidateMeta: {
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  facilityCandidateDistance: {
+    overflow: 'hidden',
+    borderRadius: 9,
+    backgroundColor: '#f1f5f9',
+    color: '#526473',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  facilityCandidateAddButton: {
+    alignSelf: 'stretch',
+    backgroundColor: '#c65d16',
   },
   reviewSubscriptionCard: {
     borderColor: '#fdba74',
@@ -2217,6 +2870,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '900',
   },
+  modalMessage: {
+    color: '#3f596c',
+    fontSize: 15,
+    lineHeight: 22,
+  },
   modalContent: {
     gap: 14,
     padding: 18,
@@ -2283,6 +2941,39 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 35, 48, 0.35)',
     padding: 18,
   },
+  scanLoadingBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 35, 48, 0.45)',
+    padding: 28,
+  },
+  scanLoadingDialog: {
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    padding: 24,
+  },
+  scanLoadingTitle: {
+    color: '#112d42',
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  scanLoadingText: {
+    color: '#315a61',
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  scanLoadingHint: {
+    color: '#6b7f8d',
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
   dialog: {
     gap: 12,
     borderRadius: 22,
@@ -2291,6 +2982,85 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d6e5eb',
     maxHeight: '88%',
+  },
+  sourceReviewDialog: {
+    gap: 14,
+    backgroundColor: '#ffffff',
+    padding: 16,
+  },
+  facilityAddDialog: {
+    gap: 14,
+    backgroundColor: '#ffffff',
+    borderColor: '#b9e8e3',
+  },
+  facilityAddEyebrow: {
+    color: '#047c86',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  facilityAddPreview: {
+    gap: 7,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#b9e8e3',
+    backgroundColor: '#f0fdfa',
+    padding: 14,
+  },
+  facilityAddPreviewLabel: {
+    color: '#047c86',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  facilityAddPreviewTitle: {
+    color: '#123b40',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  facilityAddPreviewAddress: {
+    color: '#42636a',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  facilityAddActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  facilityAddHalfButton: {
+    flex: 1,
+    paddingHorizontal: 8,
+  },
+  sourceReviewGuide: {
+    gap: 6,
+    borderRadius: 14,
+    backgroundColor: '#f0fdfa',
+    borderWidth: 1,
+    borderColor: '#b9e8e3',
+    padding: 13,
+  },
+  sourceReviewGuideTitle: {
+    color: '#047c86',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  sourceReviewGuideText: {
+    color: '#315a61',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  sourceReviewActions: {
+    gap: 8,
+  },
+  sourceReviewLinkRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  sourceReviewHalfButton: {
+    flex: 1,
+    paddingHorizontal: 8,
+  },
+  sourceReviewFullButton: {
+    alignSelf: 'stretch',
   },
   dialogForm: {
     gap: 14,
