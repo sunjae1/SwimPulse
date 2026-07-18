@@ -1229,14 +1229,18 @@ function PoolHomepageCorrectionPanel({
   const [poolId, setPoolId] = useState("");
   const [name, setName] = useState("");
   const [homepageUrl, setHomepageUrl] = useState("");
+  const [formPoolId, setFormPoolId] = useState<string | null>(null);
   const [reason, setReason] = useState("잘못 연결된 홈페이지 출처를 올바른 시설 홈페이지로 교정했습니다.");
   const selectedPool = pools.find((pool) => pool.id.toString() === poolId) ?? pools[0] ?? null;
-  const resolvedName = name || selectedPool?.name || "";
-  const resolvedHomepageUrl = homepageUrl || selectedPool?.homepageUrl || "";
+  const selectedPoolId = selectedPool?.id.toString() ?? "";
+  const hasEditedSelectedPool = formPoolId === selectedPoolId;
+  const resolvedName = hasEditedSelectedPool ? name : selectedPool?.name ?? "";
+  const resolvedHomepageUrl = hasEditedSelectedPool ? homepageUrl : selectedPool?.homepageUrl ?? "";
 
   function selectPool(nextPoolId: string) {
     const pool = pools.find((candidate) => candidate.id.toString() === nextPoolId);
     setPoolId(nextPoolId);
+    setFormPoolId(nextPoolId);
     setName(pool?.name ?? "");
     setHomepageUrl(pool?.homepageUrl ?? "");
   }
@@ -1255,17 +1259,35 @@ function PoolHomepageCorrectionPanel({
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <label className="text-sm font-bold text-[#17344a]">
           수영장
-          <select value={selectedPool?.id.toString() ?? ""} onChange={(event) => selectPool(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]">
+          <select value={selectedPoolId} onChange={(event) => selectPool(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]">
             {pools.map((pool) => <option key={pool.id} value={pool.id}>#{pool.id} {pool.name}</option>)}
           </select>
         </label>
         <label className="text-sm font-bold text-[#17344a]">
           시설명
-          <input value={resolvedName} onChange={(event) => setName(event.target.value)} maxLength={255} className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]" />
+          <input
+            value={resolvedName}
+            onChange={(event) => {
+              setFormPoolId(selectedPoolId);
+              setName(event.target.value);
+            }}
+            maxLength={255}
+            className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]"
+          />
         </label>
         <label className="text-sm font-bold text-[#17344a] lg:col-span-2">
           새 홈페이지 전체 주소
-          <input type="url" value={resolvedHomepageUrl} onChange={(event) => setHomepageUrl(event.target.value)} maxLength={255} placeholder="https://..." className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]" />
+          <input
+            type="url"
+            value={resolvedHomepageUrl}
+            onChange={(event) => {
+              setFormPoolId(selectedPoolId);
+              setHomepageUrl(event.target.value);
+            }}
+            maxLength={255}
+            placeholder="https://..."
+            className="mt-2 h-11 w-full rounded-xl border border-[#d8e5ee] bg-[#f8fbfd] px-3 font-medium outline-none focus:border-[#0f766e]"
+          />
         </label>
         <label className="text-sm font-bold text-[#17344a] lg:col-span-2">
           사용자 안내 사유
