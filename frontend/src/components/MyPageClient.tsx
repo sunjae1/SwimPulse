@@ -19,7 +19,7 @@ import {
   Waves,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AppNavigation } from "@/components/AppNavigation";
 import {
   ApiRequestError,
@@ -66,7 +66,14 @@ const SUBSCRIPTION_STATUS_FILTERS: { value: SubscriptionStatusFilter; label: str
   { value: "CLOSED", label: "종료" },
 ];
 
-export function MyPageClient({ initialSubscriptionId = null }: { initialSubscriptionId?: string | null }) {
+export function MyPageClient({
+  initialSubscriptionId = null,
+  initialOpenDetail = false,
+}: {
+  initialSubscriptionId?: string | null;
+  initialOpenDetail?: boolean;
+}) {
+  const highlightTimeoutRef = useRef<number | null>(null);
   const [data, setData] = useState<MyPageData | null>(null);
   const [notificationPage, setNotificationPage] = useState<NotificationPage | null>(null);
   const [authorized, setAuthorized] = useState(true);
@@ -91,6 +98,39 @@ export function MyPageClient({ initialSubscriptionId = null }: { initialSubscrip
   const [selectedNotification, setSelectedNotification] = useState<InAppNotification | null>(null);
   const [confirmingReviewId, setConfirmingReviewId] = useState<number | null>(null);
   const [openedInitialSubscription, setOpenedInitialSubscription] = useState(false);
+  const [highlightedSubscriptionId, setHighlightedSubscriptionId] = useState<number | null>(null);
+
+  const focusSubscriptionCard = useCallback((subscription: Subscription, openDetail: boolean) => {
+    setSubscriptionStatusFilter("ALL");
+    setHighlightedSubscriptionId(subscription.id);
+    if (openDetail) {
+      setSelectedSubscription(subscription);
+    }
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document.getElementById(`subscription-${subscription.id}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+    });
+
+    if (highlightTimeoutRef.current !== null) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedSubscriptionId((current) => (current === subscription.id ? null : current));
+    }, 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current !== null) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +175,63 @@ export function MyPageClient({ initialSubscriptionId = null }: { initialSubscrip
   }, [reloadKey]);
 
   useEffect(() => {
+    let cancelled = false;
+    let syncing = false;
+    let refreshTimer: number | null = null;
+
+    async function syncMyPage() {
+      if (syncing || document.visibilityState === "hidden") {
+        return;
+      }
+      syncing = true;
+      try {
+        const result = await getMyPage();
+        if (cancelled) {
+          return;
+        }
+        setData(result);
+        setSelectedSubscription((current) =>
+          current ? result.subscriptions.find((subscription) => subscription.id === current.id) ?? null : null,
+        );
+        setAuthorized(true);
+      } catch (error) {
+        if (!cancelled && error instanceof ApiRequestError && error.status === 401) {
+          setData(null);
+          setNotificationPage(null);
+          setAuthorized(false);
+        }
+      } finally {
+        syncing = false;
+      }
+    }
+
+    function scheduleSync() {
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        void syncMyPage();
+      }, 100);
+    }
+
+    const intervalId = window.setInterval(() => {
+      void syncMyPage();
+    }, 30_000);
+    window.addEventListener("focus", scheduleSync);
+    document.addEventListener("visibilitychange", scheduleSync);
+
+    return () => {
+      cancelled = true;
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", scheduleSync);
+      document.removeEventListener("visibilitychange", scheduleSync);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!data || openedInitialSubscription || !initialSubscriptionId) {
       return;
     }
@@ -143,12 +240,11 @@ export function MyPageClient({ initialSubscriptionId = null }: { initialSubscrip
       const subscription = data.subscriptions.find((candidate) => candidate.id === subscriptionId);
       setOpenedInitialSubscription(true);
       if (subscription) {
-        setSubscriptionStatusFilter("ALL");
-        setSelectedSubscription(subscription);
+        focusSubscriptionCard(subscription, initialOpenDetail);
       }
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [data, initialSubscriptionId, openedInitialSubscription]);
+  }, [data, focusSubscriptionCard, initialOpenDetail, initialSubscriptionId, openedInitialSubscription]);
 
   function loginWithGoogle() {
     window.location.href = authUrl("/oauth2/authorization/google");
@@ -316,8 +412,19 @@ export function MyPageClient({ initialSubscriptionId = null }: { initialSubscrip
     const notification = selectedNotification;
     setSelectedNotification(null);
 
-    if (notification && !notification.readAt) {
+    if (!notification) {
+      return;
+    }
+
+    if (!notification.readAt) {
       await readNotification(notification.id);
+    }
+
+    if (notification.subscriptionId) {
+      const subscription = data?.subscriptions.find((candidate) => candidate.id === notification.subscriptionId);
+      if (subscription) {
+        focusSubscriptionCard(subscription, notification.type === "SOURCE_REVIEW_REQUIRED");
+      }
     }
   }
 
@@ -549,7 +656,7 @@ export function MyPageClient({ initialSubscriptionId = null }: { initialSubscrip
                 </div>
               </section>
 
-              <section className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
+              <section id="my-subscriptions" className="swim-card-motion rounded-lg border border-[#c8def0] bg-white shadow-sm">
                 <div className="flex items-center justify-between gap-3 border-b border-[#d9eaf6] px-5 py-4">
                   <div>
                     <h2 className="text-lg font-semibold">내 구독</h2>
@@ -610,6 +717,7 @@ export function MyPageClient({ initialSubscriptionId = null }: { initialSubscrip
                       <SubscriptionCard
                         key={subscription.id}
                         subscription={subscription}
+                        highlighted={highlightedSubscriptionId === subscription.id}
                         onOpen={setSelectedSubscription}
                         onEdit={openSubscriptionEditor}
                         onDelete={openSubscriptionDeleteConfirm}
@@ -940,6 +1048,7 @@ function HealthPill({ label, value }: { label: string; value: string }) {
 
 function SubscriptionCard({
   subscription,
+  highlighted,
   onOpen,
   onEdit,
   onDelete,
@@ -947,6 +1056,7 @@ function SubscriptionCard({
   deleteBusy,
 }: {
   subscription: Subscription;
+  highlighted: boolean;
   onOpen: (subscription: Subscription) => void;
   onEdit: (subscription: Subscription) => void;
   onDelete: (subscription: Subscription) => void;
@@ -961,11 +1071,15 @@ function SubscriptionCard({
 
   return (
     <article
+      id={`subscription-${subscription.id}`}
       className={`swim-row-motion cursor-pointer rounded-2xl border px-4 py-4 transition hover:bg-white focus-within:border-[#0284c7] ${
-        needsReview
+        highlighted
+          ? "border-[#0284c7] bg-[#e0f2fe] ring-4 ring-[#38bdf8]/30 shadow-[0_12px_32px_rgba(2,132,199,0.2)]"
+          : needsReview
           ? "border-[#fdba74] bg-[#fffaf3] hover:border-[#f97316]"
           : "border-[#d9eaf6] bg-[#f6fbff] hover:border-[#0284c7]"
       }`}
+      aria-current={highlighted ? "true" : undefined}
       role="button"
       tabIndex={0}
       onClick={() => onOpen(subscription)}
@@ -1455,6 +1569,9 @@ function NotificationCard({
         <p>
           {notification.poolName} · {notification.eventTitle}
         </p>
+        {notification.type !== "SOURCE_REVIEW_REQUIRED" && notification.registrationStartsAt ? (
+          <p className="font-semibold text-[#0f766e]">접수 시작 {formatDateTime(notification.registrationStartsAt)}</p>
+        ) : null}
         <p>생성 {formatDateTime(notification.createdAt)}</p>
         {notification.sentAt ? <p>전송 {formatDateTime(notification.sentAt)}</p> : null}
       </div>
@@ -1515,7 +1632,15 @@ function MyPageNotificationModal({
           <div className="rounded-2xl bg-[#f7f8f4] px-4 py-4 text-sm text-[#47564f]">
             <p className="font-semibold text-[#17201d]">{notification.poolName}</p>
             <p className="mt-1">{notification.eventTitle}</p>
-            <p className="mt-3 text-xs text-[#7c8982]">도착 {formatDateTime(notification.createdAt)}</p>
+            {notification.type !== "SOURCE_REVIEW_REQUIRED" && notification.registrationStartsAt ? (
+              <div className="mt-3 rounded-xl border border-[#b9ded8] bg-[#edf8f6] px-3 py-2">
+                <p className="text-xs font-semibold text-[#0f766e]">접수 시작</p>
+                <p className="mt-1 font-semibold text-[#17201d]">
+                  {formatDateTime(notification.registrationStartsAt)}
+                </p>
+              </div>
+            ) : null}
+            <p className="mt-3 text-xs text-[#7c8982]">알림 도착 {formatDateTime(notification.createdAt)}</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {notification.noticeUrl ? (
@@ -1538,7 +1663,11 @@ function MyPageNotificationModal({
               {busy ? "읽음 처리 중..." : "확인"}
             </button>
           </div>
-          <p className="text-center text-xs text-[#7c8982]">바깥 영역을 눌러도 닫히며 읽음 처리됩니다.</p>
+          <p className="text-center text-xs text-[#7c8982]">
+            {notification.subscriptionId
+              ? "확인하거나 바깥 영역을 누르면 해당 구독으로 이동합니다."
+              : "바깥 영역을 눌러도 닫히며 읽음 처리됩니다."}
+          </p>
         </div>
       </div>
     </div>

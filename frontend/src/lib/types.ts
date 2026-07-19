@@ -164,6 +164,7 @@ export type InAppNotification = {
   poolName: string;
   eventId: number;
   eventTitle: string;
+  registrationStartsAt: string | null;
   subscriptionId: number | null;
   subscriptionReviewStatus: SubscriptionReviewStatus | null;
   noticeUrl: string | null;

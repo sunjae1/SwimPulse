@@ -15,6 +15,7 @@ export type ReceivedPushMessage = {
   type?: string;
   title: string;
   body: string;
+  registrationStartsAt?: string;
   noticeUrl?: string;
   currentHomepageUrl?: string;
 };
@@ -96,6 +97,7 @@ function toReceivedPushMessage(
   const dataNotificationId = stringValue(remoteMessage.data?.notificationId);
   const dataTitle = stringValue(remoteMessage.data?.title);
   const dataBody = stringValue(remoteMessage.data?.body);
+  const dataRegistrationStartsAt = stringValue(remoteMessage.data?.registrationStartsAt);
   const dataNoticeUrl = stringValue(remoteMessage.data?.noticeUrl);
   const dataCurrentHomepageUrl = stringValue(remoteMessage.data?.currentHomepageUrl);
 
@@ -105,6 +107,7 @@ function toReceivedPushMessage(
     type: stringValue(remoteMessage.data?.type),
     title: remoteMessage.notification?.title ?? dataTitle ?? 'SwimPulse 알림',
     body: remoteMessage.notification?.body ?? dataBody ?? '새 알림이 도착했습니다.',
+    registrationStartsAt: dataRegistrationStartsAt,
     noticeUrl: dataNoticeUrl,
     currentHomepageUrl: dataCurrentHomepageUrl,
   };

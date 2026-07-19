@@ -38,6 +38,24 @@ jest.mock('react-native-geolocation-service', () => ({
   getCurrentPosition: jest.fn(),
 }));
 
+jest.mock('@react-native-community/datetimepicker', () => {
+  const React = require('react');
+  const {View} = require('react-native');
+
+  function MockDateTimePicker(props) {
+    return React.createElement(View, props);
+  }
+
+  return {
+    __esModule: true,
+    default: MockDateTimePicker,
+    DateTimePickerAndroid: {
+      open: jest.fn(),
+      dismiss: jest.fn(),
+    },
+  };
+});
+
 global.fetch = jest.fn(() =>
   Promise.resolve({
     ok: true,

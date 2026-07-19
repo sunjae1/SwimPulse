@@ -11,6 +11,7 @@ public record NotificationResponse(
 		String poolName,
 		Long eventId,
 		String eventTitle,
+		Instant registrationStartsAt,
 		Long subscriptionId,
 		SubscriptionReviewStatus subscriptionReviewStatus,
 		String noticeUrl,
@@ -43,7 +44,7 @@ public record NotificationResponse(
 			Instant sentAt,
 			Instant readAt
 	) {
-		this(id, userId, poolId, poolName, eventId, eventTitle, null, null, noticeUrl, null,
+		this(id, userId, poolId, poolName, eventId, eventTitle, null, null, null, noticeUrl, null,
 				type, status, title, message, failureReason, attempts, createdAt, sentAt, readAt);
 	}
 
@@ -55,6 +56,7 @@ public record NotificationResponse(
 				notification.getPool().getName(),
 				notification.getEvent().getId(),
 				notification.getEvent().getTitle(),
+				notification.getEvent().getRegistrationStartsAt(),
 				notification.getSubscription() == null ? null : notification.getSubscription().getId(),
 				notification.getSubscription() == null ? null : notification.getSubscription().getReviewStatus(),
 				noticeUrl(notification),

@@ -13,6 +13,7 @@ SwimPulse 모바일 앱을 Android 실폰에 설치하고, 로컬 백엔드가 �
 | 빌드/실행 방식 | API 주소 |
 |---|---|
 | `npm run android` 개발 실행 | `http://10.0.2.2:8080` |
+| `:app:installDebug` debug 앱 | `http://10.0.2.2:8080` |
 | `assembleRelease` release APK | `https://api.sunjae.link` |
 
 위치는 다음이다.
@@ -412,3 +413,151 @@ Android 앱 상태에 따라 동작이 다르다.
 ```
 
 이 순서대로 되면 “운영 백엔드 + 실폰 Android 앱 + 실제 FCM” 흐름은 연결된 것이다.
+
+## 부록 A. 에뮬레이터에 로컬 백엔드용 앱 설치
+
+운영용 release APK를 설치한 뒤에도 에뮬레이터에서는 로컬 백엔드를 바라보는 개발용 앱으로 다시 설치할 수 있다.
+
+현재 API 주소 선택 코드는 다음 기준으로 동작한다.
+
+```text
+Debug 앱: __DEV__ = true  -> http://10.0.2.2:8080
+Release 앱: __DEV__ = false -> https://api.sunjae.link
+```
+
+Android 에뮬레이터에서 `10.0.2.2`는 Windows 개발 PC의 `localhost`를 뜻한다. 따라서 에뮬레이터에서 `http://10.0.2.2:8080`을 호출하면 PC에서 실행 중인 로컬 Spring Boot `localhost:8080`에 연결된다.
+
+### A-1. 로컬 백엔드 실행
+
+프로젝트 루트에서 개발 환경을 실행한다.
+
+```powershell
+cd C:\Users\kimsunjae\Desktop\NewFolder\Java_INTELLIJ\SwimPulse
+.\scripts\dev.ps1
+```
+
+최소한 로컬 백엔드가 `localhost:8080`에서 실행 중이어야 한다.
+
+```powershell
+curl.exe http://localhost:8080/actuator/health
+```
+
+정상이면 다음 응답이 나온다.
+
+```json
+{"status":"UP"}
+```
+
+### A-2. 최신 모바일 코드를 짧은 경로로 동기화
+
+React Native Android 빌드는 Windows의 긴 경로 때문에 CMake/Ninja가 실패할 수 있으므로 `C:\sp\mobile`에서 빌드한다.
+
+```powershell
+robocopy "C:\Users\kimsunjae\Desktop\NewFolder\Java_INTELLIJ\SwimPulse\mobile" "C:\sp\mobile" /MIR /XD node_modules android\.gradle android\app\.cxx android\app\build android\build .gradle build .cxx
+```
+
+`/MIR`은 대상 폴더를 원본과 동일하게 맞추므로 대상 경로가 `C:\sp\mobile`인지 확인하고 실행한다.
+
+### A-3. JavaScript 의존성 설치
+
+처음 복사했거나 `package.json` 또는 `package-lock.json`이 변경됐다면 실행한다.
+
+```powershell
+cd C:\sp\mobile
+npm install
+```
+
+`App.tsx` 같은 JavaScript/TypeScript 코드만 변경됐다면 매번 `npm install`을 다시 할 필요는 없다.
+
+### A-4. 에뮬레이터 확인
+
+Android Studio에서 에뮬레이터를 켠 뒤 확인한다.
+
+```powershell
+adb devices
+```
+
+예시:
+
+```text
+List of devices attached
+emulator-5554   device
+```
+
+실폰과 에뮬레이터가 동시에 연결되어 있다면 이후 명령에 `-s emulator-5554`를 지정해야 엉뚱한 기기에 설치되지 않는다.
+
+### A-5. Debug 앱 빌드 및 에뮬레이터 설치
+
+```powershell
+cd C:\sp\mobile\android
+.\gradlew.bat :app:installDebug
+```
+
+연결된 기기가 여러 대라서 설치 대상 오류가 나면 APK를 만든 뒤 에뮬레이터를 명시한다.
+
+```powershell
+cd C:\sp\mobile\android
+.\gradlew.bat assembleDebug
+
+adb -s emulator-5554 install -r "C:\sp\mobile\android\app\build\outputs\apk\debug\app-debug.apk"
+```
+
+같은 application id와 서명을 사용하는 기존 앱이 있으면 `-r`이 앱을 덮어쓴다. 앱이 두 개 생기는 명령이 아니다.
+
+### A-6. Metro 서버 실행
+
+Debug 앱은 JavaScript bundle을 Metro 개발 서버에서 받는다. 원본 코드를 계속 수정하고 바로 확인하려면 별도 PowerShell에서 원본 프로젝트 기준으로 Metro를 실행한다.
+
+```powershell
+cd C:\Users\kimsunjae\Desktop\NewFolder\Java_INTELLIJ\SwimPulse\mobile
+npm start
+```
+
+에뮬레이터와 Metro 연결이 불안하면 다음 포트 연결도 설정한다.
+
+```powershell
+adb -s emulator-5554 reverse tcp:8081 tcp:8081
+```
+
+이 상태에서는 `App.tsx`, 스타일, 일반 TypeScript 로직을 수정하면 Fast Refresh로 빠르게 반영된다.
+
+### A-7. 네이티브 의존성 변경 시 주의
+
+다음 파일이나 Android 네이티브 구성이 바뀌면 Metro 재시작이나 앱 새로고침만으로는 반영되지 않는다.
+
+```text
+package.json에 React Native native module 추가/삭제
+android/ 아래 Gradle 또는 Manifest 변경
+google-services.json 변경
+앱 아이콘/네이티브 리소스 변경
+```
+
+예를 들어 `@react-native-community/datetimepicker`를 추가한 뒤 기존 APK를 그대로 실행하면 JavaScript에는 `RNCDatePicker` 호출이 있지만 설치된 앱의 native binary에는 모듈이 없어 다음 오류가 발생한다.
+
+```text
+TurboModuleRegistry.getEnforcing(...): 'RNCDatePicker' could not be found
+```
+
+이 경우 A-2부터 다시 진행하고 `:app:installDebug`로 Debug 앱을 재빌드·재설치해야 한다.
+
+### A-8. 로컬 API 연결 확인
+
+앱의 설정 화면에서 다음 주소가 보이면 로컬 Debug 앱이 맞다.
+
+```text
+API: http://10.0.2.2:8080
+```
+
+`https://api.sunjae.link`가 보이면 에뮬레이터에 아직 release 앱이 설치된 것이다. A-5의 Debug 설치를 다시 실행한다.
+
+### 로컬 개발 반복 흐름
+
+| 변경 내용 | 필요한 작업 |
+|---|---|
+| `App.tsx`, 스타일, TypeScript 로직 | Metro Fast Refresh 또는 앱 Reload |
+| `package.json`의 JavaScript 전용 패키지 | `npm install`, Metro 재시작 |
+| DatePicker, Firebase 등 native module | `npm install`, Debug 앱 재빌드·재설치 |
+| Android Gradle/Manifest/Firebase 설정 | Debug 앱 재빌드·재설치 |
+| 운영 환경 최종 확인 | `assembleRelease`, release APK 설치 |
+
+정리하면 평소 화면 개발은 Metro와 Fast Refresh로 확인하고, 네이티브 의존성이 바뀐 경우에만 APK를 다시 설치하면 된다.

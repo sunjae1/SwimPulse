@@ -20,6 +20,10 @@ import {
   useColorScheme,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
+import DateTimePicker, {
+  DateTimePickerAndroid,
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import {createNavigationContainerRef, NavigationContainer, useFocusEffect} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
@@ -48,6 +52,7 @@ import {
 } from './src/api/client';
 import type {
   AppUser,
+  EventStatus,
   InAppNotification,
   LocationSearchCandidate,
   MyPageData,
@@ -74,7 +79,6 @@ import {
   eventStatusLabel,
   formatDateTime,
   formatShortPeriod,
-  fromInputDateTime,
   isEventClosed,
   isOcrInProgress,
   isPastPeriod,
@@ -82,20 +86,27 @@ import {
   subscriptionKey,
   subscriptionKeyFromEvent,
   subscriptionTitle,
-  toInputDateTime,
 } from './src/utils/date';
 
-type DateTimeParts = {
-  date: string;
-  hour: string;
-  minute: string;
-};
-
 const POOL_PAGE_SIZE = 10;
+type SubscriptionStatusFilter = 'ALL' | EventStatus;
+
+const SUBSCRIPTION_STATUS_FILTERS: Array<{value: SubscriptionStatusFilter; label: string}> = [
+  {value: 'ALL', label: '전체'},
+  {value: 'UPCOMING', label: '예정'},
+  {value: 'OPEN', label: '시작'},
+  {value: 'CLOSED', label: '종료'},
+];
 
 type RootStackParamList = {
   Home: undefined;
-  MyPage: {subscriptionId?: number} | undefined;
+  MyPage:
+    | {
+        subscriptionId?: number;
+        openDetail?: boolean;
+        focusRequestId?: number;
+      }
+    | undefined;
   Settings: undefined;
 };
 
@@ -143,6 +154,12 @@ function App() {
 
   const closePushNotification = useCallback(async () => {
     const notification = pushNotification;
+    const fallback = pushFallback;
+    const fallbackSubscriptionId = Number(fallback?.subscriptionId);
+    const subscriptionId = notification?.subscriptionId ??
+      (Number.isInteger(fallbackSubscriptionId) && fallbackSubscriptionId > 0 ? fallbackSubscriptionId : null);
+    const openDetail =
+      notification?.type === 'SOURCE_REVIEW_REQUIRED' || fallback?.type === 'SOURCE_REVIEW_REQUIRED';
     setPushNotification(null);
     setPushFallback(null);
 
@@ -153,7 +170,15 @@ function App() {
         showError('알림 읽음 처리에 실패했습니다.', error);
       }
     }
-  }, [pushNotification]);
+
+    if (subscriptionId && navigationRef.isReady()) {
+      navigationRef.navigate('MyPage', {
+        subscriptionId,
+        openDetail,
+        focusRequestId: Date.now(),
+      });
+    }
+  }, [pushFallback, pushNotification]);
 
   useEffect(() => {
     return subscribeToForegroundPushMessages(openPushNotification);
@@ -206,12 +231,6 @@ function App() {
           fallback={pushFallback}
           loading={pushLoading}
           onClose={closePushNotification}
-          onReview={subscriptionId => {
-            closePushNotification().catch(() => undefined);
-            if (navigationRef.isReady()) {
-              navigationRef.navigate('MyPage', {subscriptionId});
-            }
-          }}
         />
       </NavigationContainer>
     </SafeAreaProvider>
@@ -905,17 +924,60 @@ function MyPageScreen({
   user,
   setUser,
   route,
-}: AppState & {route: {params?: {subscriptionId?: number}}}) {
+}: AppState & {route: {params?: RootStackParamList['MyPage']}}) {
+  const scrollViewRef = useRef<ScrollView>(null);
+  const subscriptionSectionOffset = useRef(0);
+  const subscriptionCardOffsets = useRef(new Map<number, number>());
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [data, setData] = useState<MyPageData | null>(null);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [notificationPage, setNotificationPage] = useState({page: 0, totalPages: 0, last: true});
   const [loading, setLoading] = useState(true);
-  const [showClosed, setShowClosed] = useState(false);
+  const [subscriptionStatusFilter, setSubscriptionStatusFilter] = useState<SubscriptionStatusFilter>('ALL');
   const [editing, setEditing] = useState<Subscription | null>(null);
   const [selectedSubscription, setSelectedSubscription] = useState<Subscription | null>(null);
   const [selectedNotification, setSelectedNotification] = useState<InAppNotification | null>(null);
-  const [handledReviewTarget, setHandledReviewTarget] = useState<number | null>(null);
+  const [handledFocusRequest, setHandledFocusRequest] = useState<number | null>(null);
+  const [pendingSubscriptionFocus, setPendingSubscriptionFocus] = useState<number | null>(null);
+  const [highlightedSubscriptionId, setHighlightedSubscriptionId] = useState<number | null>(null);
   const [confirmingReview, setConfirmingReview] = useState(false);
+
+  const scrollToSubscription = useCallback((subscriptionId: number) => {
+    const cardOffset = subscriptionCardOffsets.current.get(subscriptionId);
+    if (cardOffset === undefined) {
+      setPendingSubscriptionFocus(subscriptionId);
+      return;
+    }
+
+    scrollViewRef.current?.scrollTo({
+      y: Math.max(0, subscriptionSectionOffset.current + cardOffset - 16),
+      animated: true,
+    });
+    setPendingSubscriptionFocus(null);
+    setHighlightedSubscriptionId(subscriptionId);
+
+    if (highlightTimer.current) {
+      clearTimeout(highlightTimer.current);
+    }
+    highlightTimer.current = setTimeout(() => {
+      setHighlightedSubscriptionId(current => current === subscriptionId ? null : current);
+    }, 4000);
+  }, []);
+
+  const focusSubscription = useCallback((subscriptionId: number) => {
+    setSubscriptionStatusFilter('ALL');
+    setHighlightedSubscriptionId(subscriptionId);
+    setPendingSubscriptionFocus(subscriptionId);
+    requestAnimationFrame(() => scrollToSubscription(subscriptionId));
+  }, [scrollToSubscription]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimer.current) {
+        clearTimeout(highlightTimer.current);
+      }
+    };
+  }, []);
 
   const load = useCallback(async (page = notificationPage.page) => {
     if (!user) {
@@ -953,15 +1015,19 @@ function MyPageScreen({
 
   useEffect(() => {
     const targetId = route.params?.subscriptionId;
-    if (!targetId || !data || handledReviewTarget === targetId) {
+    const focusRequestId = route.params?.focusRequestId ?? targetId;
+    if (!targetId || !focusRequestId || !data || handledFocusRequest === focusRequestId) {
       return;
     }
     const target = data.subscriptions.find(subscription => subscription.id === targetId);
-    setHandledReviewTarget(targetId);
+    setHandledFocusRequest(focusRequestId);
     if (target) {
-      setSelectedSubscription(target);
+      focusSubscription(targetId);
+      if (route.params?.openDetail) {
+        setSelectedSubscription(target);
+      }
     }
-  }, [data, handledReviewTarget, route.params?.subscriptionId]);
+  }, [data, focusSubscription, handledFocusRequest, route.params]);
 
   async function logout() {
     await signOutFromGoogle();
@@ -1007,8 +1073,22 @@ function MyPageScreen({
     const notification = selectedNotification;
     setSelectedNotification(null);
 
-    if (notification && !notification.readAt) {
+    if (!notification) {
+      return;
+    }
+
+    if (!notification.readAt) {
       await readNotification(notification);
+    }
+
+    if (notification.subscriptionId) {
+      const subscription = data?.subscriptions.find(candidate => candidate.id === notification.subscriptionId);
+      if (subscription) {
+        focusSubscription(notification.subscriptionId);
+        if (notification.type === 'SOURCE_REVIEW_REQUIRED') {
+          setSelectedSubscription(subscription);
+        }
+      }
     }
   }
 
@@ -1061,14 +1141,35 @@ function MyPageScreen({
   }
 
   const reviewRequiredSubscriptions = data?.subscriptions.filter(subscription => subscription.reviewStatus === 'REVIEW_REQUIRED') ?? [];
-  const activeSubscriptions = [...(data?.subscriptions ?? [])]
-    .filter(subscription => !isEventClosed(subscription.event))
-    .sort((left, right) => Number(right.reviewStatus === 'REVIEW_REQUIRED') - Number(left.reviewStatus === 'REVIEW_REQUIRED'));
-  const closedSubscriptions = data?.subscriptions.filter(subscription => isEventClosed(subscription.event)) ?? [];
+  const subscriptions = data?.subscriptions ?? [];
+  const filteredSubscriptions = [...subscriptions]
+    .filter(subscription =>
+      subscriptionStatusFilter === 'ALL' || subscription.event?.status === subscriptionStatusFilter,
+    )
+    .sort((left, right) => {
+      const reviewOrder =
+        Number(right.reviewStatus === 'REVIEW_REQUIRED') - Number(left.reviewStatus === 'REVIEW_REQUIRED');
+      if (reviewOrder !== 0) {
+        return reviewOrder;
+      }
+      return (left.event?.registrationStartsAt ?? '').localeCompare(right.event?.registrationStartsAt ?? '');
+    });
+  const subscriptionFilterCounts = SUBSCRIPTION_STATUS_FILTERS.reduce<Record<SubscriptionStatusFilter, number>>(
+    (counts, option) => {
+      counts[option.value] =
+        option.value === 'ALL'
+          ? subscriptions.length
+          : subscriptions.filter(subscription => subscription.event?.status === option.value).length;
+      return counts;
+    },
+    {ALL: 0, UPCOMING: 0, OPEN: 0, CLOSED: 0},
+  );
+  const selectedSubscriptionFilterLabel =
+    SUBSCRIPTION_STATUS_FILTERS.find(option => option.value === subscriptionStatusFilter)?.label ?? '선택한';
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.screenContent}>
+      <ScrollView ref={scrollViewRef} contentContainerStyle={styles.screenContent}>
         <View style={styles.profileCard}>
           <View>
             <Text style={styles.eyebrow}>MY PAGE</Text>
@@ -1095,40 +1196,49 @@ function MyPageScreen({
           />
         ) : null}
 
-        <Section title="진행 중인 구독">
-          {activeSubscriptions.length === 0 ? (
-            <EmptyText text="진행 중인 구독이 없습니다." />
-          ) : (
-            activeSubscriptions.map(subscription => (
-              <SubscriptionCard
-                key={subscription.id}
-                subscription={subscription}
-                editable
-                onOpen={() => setSelectedSubscription(subscription)}
-                onEdit={() => setEditing(subscription)}
-                onDelete={() => removeSubscription(subscription)}
+        <View
+          onLayout={event => {
+            subscriptionSectionOffset.current = event.nativeEvent.layout.y;
+          }}>
+        <Section title="내 구독">
+          <View style={styles.subscriptionFilterRow}>
+            {SUBSCRIPTION_STATUS_FILTERS.map(option => (
+              <SubscriptionStatusFilterButton
+                key={option.value}
+                label={option.label}
+                count={subscriptionFilterCounts[option.value]}
+                active={subscriptionStatusFilter === option.value}
+                onPress={() => setSubscriptionStatusFilter(option.value)}
               />
+            ))}
+          </View>
+          {subscriptions.length === 0 ? (
+            <EmptyText text="아직 구독한 모집 기간이 없습니다." />
+          ) : filteredSubscriptions.length === 0 ? (
+            <EmptyText text={`${selectedSubscriptionFilterLabel} 상태의 구독이 없습니다.`} />
+          ) : (
+            filteredSubscriptions.map(subscription => (
+              <View
+                key={subscription.id}
+                onLayout={event => {
+                  subscriptionCardOffsets.current.set(subscription.id, event.nativeEvent.layout.y);
+                  if (pendingSubscriptionFocus === subscription.id) {
+                    requestAnimationFrame(() => scrollToSubscription(subscription.id));
+                  }
+                }}>
+                <SubscriptionCard
+                  subscription={subscription}
+                  editable={!isEventClosed(subscription.event)}
+                  highlighted={highlightedSubscriptionId === subscription.id}
+                  onOpen={() => setSelectedSubscription(subscription)}
+                  onEdit={isEventClosed(subscription.event) ? undefined : () => setEditing(subscription)}
+                  onDelete={() => removeSubscription(subscription)}
+                />
+              </View>
             ))
           )}
         </Section>
-
-        <Section title={`마감된 구독 ${closedSubscriptions.length}건`}>
-          <SecondaryButton
-            label={showClosed ? '접기' : '펼치기'}
-            onPress={() => setShowClosed(value => !value)}
-          />
-          {showClosed
-            ? closedSubscriptions.map(subscription => (
-                <SubscriptionCard
-                  key={subscription.id}
-                  subscription={subscription}
-                  editable={false}
-                  onOpen={() => setSelectedSubscription(subscription)}
-                  onDelete={() => removeSubscription(subscription)}
-                />
-              ))
-            : null}
-        </Section>
+        </View>
 
         <Section title="최근 알림">
           {notifications.length === 0 ? (
@@ -1147,7 +1257,12 @@ function MyPageScreen({
                   </Text>
                 </View>
                 <Text style={styles.mutedText}>{notification.message}</Text>
-                <Text style={styles.periodText}>{formatDateTime(notification.createdAt)}</Text>
+                {notification.type !== 'SOURCE_REVIEW_REQUIRED' && notification.registrationStartsAt ? (
+                  <Text style={styles.notificationStartListText}>
+                    접수 시작 {formatDateTime(notification.registrationStartsAt)}
+                  </Text>
+                ) : null}
+                <Text style={styles.periodText}>알림 도착 {formatDateTime(notification.createdAt)}</Text>
                 <View style={styles.buttonRow}>
                   {!notification.readAt ? (
                     <ActionButton label="읽음" onPress={() => readNotification(notification)} />
@@ -1210,13 +1325,6 @@ function MyPageScreen({
         fallback={null}
         loading={false}
         onClose={closeNotificationDetail}
-        onReview={subscriptionId => {
-          const subscription = data?.subscriptions.find(candidate => candidate.id === subscriptionId);
-          setSelectedNotification(null);
-          if (subscription) {
-            setSelectedSubscription(subscription);
-          }
-        }}
       />
     </Screen>
   );
@@ -1332,8 +1440,8 @@ function EditSubscriptionModal({
 }) {
   const event = subscription.event;
   const [title, setTitle] = useState(event?.title ?? subscription.pool.name);
-  const [startParts, setStartParts] = useState<DateTimeParts>(() => toDateTimeParts(event?.registrationStartsAt));
-  const [endParts, setEndParts] = useState<DateTimeParts>(() => toDateTimeParts(event?.registrationEndsAt));
+  const [startsAt, setStartsAt] = useState(() => toPickerDate(event?.registrationStartsAt));
+  const [endsAt, setEndsAt] = useState(() => toPickerDate(event?.registrationEndsAt));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -1342,9 +1450,7 @@ function EditSubscriptionModal({
       return;
     }
 
-    const nextStart = fromDateTimeParts(startParts);
-    const nextEnd = fromDateTimeParts(endParts);
-    if (!nextStart || !nextEnd || new Date(nextStart).getTime() >= new Date(nextEnd).getTime()) {
+    if (startsAt.getTime() >= endsAt.getTime()) {
       setError('시작/종료 날짜와 시간을 다시 확인해 주세요.');
       return;
     }
@@ -1353,8 +1459,8 @@ function EditSubscriptionModal({
       setSaving(true);
       await updateSubscriptionPeriod(subscription.id, {
         title,
-        registrationStartsAt: nextStart,
-        registrationEndsAt: nextEnd,
+        registrationStartsAt: startsAt.toISOString(),
+        registrationEndsAt: endsAt.toISOString(),
       });
       await onSaved();
     } catch (saveError) {
@@ -1396,47 +1502,23 @@ function EditSubscriptionModal({
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>시작 시각</Text>
               <DateTimeEditor
-                value={startParts}
-                onChange={setStartParts}
+                value={startsAt}
+                onChange={setStartsAt}
                 disabled={saving}
                 hasError={Boolean(error)}
                 onClearError={() => setError(null)}
               />
-              <QuickTimeRow
-                disabled={saving}
-                onPick={(hour, minute) => {
-                  setStartParts(current => ({...current, hour, minute}));
-                  setError(null);
-                }}
-                options={[
-                  ['09', '00', '오전 9시'],
-                  ['10', '00', '오전 10시'],
-                  ['12', '00', '정오'],
-                ]}
-              />
-              <Text style={styles.fieldHint}>날짜와 시간을 나눠 입력하세요. 한국 시간 기준입니다.</Text>
+              <Text style={styles.fieldHint}>날짜와 시간을 눌러 달력과 시계에서 선택하세요. 한국 시간 기준입니다.</Text>
             </View>
 
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>종료 시각</Text>
               <DateTimeEditor
-                value={endParts}
-                onChange={setEndParts}
+                value={endsAt}
+                onChange={setEndsAt}
                 disabled={saving}
                 hasError={Boolean(error)}
                 onClearError={() => setError(null)}
-              />
-              <QuickTimeRow
-                disabled={saving}
-                onPick={(hour, minute) => {
-                  setEndParts(current => ({...current, hour, minute}));
-                  setError(null);
-                }}
-                options={[
-                  ['18', '00', '오후 6시'],
-                  ['23', '00', '오후 11시'],
-                  ['23', '59', '마감 23:59'],
-                ]}
               />
               <Text style={styles.fieldHint}>종료 시각은 시작 시각보다 뒤여야 합니다.</Text>
             </View>
@@ -1471,106 +1553,107 @@ function DateTimeEditor({
   hasError,
   onClearError,
 }: {
-  value: DateTimeParts;
-  onChange: (value: DateTimeParts) => void;
+  value: Date;
+  onChange: (value: Date) => void;
   disabled: boolean;
   hasError: boolean;
   onClearError: () => void;
 }) {
-  function update(partial: Partial<DateTimeParts>) {
-    onChange({...value, ...partial});
-    onClearError();
+  const [iosMode, setIosMode] = useState<'date' | 'time' | null>(null);
+
+  function applySelection(event: DateTimePickerEvent, selected?: Date) {
+    if (event.type === 'set' && selected) {
+      onChange(selected);
+      onClearError();
+    }
+  }
+
+  function openPicker(mode: 'date' | 'time') {
+    if (disabled) {
+      return;
+    }
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value,
+        mode,
+        display: mode === 'date' ? 'calendar' : 'clock',
+        is24Hour: true,
+        timeZoneName: 'Asia/Seoul',
+        onChange: applySelection,
+      });
+      return;
+    }
+    setIosMode(mode);
   }
 
   return (
-    <View style={styles.dateTimeEditor}>
-      <TextInput
-        value={value.date}
-        onChangeText={date => update({date})}
-        editable={!disabled}
-        style={[styles.input, styles.dateInput, hasError ? styles.inputError : null]}
-        placeholder="2026-07-15"
-        placeholderTextColor="#7a8a99"
-        keyboardType="numbers-and-punctuation"
-        maxLength={10}
-      />
-      <TextInput
-        value={value.hour}
-        onChangeText={hour => update({hour: onlyDigits(hour).slice(0, 2)})}
-        editable={!disabled}
-        style={[styles.input, styles.timeInput, hasError ? styles.inputError : null]}
-        placeholder="09"
-        placeholderTextColor="#7a8a99"
-        keyboardType="number-pad"
-        maxLength={2}
-      />
-      <Text style={styles.timeSeparator}>:</Text>
-      <TextInput
-        value={value.minute}
-        onChangeText={minute => update({minute: onlyDigits(minute).slice(0, 2)})}
-        editable={!disabled}
-        style={[styles.input, styles.timeInput, hasError ? styles.inputError : null]}
-        placeholder="00"
-        placeholderTextColor="#7a8a99"
-        keyboardType="number-pad"
-        maxLength={2}
-      />
-    </View>
-  );
-}
-
-function QuickTimeRow({
-  options,
-  disabled,
-  onPick,
-}: {
-  options: Array<[string, string, string]>;
-  disabled: boolean;
-  onPick: (hour: string, minute: string) => void;
-}) {
-  return (
-    <View style={styles.quickTimeRow}>
-      {options.map(([hour, minute, label]) => (
-        <SecondaryButton
-          key={`${hour}:${minute}`}
-          label={label}
-          onPress={() => onPick(hour, minute)}
+    <>
+      <View style={styles.dateTimeEditor}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="날짜 선택"
           disabled={disabled}
-        />
-      ))}
-    </View>
+          onPress={() => openPicker('date')}
+          style={[
+            styles.datePickerButton,
+            styles.datePickerDateButton,
+            hasError ? styles.inputError : null,
+            disabled ? styles.disabledButton : null,
+          ]}>
+          <Text style={styles.datePickerLabel}>날짜</Text>
+          <Text style={styles.datePickerValue}>{formatPickerDate(value)}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="시간 선택"
+          disabled={disabled}
+          onPress={() => openPicker('time')}
+          style={[
+            styles.datePickerButton,
+            styles.datePickerTimeButton,
+            hasError ? styles.inputError : null,
+            disabled ? styles.disabledButton : null,
+          ]}>
+          <Text style={styles.datePickerLabel}>시간</Text>
+          <Text style={styles.datePickerValue}>{formatPickerTime(value)}</Text>
+        </Pressable>
+      </View>
+      {Platform.OS === 'ios' && iosMode ? (
+        <View style={styles.iosDatePickerPanel}>
+          <DateTimePicker
+            value={value}
+            mode={iosMode}
+            display="spinner"
+            timeZoneName="Asia/Seoul"
+            onChange={applySelection}
+          />
+          <SecondaryButton label="선택 완료" onPress={() => setIosMode(null)} />
+        </View>
+      ) : null}
+    </>
   );
 }
 
-function toDateTimeParts(value: string | null | undefined): DateTimeParts {
-  const input = value ? toInputDateTime(value) : '';
-  const [date = '', time = ''] = input.split(' ');
-  const [hour = '', minute = ''] = time.split(':');
-  return {date, hour, minute};
+function toPickerDate(value: string | null | undefined) {
+  const parsed = value ? new Date(value) : new Date();
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
-function fromDateTimeParts(value: DateTimeParts) {
-  const date = normalizeDateInput(value.date);
-  const hour = onlyDigits(value.hour).padStart(2, '0');
-  const minute = onlyDigits(value.minute).padStart(2, '0');
-  if (!date || hour.length !== 2 || minute.length !== 2) {
-    return null;
-  }
-  return fromInputDateTime(`${date} ${hour}:${minute}`);
+function formatPickerDate(value: Date) {
+  return value.toLocaleDateString('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
 }
 
-function normalizeDateInput(value: string) {
-  const normalized = value.trim().replace(/\./g, '-').replace(/\//g, '-');
-  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (!match) {
-    return null;
-  }
-  const [, year, month, day] = match;
-  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-}
-
-function onlyDigits(value: string) {
-  return value.replace(/\D/g, '');
+function formatPickerTime(value: Date) {
+  return value.toLocaleTimeString('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function PushNotificationModal({
@@ -1578,13 +1661,11 @@ function PushNotificationModal({
   fallback,
   loading,
   onClose,
-  onReview,
 }: {
   notification: InAppNotification | null;
   fallback: ReceivedPushMessage | null;
   loading: boolean;
   onClose: () => void;
-  onReview?: (subscriptionId: number) => void;
 }) {
   const visible = loading || Boolean(notification || fallback);
   const title = notification?.title ?? fallback?.title ?? 'SwimPulse 알림';
@@ -1595,13 +1676,20 @@ function PushNotificationModal({
   const sourceReview = notification?.type === 'SOURCE_REVIEW_REQUIRED' || fallback?.type === 'SOURCE_REVIEW_REQUIRED';
   const poolName = notification?.poolName;
   const eventTitle = notification?.eventTitle;
+  const registrationStartsAt = notification?.registrationStartsAt ?? fallback?.registrationStartsAt;
   const arrivedAt = notification?.createdAt ? formatDateTime(notification.createdAt) : null;
   const isUnread = notification ? !notification.readAt : true;
 
   return (
-    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
-      <View style={styles.dimmed}>
-        <View style={[styles.dialog, sourceReview ? styles.sourceReviewDialog : null]}>
+    <Modal
+      visible={visible}
+      animationType="fade"
+      transparent
+      onRequestClose={loading ? () => undefined : onClose}>
+      <Pressable style={styles.dimmed} onPress={loading ? undefined : onClose}>
+        <Pressable
+          style={[styles.dialog, sourceReview ? styles.sourceReviewDialog : null]}
+          onPress={event => event.stopPropagation()}>
           {loading && !notification ? (
             <View style={styles.centeredDialogContent}>
               <ActivityIndicator color="#047c86" />
@@ -1625,11 +1713,17 @@ function PushNotificationModal({
                     기존 공지는 이전 홈페이지에서 수집되었습니다. 원문과 새 홈페이지를 비교한 뒤 현재 기간을 유지하거나 수정해주세요.
                   </Text>
                 </View>
-              ) : poolName || eventTitle || arrivedAt ? (
+              ) : poolName || eventTitle || registrationStartsAt || arrivedAt ? (
                 <View style={styles.notificationPreview}>
                   {poolName ? <Text style={styles.noticeTitle}>{poolName}</Text> : null}
                   {eventTitle ? <Text style={styles.mutedText}>{eventTitle}</Text> : null}
-                  {arrivedAt ? <Text style={styles.periodText}>도착 {arrivedAt}</Text> : null}
+                  {registrationStartsAt ? (
+                    <View style={styles.notificationStartCard}>
+                      <Text style={styles.notificationStartLabel}>접수 시작</Text>
+                      <Text style={styles.notificationStartValue}>{formatDateTime(registrationStartsAt)}</Text>
+                    </View>
+                  ) : null}
+                  {arrivedAt ? <Text style={styles.periodText}>알림 도착 {arrivedAt}</Text> : null}
                 </View>
               ) : null}
 
@@ -1651,13 +1745,6 @@ function PushNotificationModal({
                       />
                     ) : null}
                   </View>
-                  {Number.isInteger(subscriptionId) && subscriptionId > 0 && onReview ? (
-                    <ActionButton
-                      label="구독 검토하기"
-                      onPress={() => onReview(subscriptionId)}
-                      style={styles.sourceReviewFullButton}
-                    />
-                  ) : null}
                   <SecondaryButton label="확인" onPress={onClose} style={styles.sourceReviewFullButton} />
                 </View>
               ) : (
@@ -1666,11 +1753,15 @@ function PushNotificationModal({
                   <ActionButton label="확인" onPress={onClose} />
                 </View>
               )}
-              <Text style={styles.helperText}>확인하면 읽음 처리됩니다.</Text>
+              <Text style={styles.helperText}>
+                {Number.isInteger(subscriptionId) && subscriptionId > 0
+                  ? '확인하거나 바깥 영역을 누르면 해당 구독으로 이동합니다.'
+                  : '확인하면 읽음 처리됩니다.'}
+              </Text>
             </>
           )}
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -2030,12 +2121,14 @@ function FacilityCandidateAccordion({
 function SubscriptionCard({
   subscription,
   editable,
+  highlighted,
   onOpen,
   onEdit,
   onDelete,
 }: {
   subscription: Subscription;
   editable: boolean;
+  highlighted: boolean;
   onOpen: () => void;
   onEdit?: () => void;
   onDelete: () => void;
@@ -2045,8 +2138,13 @@ function SubscriptionCard({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{selected: highlighted}}
       onPress={onOpen}
-      style={[styles.poolCard, needsReview ? styles.reviewSubscriptionCard : null]}>
+      style={[
+        styles.poolCard,
+        needsReview ? styles.reviewSubscriptionCard : null,
+        highlighted ? styles.highlightedSubscriptionCard : null,
+      ]}>
       <View style={styles.rowBetween}>
         <Text style={styles.poolName}>{subscriptionTitle(subscription)}</Text>
         <View style={styles.badgeRow}>
@@ -2215,6 +2313,33 @@ function PoolListModeButton({
   );
 }
 
+function SubscriptionStatusFilterButton({
+  label,
+  count,
+  active,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{selected: active}}
+      onPress={onPress}
+      style={[styles.subscriptionFilterButton, active ? styles.subscriptionFilterButtonActive : null]}>
+      <Text style={[styles.subscriptionFilterText, active ? styles.subscriptionFilterTextActive : null]}>
+        {label}
+      </Text>
+      <Text style={[styles.subscriptionFilterCount, active ? styles.subscriptionFilterCountActive : null]}>
+        {count}
+      </Text>
+    </Pressable>
+  );
+}
+
 function NoticeBanner({text, tone = 'blue'}: {text: string; tone?: 'blue' | 'amber'}) {
   return (
     <View style={[styles.noticeBanner, tone === 'amber' ? styles.amberBanner : null]}>
@@ -2350,6 +2475,46 @@ const styles = StyleSheet.create({
   poolListModeButtonTextActive: {
     color: '#ffffff',
   },
+  subscriptionFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  subscriptionFilterButton: {
+    minWidth: 70,
+    minHeight: 42,
+    flexGrow: 1,
+    flexBasis: '22%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#b7ced9',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 9,
+  },
+  subscriptionFilterButtonActive: {
+    borderColor: '#047c86',
+    backgroundColor: '#047c86',
+  },
+  subscriptionFilterText: {
+    color: '#244a5f',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  subscriptionFilterTextActive: {
+    color: '#ffffff',
+  },
+  subscriptionFilterCount: {
+    color: '#6b879c',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  subscriptionFilterCountActive: {
+    color: '#d9fffa',
+  },
   searchRow: {
     flexDirection: 'row',
     gap: 8,
@@ -2379,18 +2544,39 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
   },
-  dateInput: {
+  datePickerButton: {
+    minHeight: 64,
+    justifyContent: 'center',
+    gap: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#b7ced9',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 14,
+  },
+  datePickerDateButton: {
     flex: 1,
   },
-  timeInput: {
-    width: 58,
-    textAlign: 'center',
-    paddingHorizontal: 8,
+  datePickerTimeButton: {
+    minWidth: 118,
   },
-  timeSeparator: {
+  datePickerLabel: {
+    color: '#5c7080',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  datePickerValue: {
     color: '#244a5f',
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '900',
+  },
+  iosDatePickerPanel: {
+    gap: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d6e5eb',
+    backgroundColor: '#ffffff',
+    padding: 10,
   },
   inputError: {
     borderColor: '#dc2626',
@@ -2598,6 +2784,16 @@ const styles = StyleSheet.create({
     borderColor: '#fdba74',
     backgroundColor: '#fffaf3',
   },
+  highlightedSubscriptionCard: {
+    borderWidth: 2,
+    borderColor: '#0284c7',
+    backgroundColor: '#e0f2fe',
+    shadowColor: '#0284c7',
+    shadowOffset: {width: 0, height: 3},
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 4,
+  },
   reviewSubscriptionNotice: {
     gap: 6,
     borderRadius: 14,
@@ -2639,6 +2835,31 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: '#d6e5eb',
+  },
+  notificationStartCard: {
+    gap: 3,
+    marginTop: 6,
+    borderRadius: 12,
+    backgroundColor: '#e9f7f5',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#acdcd5',
+  },
+  notificationStartLabel: {
+    color: '#047c86',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  notificationStartValue: {
+    color: '#112d42',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  notificationStartListText: {
+    color: '#047c86',
+    fontSize: 14,
+    fontWeight: '900',
   },
   noticeCard: {
     gap: 10,
@@ -2754,11 +2975,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '900',
     textAlign: 'center',
-  },
-  quickTimeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
   },
   badgeRow: {
     flexDirection: 'row',

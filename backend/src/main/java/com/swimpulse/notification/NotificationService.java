@@ -11,7 +11,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -30,6 +34,9 @@ public class NotificationService {
 	private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 	private static final int DEFAULT_PAGE_SIZE = 20;
 	private static final int MAX_PAGE_SIZE = 100;
+	private static final ZoneId SEOUL_ZONE = ZoneId.of("Asia/Seoul");
+	private static final DateTimeFormatter REGISTRATION_START_FORMATTER =
+			DateTimeFormatter.ofPattern("M월 d일 a h시", Locale.KOREAN);
 
 	private final NotificationRepository notificationRepository;
 	private final SubscriptionRepository subscriptionRepository;
@@ -221,6 +228,7 @@ public class NotificationService {
 								"poolId", work.poolId().toString(),
 								"poolName", work.poolName(),
 								"eventTitle", work.eventTitle(),
+								"registrationStartsAt", work.registrationStartsAt().toString(),
 								"noticeUrl", work.noticeUrl() == null ? "" : work.noticeUrl(),
 								"currentHomepageUrl", work.currentHomepageUrl() == null ? "" : work.currentHomepageUrl(),
 								"subscriptionId", work.subscriptionId() == null ? "" : work.subscriptionId().toString(),
@@ -279,6 +287,7 @@ public class NotificationService {
 				notification.getPool().getName(),
 				notification.getEvent().getId(),
 				notification.getEvent().getTitle(),
+				notification.getEvent().getRegistrationStartsAt(),
 				noticeUrl(notification),
 				notification.getPool().getHomepageUrl(),
 				notification.getSubscription() == null ? null : notification.getSubscription().getId(),
@@ -466,11 +475,19 @@ public class NotificationService {
 			case SOURCE_REVIEW_REQUIRED -> "수영장 홈페이지 정보가 변경되었습니다";
 		};
 		String message = switch (type) {
-			case REGISTRATION_REMINDER -> event.getPool().getName() + " " + event.getTitle() + " 접수가 곧 시작됩니다.";
-			case REGISTRATION_OPEN -> event.getPool().getName() + " " + event.getTitle() + " 접수가 시작됐습니다. 지금 확인하세요.";
+			case REGISTRATION_REMINDER -> event.getPool().getName() + " " + event.getTitle() + " 접수가 "
+					+ formatRegistrationStart(event.getRegistrationStartsAt()) + "에 시작합니다.";
+			case REGISTRATION_OPEN -> event.getPool().getName() + " " + event.getTitle() + " 접수가 "
+					+ formatRegistrationStart(event.getRegistrationStartsAt()) + "에 시작됐습니다. 지금 확인하세요.";
 			case SOURCE_REVIEW_REQUIRED -> event.getPool().getName() + " 홈페이지 출처가 변경되어 구독 검토가 필요합니다.";
 		};
 		return new Notification(subscription, type, title, message, dedupeKey);
+	}
+
+	private String formatRegistrationStart(Instant registrationStartsAt) {
+		ZonedDateTime startsAt = registrationStartsAt.atZone(SEOUL_ZONE);
+		String formatted = REGISTRATION_START_FORMATTER.format(startsAt);
+		return startsAt.getMinute() == 0 ? formatted : formatted + " " + startsAt.getMinute() + "분";
 	}
 
 	private String scheduledDedupeKey(Long userId, Long eventId, NotificationType type) {
@@ -506,6 +523,7 @@ public class NotificationService {
 			String poolName,
 			Long eventId,
 			String eventTitle,
+			Instant registrationStartsAt,
 			String noticeUrl,
 			String currentHomepageUrl,
 			Long subscriptionId,
@@ -516,7 +534,7 @@ public class NotificationService {
 			boolean skip
 	) {
 		public static DeliveryWork skip(Long notificationId) {
-			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, null, null, null, List.of(), true);
+			return new DeliveryWork(notificationId, null, null, null, null, null, null, null, null, null, null, null, List.of(), true);
 		}
 	}
 }

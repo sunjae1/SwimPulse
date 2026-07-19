@@ -692,6 +692,11 @@ export function DashboardClient({
 
   async function closePushNotificationModal() {
     const target = pushNotificationModal;
+    const destination = target?.subscriptionId
+      ? target.type === "SOURCE_REVIEW_REQUIRED"
+        ? `/my-page?subscriptionId=${target.subscriptionId}&openDetail=1`
+        : `/my-page?subscriptionId=${target.subscriptionId}`
+      : null;
     setPushNotificationClosing(true);
 
     try {
@@ -712,6 +717,9 @@ export function DashboardClient({
         clearSearchParam("notificationId");
       }
       setPendingNotificationLaunchId(null);
+      if (destination) {
+        window.location.assign(destination);
+      }
     }
   }
 
@@ -1876,7 +1884,15 @@ function PushNotificationModal({
           <div className="rounded-2xl bg-[#f7f8f4] px-4 py-4 text-sm text-[#47564f]">
             <p className="font-semibold text-[#17201d]">{notification.poolName}</p>
             <p className="mt-1">{notification.eventTitle}</p>
-            <p className="mt-3 text-xs text-[#7c8982]">도착 {formatDateTime(notification.createdAt)}</p>
+            {notification.type !== "SOURCE_REVIEW_REQUIRED" && notification.registrationStartsAt ? (
+              <div className="mt-3 rounded-xl border border-[#b9ded8] bg-[#edf8f6] px-3 py-2">
+                <p className="text-xs font-semibold text-[#0f766e]">접수 시작</p>
+                <p className="mt-1 font-semibold text-[#17201d]">
+                  {formatDateTime(notification.registrationStartsAt)}
+                </p>
+              </div>
+            ) : null}
+            <p className="mt-3 text-xs text-[#7c8982]">알림 도착 {formatDateTime(notification.createdAt)}</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {notification.noticeUrl ? (
@@ -1901,14 +1917,6 @@ function PushNotificationModal({
                 <ExternalLink className="h-4 w-4" aria-hidden="true" />
               </a>
             ) : null}
-            {notification.type === "SOURCE_REVIEW_REQUIRED" && notification.subscriptionId ? (
-              <a
-                className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#0f766e] px-4 text-sm font-semibold text-white transition hover:bg-[#0b5f59]"
-                href={`/my-page?subscriptionId=${notification.subscriptionId}`}
-              >
-                구독 검토하기
-              </a>
-            ) : null}
             <button
               className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#17201d] px-4 text-sm font-semibold text-white transition hover:bg-[#31413b] disabled:opacity-50"
               onClick={onClose}
@@ -1918,7 +1926,11 @@ function PushNotificationModal({
               {busy ? "읽음 처리 중..." : "확인"}
             </button>
           </div>
-          <p className="text-center text-xs text-[#7c8982]">바깥 영역을 눌러도 닫히며 읽음 처리됩니다.</p>
+          <p className="text-center text-xs text-[#7c8982]">
+            {notification.subscriptionId
+              ? "확인하거나 바깥 영역을 누르면 읽음 처리 후 해당 구독으로 이동합니다."
+              : "바깥 영역을 눌러도 닫히며 읽음 처리됩니다."}
+          </p>
         </div>
       </div>
     </div>
