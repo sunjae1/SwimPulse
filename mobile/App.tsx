@@ -1829,6 +1829,7 @@ function SubscriptionDetailModal({
   const event = subscription.event;
   const poolName = event?.poolName ?? subscription.pool.name;
   const canEdit = Boolean(event && !isEventClosed(event));
+  const needsReview = subscription.reviewStatus === 'REVIEW_REQUIRED';
 
   return (
     <Modal visible animationType="fade" transparent onRequestClose={onClose}>
@@ -1856,7 +1857,7 @@ function SubscriptionDetailModal({
             <Text style={styles.mutedText}>구독 생성 {formatDateTime(subscription.createdAt)}</Text>
           </View>
 
-          {subscription.reviewStatus === 'REVIEW_REQUIRED' ? (
+          {needsReview ? (
             <NoticeBanner
               text={subscription.reviewReason ?? '홈페이지 출처가 변경되었습니다. 기존 공지와 새 홈페이지를 비교해 구독 기간을 검토해주세요.'}
               tone="amber"
@@ -1865,12 +1866,15 @@ function SubscriptionDetailModal({
 
           <View style={styles.buttonRow}>
             {event?.noticeUrl ? (
-              <SecondaryButton label="기존 공지 보기" onPress={() => Linking.openURL(event.noticeUrl!)} />
+              <SecondaryButton
+                label={needsReview ? '기존 공지 보기' : '원문 보기'}
+                onPress={() => Linking.openURL(event.noticeUrl!)}
+              />
             ) : null}
-            {subscription.pool.homepageUrl ? (
+            {needsReview && subscription.pool.homepageUrl ? (
               <SecondaryButton label="새 홈페이지 확인" onPress={() => Linking.openURL(subscription.pool.homepageUrl!)} />
             ) : null}
-            {subscription.reviewStatus === 'REVIEW_REQUIRED' ? (
+            {needsReview ? (
               <ActionButton
                 label={confirmingReview ? '처리 중...' : '현재 기간 유지'}
                 onPress={() => onConfirmCurrent(subscription)}

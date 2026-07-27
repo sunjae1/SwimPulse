@@ -1318,6 +1318,7 @@ function SubscriptionDetailModal({
   const event = subscription.event;
   const poolName = event?.poolName ?? subscription.pool.name;
   const canEdit = Boolean(event && event.status !== "CLOSED");
+  const needsReview = subscription.reviewStatus === "REVIEW_REQUIRED";
 
   return (
     <div
@@ -1350,7 +1351,7 @@ function SubscriptionDetailModal({
           </button>
         </div>
         <div className="space-y-4 px-5 py-5">
-          {subscription.reviewStatus === "REVIEW_REQUIRED" ? (
+          {needsReview ? (
             <div className="rounded-2xl border border-[#f8c9a7] bg-[#fff7ed] px-4 py-4 text-sm leading-6 text-[#9a4d16]">
               <p className="font-bold text-[#7c2d12]">홈페이지 출처 변경으로 구독 검토가 필요합니다.</p>
               <p className="mt-1">{subscription.reviewReason ?? "기존 공지와 새 홈페이지를 비교한 뒤 기간을 유지하거나 수정해주세요."}</p>
@@ -1379,11 +1380,11 @@ function SubscriptionDetailModal({
                 target="_blank"
                 rel="noreferrer"
               >
-                기존 공지 보기
+                {needsReview ? "기존 공지 보기" : "원문 보기"}
                 <ExternalLink size={15} aria-hidden />
               </a>
             ) : null}
-            {subscription.pool.homepageUrl ? (
+            {needsReview && subscription.pool.homepageUrl ? (
               <a
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] hover:text-[#0f766e]"
                 href={subscription.pool.homepageUrl}
@@ -1394,7 +1395,7 @@ function SubscriptionDetailModal({
                 <ExternalLink size={15} aria-hidden />
               </a>
             ) : null}
-            {subscription.reviewStatus === "REVIEW_REQUIRED" ? (
+            {needsReview ? (
               <button
                 className="inline-flex h-11 items-center justify-center rounded-lg bg-[#0f766e] px-4 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
                 onClick={() => onConfirmCurrent(subscription)}
