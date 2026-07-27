@@ -60,7 +60,7 @@ public class NaverLocalSearchClient {
 	public List<LocationSearchCandidate> search(String query, int display) {
 		return searchWithCache(
 				"location-search",
-				"swimpulse:cache:location-search:v1:",
+				"swimpulse:cache:location-search:v2:",
 				query,
 				display,
 				locationSearchTtl
@@ -70,7 +70,7 @@ public class NaverLocalSearchClient {
 	public List<LocationSearchCandidate> searchPoolLocationCandidates(String query, int display) {
 		return searchWithCache(
 				"pool-location-candidates",
-				"swimpulse:cache:pool-location-candidates:v1:",
+				"swimpulse:cache:pool-location-candidates:v2:",
 				query,
 				display,
 				poolLocationCandidateTtl
@@ -137,16 +137,42 @@ public class NaverLocalSearchClient {
 
 		List<LocationSearchCandidate> candidates = response.items()
 				.stream()
-				.map(item -> LocationSearchCandidate.basic(
-						stripHtml(item.title()),
-						stripHtml(item.category()),
-						emptyToNull(item.address()),
-						emptyToNull(item.roadAddress()),
-						emptyToNull(item.link())
-				))
+				.map(this::toLocationSearchCandidate)
 				.toList();
 		log.info("Naver local search completed. query={} resultCount={}", query, candidates.size());
 		return candidates;
+	}
+
+	private LocationSearchCandidate toLocationSearchCandidate(NaverLocalSearchItem item) {
+		LocationSearchCandidate candidate = LocationSearchCandidate.basic(
+				stripHtml(item.title()),
+				stripHtml(item.category()),
+				emptyToNull(item.address()),
+				emptyToNull(item.roadAddress()),
+				emptyToNull(item.link())
+		);
+		Double longitude = parseMapCoordinate(item.mapx(), 180);
+		Double latitude = parseMapCoordinate(item.mapy(), 90);
+		if (latitude == null || longitude == null) {
+			return candidate;
+		}
+		return candidate.withEnrichment(latitude, longitude, null);
+	}
+
+	static Double parseMapCoordinate(String rawValue, double maximumAbsoluteValue) {
+		if (rawValue == null || rawValue.isBlank()) {
+			return null;
+		}
+		try {
+			double parsed = Double.parseDouble(rawValue.trim());
+			double coordinate = Math.abs(parsed) > maximumAbsoluteValue ? parsed / 10_000_000d : parsed;
+			if (!Double.isFinite(coordinate) || coordinate == 0 || Math.abs(coordinate) > maximumAbsoluteValue) {
+				return null;
+			}
+			return coordinate;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
 	}
 
 	private boolean isConfigured() {

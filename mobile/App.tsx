@@ -35,7 +35,6 @@ import {
   createSubscription,
   deleteSubscription,
   getEvents,
-  geocodeLocation,
   getMe,
   getMyPage,
   getNearbyPools,
@@ -78,11 +77,13 @@ import type {ReceivedPushMessage} from './src/notifications/push';
 import {
   eventStatusLabel,
   formatDateTime,
+  formatMonthDescription,
+  formatMonthLabel,
   formatShortPeriod,
   isEventClosed,
   isOcrInProgress,
   isPastPeriod,
-  shiftPeriodToCurrentMonth,
+  shiftPeriodToNextAvailableMonth,
   subscriptionKey,
   subscriptionKeyFromEvent,
   subscriptionTitle,
@@ -449,11 +450,7 @@ function HomeScreen({
   }
 
   async function selectLocationCandidate(candidate: LocationSearchCandidate) {
-    const address = candidate.roadAddress ?? candidate.address;
-    if (!address || selectingLocationTitle) {
-      if (!address) {
-        setLocationSearchFeedback('선택한 검색 결과에 사용할 주소가 없습니다. 다른 결과를 선택해 주세요.');
-      }
+    if (!hasLocationCandidateCoordinates(candidate) || selectingLocationTitle) {
       return;
     }
 
@@ -462,10 +459,9 @@ function HomeScreen({
       setFacilityCandidates([]);
       setFacilityCandidatesOpen(false);
       setLocationSearchFeedback(`${candidate.title} 기준 가까운 수영장과 추가 후보를 찾고 있습니다.`);
-      const geocoded = await geocodeLocation(address);
       const [nearby, facilities] = await Promise.all([
-        getNearbyPools(geocoded.latitude, geocoded.longitude, 10),
-        getPoolLocationCandidates(geocoded.latitude, geocoded.longitude, 5000, '체육센터', 10),
+        getNearbyPools(candidate.latitude, candidate.longitude, 10),
+        getPoolLocationCandidates(candidate.latitude, candidate.longitude, 5000, '체육센터', 10),
       ]);
       setNearbyPools(nearby);
       setNearbyOriginLabel(candidate.title);
@@ -792,20 +788,24 @@ function NoticeScanModal({
     };
 
     if (isPastPeriod(period.startsAt, period.endsAt)) {
-      const shifted = shiftPeriodToCurrentMonth(period.startsAt, period.endsAt);
+      const shifted = shiftPeriodToNextAvailableMonth(period.startsAt, period.endsAt);
+      const targetMonth = formatMonthLabel(shifted.registrationStartsAt);
+      const targetMonthDescription = formatMonthDescription(shifted.registrationStartsAt);
+      const customTitle = `${notice.title} (${targetMonth} 사용자 지정)`.slice(0, 120);
       Alert.alert(
-        '지난 모집 기간입니다.',
-        `예상 알림 기간 ${formatShortPeriod(
+        '이미 지난 모집 기간입니다.',
+        `${targetMonthDescription} 공지를 기다리거나, ${targetMonth} 같은 날짜에 사용자 지정 알림을 등록할까요?\n\n사용자 지정 기간: ${formatShortPeriod(
           shifted.registrationStartsAt,
           shifted.registrationEndsAt,
-        )} 으로 구독할까요?`,
+        )}\n\n주의: 실제 공지 알림이 아닌 임의로 지정한 사용자 알림이며, 실제 모집 일정과 다를 수 있습니다.`,
         [
-          {text: '취소', style: 'cancel'},
+          {text: '새 공지 기다리기', style: 'cancel'},
           {
-            text: '이 날짜로 구독',
+            text: `${targetMonth} 날짜로 등록`,
             onPress: () =>
               submit({
                 ...baseInput,
+                title: customTitle,
                 ...shifted,
                 noticeRegistrationPeriodId: null,
               }),
@@ -887,9 +887,27 @@ function NoticeScanModal({
                           reminderQueued: false,
                         startQueued: false,
                       };
-                      const existing = subscribedByKey.get(subscriptionKeyFromEvent(syntheticEvent));
+                      const shiftedPeriod = isPastPeriod(period.startsAt, period.endsAt)
+                        ? shiftPeriodToNextAvailableMonth(period.startsAt, period.endsAt)
+                        : null;
+                      const shiftedEvent = shiftedPeriod
+                        ? {
+                            ...syntheticEvent,
+                            noticeRegistrationPeriodId: null,
+                            registrationStartsAt: shiftedPeriod.registrationStartsAt,
+                            registrationEndsAt: shiftedPeriod.registrationEndsAt,
+                          }
+                        : null;
+                      const existing =
+                        subscribedByKey.get(subscriptionKeyFromEvent(syntheticEvent)) ??
+                        (shiftedEvent
+                          ? subscribedByKey.get(subscriptionKeyFromEvent(shiftedEvent))
+                          : undefined);
                       const isWorking =
                         workingKey === `${notice.id}:${period.startsAt}:${period.endsAt}` ||
+                        (shiftedPeriod &&
+                          workingKey ===
+                            `${notice.id}:${shiftedPeriod.registrationStartsAt}:${shiftedPeriod.registrationEndsAt}`) ||
                         (existing && workingKey === `unsubscribe:${existing.id}`);
                       return (
                         <View key={`${notice.id}:${period.startsAt}:${period.endsAt}`} style={styles.periodRow}>
@@ -1971,27 +1989,59 @@ function CandidateCard({
   selectionDisabled: boolean;
   onSelect: () => void;
 }) {
+  const coordinatesUnavailable = !hasLocationCandidateCoordinates(candidate);
+  const disabled = selectionDisabled || selecting || coordinatesUnavailable;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${candidate.title}을 기준 위치로 선택`}
-      disabled={selectionDisabled || selecting}
+      accessibilityState={{disabled}}
+      disabled={disabled}
       onPress={onSelect}
       style={({pressed}) => [
         styles.locationCandidateCard,
+        coordinatesUnavailable ? styles.locationCandidateCardUnavailable : null,
         pressed ? styles.locationCandidateCardPressed : null,
-        selectionDisabled ? styles.disabledButton : null,
+        selectionDisabled && !coordinatesUnavailable ? styles.disabledButton : null,
       ]}>
       <View style={styles.rowBetween}>
-        <Text style={styles.locationCandidateEyebrow}>기준 위치</Text>
+        <Text
+          style={[
+            styles.locationCandidateEyebrow,
+            coordinatesUnavailable ? styles.locationCandidateEyebrowUnavailable : null,
+          ]}>
+          {coordinatesUnavailable ? '선택 불가' : '기준 위치'}
+        </Text>
         <Text style={styles.locationCandidateCategory}>{candidate.category || '시설'}</Text>
       </View>
       <Text style={styles.locationCandidateTitle}>{candidate.title}</Text>
       <Text style={styles.locationCandidateAddress}>{candidate.roadAddress || candidate.address || '주소 정보 없음'}</Text>
-      <Text style={styles.locationCandidateAction}>
-        {selecting ? '가까운 수영장과 후보를 찾는 중...' : '눌러서 이 위치를 기준으로 선택'}
+      <Text
+        style={[
+          styles.locationCandidateAction,
+          coordinatesUnavailable ? styles.locationCandidateWarning : null,
+        ]}>
+        {coordinatesUnavailable
+          ? '위치 좌표를 확인하지 못했습니다. 다른 결과를 선택해주세요.'
+          : selecting
+            ? '가까운 수영장과 후보를 찾는 중...'
+            : '눌러서 이 위치를 기준으로 선택'}
       </Text>
     </Pressable>
+  );
+}
+
+function hasLocationCandidateCoordinates(candidate: LocationSearchCandidate): candidate is LocationSearchCandidate & {
+  latitude: number;
+  longitude: number;
+} {
+  return (
+    candidate.latitude !== null &&
+    candidate.longitude !== null &&
+    Number.isFinite(candidate.latitude) &&
+    Number.isFinite(candidate.longitude) &&
+    Math.abs(candidate.latitude) <= 90 &&
+    Math.abs(candidate.longitude) <= 180
   );
 }
 
@@ -2648,11 +2698,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0f2fe',
     borderColor: '#38bdf8',
   },
+  locationCandidateCardUnavailable: {
+    backgroundColor: '#f4f5f3',
+    borderColor: '#d5d9d6',
+  },
   locationCandidateEyebrow: {
     color: '#0369a1',
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0,
+  },
+  locationCandidateEyebrowUnavailable: {
+    color: '#68716b',
   },
   locationCandidateCategory: {
     overflow: 'hidden',
@@ -2679,6 +2736,9 @@ const styles = StyleSheet.create({
     color: '#0369a1',
     fontSize: 13,
     fontWeight: '900',
+  },
+  locationCandidateWarning: {
+    color: '#a04b3d',
   },
   facilityCandidatePanel: {
     overflow: 'hidden',

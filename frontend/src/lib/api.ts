@@ -204,6 +204,14 @@ const USER_FRIENDLY_API_MESSAGES = new Map<string, string>([
     "Register web push before sending test notifications.",
     "테스트 알림을 보내려면 먼저 웹 푸시 알림을 등록해주세요.",
   ],
+  [
+    "Cannot subscribe to an already closed registration period.",
+    "이미 지난 모집 기간입니다. 새 공지를 기다리거나 미래 날짜로 사용자 지정 알림을 등록해주세요.",
+  ],
+  [
+    "No coordinates found for address.",
+    "선택한 장소의 정확한 위치를 찾지 못했습니다. 다른 검색 결과를 선택해주세요.",
+  ],
 ]);
 
 function userFriendlyErrorMessage(status: number, statusText: string, body: string) {

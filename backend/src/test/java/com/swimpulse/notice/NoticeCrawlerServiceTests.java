@@ -447,7 +447,11 @@ class NoticeCrawlerServiceTests {
 
 		assertEquals(1, ocrService.callCount());
 		assertTrue(outcome.result().hasPeriod());
-		assertEquals(4, outcome.result().registrationPeriods().size());
+		assertEquals(
+				4,
+				outcome.result().registrationPeriods().size(),
+				() -> "Unexpected OCR periods: " + outcome.result().registrationPeriods()
+		);
 		assertTrue(outcome.result().registrationPeriods().stream()
 				.anyMatch(period -> "매달 17일~23일".equals(period.periodText())));
 		assertTrue(outcome.result().registrationPeriods().stream()

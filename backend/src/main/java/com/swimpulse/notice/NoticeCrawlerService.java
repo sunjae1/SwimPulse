@@ -2130,12 +2130,37 @@ public class NoticeCrawlerService {
 	}
 
 	private List<MatchedPeriod> normalizeMatchedPeriods(List<MatchedPeriod> periods) {
-		List<MatchedPeriod> normalized = suppressMonthlyFalsePositives(periods);
+		List<MatchedPeriod> normalized = removeTruncatedMonthlyCandidates(periods);
+		normalized = suppressMonthlyFalsePositives(normalized);
 		normalized = collapseSameRangeDuplicates(normalized);
 		normalized = removeSingleDayNoiseInsideRanges(normalized);
 		normalized = collapseSameRangeDuplicates(normalized);
 		normalized = removeUnlabeledNoise(normalized);
 		return normalized;
+	}
+
+	private List<MatchedPeriod> removeTruncatedMonthlyCandidates(List<MatchedPeriod> periods) {
+		return periods.stream()
+				.filter(candidate -> !isTruncatedMonthlyCandidate(candidate, periods))
+				.toList();
+	}
+
+	private boolean isTruncatedMonthlyCandidate(MatchedPeriod candidate, List<MatchedPeriod> periods) {
+		if (!candidate.source().contains("monthly") || !isSingleDay(candidate)) {
+			return false;
+		}
+		String candidateText = normalizeForSearch(candidate.periodText());
+		if (!hasText(candidateText)) {
+			return false;
+		}
+		return periods.stream()
+				.filter(other -> other != candidate)
+				.filter(other -> other.source().contains("monthly") && isMultiDayRange(other))
+				.filter(other -> candidate.startsAt().getDayOfMonth() == other.startsAt().getDayOfMonth())
+				.filter(other -> labelsAreCompatible(candidate.label(), other.label()))
+				.map(other -> normalizeForSearch(other.periodText()))
+				.anyMatch(otherText -> otherText.length() > candidateText.length()
+						&& otherText.startsWith(candidateText));
 	}
 
 	private MatchedPeriod canonicalizePeriodLabel(MatchedPeriod period) {

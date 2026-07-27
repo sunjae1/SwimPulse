@@ -181,7 +181,58 @@ class SubscriptionServiceTests {
 	}
 
 	@Test
-	void subscribeCreatesCustomEventWhenPastNoticePeriodIsShiftedToCurrentMonth() {
+	void subscribeRejectsClosedOfficialNoticePeriod() {
+		Pool pool = new Pool("강남 수영장", "강남구", "테스트");
+		setField(pool, "id", 101L);
+		PoolNotice notice = new PoolNotice(
+				pool,
+				"지난 회원 모집",
+				"https://example.com/notices/closed",
+				"본문",
+				NoticeExtractionStatus.EXTRACTED,
+				0.9,
+				null,
+				null,
+				"테스트"
+		);
+		Instant startsAt = Instant.now().minus(8, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		Instant endsAt = Instant.now().minus(4, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+		NoticeRegistrationPeriodEntity period = new NoticeRegistrationPeriodEntity(
+				notice,
+				new NoticeRegistrationPeriod("지난 모집", startsAt, endsAt, "7. 20. ~ 7. 24.", "block")
+		);
+		setField(period, "id", 62L);
+
+		when(userRepository.existsById(7L)).thenReturn(true);
+		when(periodRepository.findByIdAndStatusWithNoticeAndPool(62L, NoticeRegistrationPeriodStatus.ACTIVE))
+				.thenReturn(Optional.of(period));
+
+		BadRequestException exception = assertThrows(BadRequestException.class, () -> subscriptionService.subscribe(
+				7L,
+				new CreateSubscriptionRequest(
+						101L,
+						"지난 모집 - 지난 회원 모집",
+						startsAt,
+						endsAt,
+						62L,
+						null
+				)
+		));
+
+		assertEquals("Cannot subscribe to an already closed registration period.", exception.getMessage());
+		verify(eventResolver, never()).getOrCreateForNoticePeriod(
+				org.mockito.ArgumentMatchers.any(NoticeRegistrationPeriodEntity.class),
+				org.mockito.ArgumentMatchers.anyString()
+		);
+		verify(insertService, never()).insert(
+				org.mockito.ArgumentMatchers.anyLong(),
+				org.mockito.ArgumentMatchers.anyLong(),
+				org.mockito.ArgumentMatchers.anyLong()
+		);
+	}
+
+	@Test
+	void subscribeCreatesCustomEventWhenClosedNoticePeriodIsShiftedToFuture() {
 		AppUser user = new AppUser("swimmer@example.com", "수영러", null);
 		setField(user, "id", 7L);
 		Pool pool = new Pool("오정레포츠센터수영장", "오정구", "테스트");

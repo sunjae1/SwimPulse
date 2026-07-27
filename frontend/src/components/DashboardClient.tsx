@@ -30,7 +30,6 @@ import {
   createPoolFromLocationCandidate,
   createSubscription,
   deleteSubscription,
-  geocodeLocation,
   getCurrentDeviceRegistration,
   getEvents,
   getMe,
@@ -82,7 +81,7 @@ type EventForm = {
   endsAt: string;
 };
 
-type PastPeriodPrompt = {
+type ClosedPeriodPrompt = {
   notice: PoolNotice;
   originalPeriod: NoticeRegistrationPeriod;
   shiftedPeriod: NoticeRegistrationPeriod;
@@ -123,7 +122,7 @@ export function DashboardClient({
   const [poolPage, setPoolPage] = useState(1);
   const [noticeSubscriptionMode, setNoticeSubscriptionMode] = useState(false);
   const [pendingSubscriptionKey, setPendingSubscriptionKey] = useState<string | null>(null);
-  const [pastPeriodPrompt, setPastPeriodPrompt] = useState<PastPeriodPrompt | null>(null);
+  const [closedPeriodPrompt, setClosedPeriodPrompt] = useState<ClosedPeriodPrompt | null>(null);
   const [loginRequiredModalOpen, setLoginRequiredModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -371,9 +370,7 @@ export function DashboardClient({
   }
 
   async function selectLocationCandidate(candidate: LocationSearchCandidate) {
-    const address = candidate.roadAddress ?? candidate.address;
-    if (!address) {
-      setNotice("선택한 후보에 사용할 주소가 없습니다.");
+    if (!hasLocationCandidateCoordinates(candidate)) {
       return;
     }
 
@@ -383,14 +380,13 @@ export function DashboardClient({
     setFacilityCandidatesBusyLabel(candidate.title);
     setNotice(null);
     try {
-      const geocoded = await geocodeLocation(address);
       const selectedLocation = {
-        latitude: geocoded.latitude,
-        longitude: geocoded.longitude,
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
       };
       const [nearby, facilities] = await Promise.all([
-        getNearbyPools(geocoded.latitude, geocoded.longitude, 10),
-        getPoolLocationCandidates(geocoded.latitude, geocoded.longitude, 5000, "체육센터", 10),
+        getNearbyPools(selectedLocation.latitude, selectedLocation.longitude, 10),
+        getPoolLocationCandidates(selectedLocation.latitude, selectedLocation.longitude, 5000, "체육센터", 10),
       ]);
       setLocationQuery(candidate.title);
       setLocationCandidates([]);
@@ -506,31 +502,34 @@ export function DashboardClient({
       setLoginRequiredModalOpen(true);
       return;
     }
-    if (isPastMonthPeriod(period)) {
-      setNotice("지난 달 모집 기간입니다.");
-      setPastPeriodPrompt({
+    if (isClosedPeriod(period)) {
+      const shiftedPeriod = shiftClosedPeriodToNextAvailableMonth(period);
+      setNotice("이미 지난 모집 기간입니다.");
+      setClosedPeriodPrompt({
         notice,
         originalPeriod: period,
-        shiftedPeriod: shiftPeriodToCurrentMonth(period),
+        shiftedPeriod,
       });
       return;
     }
     await createNoticePeriodSubscription(notice, period, period.id, buildSubscriptionTitle(notice, period));
   }
 
-  async function confirmCurrentMonthSubscription() {
-    if (!pastPeriodPrompt) {
+  async function confirmCustomFutureSubscription() {
+    if (!closedPeriodPrompt) {
       return;
     }
-    const { notice: targetNotice, shiftedPeriod } = pastPeriodPrompt;
+    const { notice: targetNotice, shiftedPeriod } = closedPeriodPrompt;
+    const targetMonth = formatTargetMonth(shiftedPeriod.startsAt);
     const subscribed = await createNoticePeriodSubscription(
       targetNotice,
       shiftedPeriod,
       null,
       buildEstimatedSubscriptionTitle(targetNotice, shiftedPeriod),
+      `${targetMonth} 같은 날짜에 사용자 지정 알림을 등록했습니다.`,
     );
     if (subscribed) {
-      setPastPeriodPrompt(null);
+      setClosedPeriodPrompt(null);
     }
   }
 
@@ -539,6 +538,7 @@ export function DashboardClient({
     targetPeriod: NoticeRegistrationPeriod,
     noticeRegistrationPeriodId: number | null,
     title: string,
+    successMessage?: string,
   ) {
     const key = subscriptionKey(targetNotice.poolId, title, targetPeriod.startsAt, targetPeriod.endsAt);
     setPendingSubscriptionKey(key);
@@ -556,9 +556,10 @@ export function DashboardClient({
       setSubscriptions(freshSubscriptions);
       setEvents(freshEvents);
       setNotice(
-        noticeRegistrationPeriodId === null
-          ? "이번 달 같은 날짜를 예상 모집 기간으로 구독했습니다."
-          : "선택한 모집 기간 알림을 구독했습니다.",
+        successMessage ??
+          (noticeRegistrationPeriodId === null
+            ? "사용자 지정 모집 기간 알림을 구독했습니다."
+            : "선택한 모집 기간 알림을 구독했습니다."),
       );
       return true;
     } catch (error) {
@@ -1028,20 +1029,38 @@ export function DashboardClient({
                 <div className="mt-3 grid gap-2">
                   {locationCandidates.map((candidate, index) => {
                     const address = candidate.roadAddress ?? candidate.address ?? "주소 없음";
+                    const selectable = hasLocationCandidateCoordinates(candidate);
                     return (
                       <div
                         key={`${candidate.title}-${address}-${index}`}
-                        className="swim-row-motion rounded-lg border border-[#c8def0] bg-white px-3 py-3"
+                        className={`swim-row-motion rounded-lg border px-3 py-3 ${
+                          selectable ? "border-[#c8def0] bg-white" : "border-[#d8ddd9] bg-[#f5f6f4]"
+                        }`}
                       >
-                        <button className="grid w-full gap-1 text-left" onClick={() => selectLocationCandidate(candidate)} disabled={busy} type="button">
+                        <button
+                          className="grid w-full gap-1 text-left disabled:cursor-not-allowed"
+                          onClick={() => selectLocationCandidate(candidate)}
+                          disabled={busy || !selectable}
+                          type="button"
+                        >
                           <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#17201d]">
                             {candidate.title}
-                            <span className="rounded-md bg-[#edf7f5] px-2 py-1 text-xs font-semibold text-[#0f766e]">
-                              기준 위치
+                            <span
+                              className={`rounded-md px-2 py-1 text-xs font-semibold ${
+                                selectable ? "bg-[#edf7f5] text-[#0f766e]" : "bg-[#eceeeb] text-[#6f7772]"
+                              }`}
+                            >
+                              {selectable ? "기준 위치" : "선택 불가"}
                             </span>
                           </span>
                           <span className="text-xs text-[#66746d]">{address}</span>
                           {candidate.category ? <span className="text-xs text-[#0f766e]">{candidate.category}</span> : null}
+                          {!selectable ? (
+                            <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-[#a04b3d]">
+                              <CircleAlert size={13} aria-hidden />
+                              위치 좌표를 확인하지 못했습니다. 다른 결과를 선택해주세요.
+                            </span>
+                          ) : null}
                         </button>
                       </div>
                     );
@@ -1381,20 +1400,20 @@ export function DashboardClient({
           isAdmin={isAdmin}
         />
       ) : null}
-      {pastPeriodPrompt ? (
-        <PastPeriodSubscriptionModal
-          prompt={pastPeriodPrompt}
+      {closedPeriodPrompt ? (
+        <ClosedPeriodSubscriptionModal
+          prompt={closedPeriodPrompt}
           busy={
             pendingSubscriptionKey ===
             subscriptionKey(
-              pastPeriodPrompt.notice.poolId,
-              buildEstimatedSubscriptionTitle(pastPeriodPrompt.notice, pastPeriodPrompt.shiftedPeriod),
-              pastPeriodPrompt.shiftedPeriod.startsAt,
-              pastPeriodPrompt.shiftedPeriod.endsAt,
+              closedPeriodPrompt.notice.poolId,
+              buildEstimatedSubscriptionTitle(closedPeriodPrompt.notice, closedPeriodPrompt.shiftedPeriod),
+              closedPeriodPrompt.shiftedPeriod.startsAt,
+              closedPeriodPrompt.shiftedPeriod.endsAt,
             )
           }
-          onConfirm={confirmCurrentMonthSubscription}
-          onClose={() => setPastPeriodPrompt(null)}
+          onConfirm={confirmCustomFutureSubscription}
+          onClose={() => setClosedPeriodPrompt(null)}
         />
       ) : null}
       {loginRequiredModalOpen ? (
@@ -1990,17 +2009,20 @@ function CandidateConfirmModal({
   );
 }
 
-function PastPeriodSubscriptionModal({
+function ClosedPeriodSubscriptionModal({
   prompt,
   busy,
   onConfirm,
   onClose,
 }: {
-  prompt: PastPeriodPrompt;
+  prompt: ClosedPeriodPrompt;
   busy: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const targetMonthDescription = formatTargetMonthDescription(prompt.shiftedPeriod.startsAt);
+  const targetMonth = formatTargetMonth(prompt.shiftedPeriod.startsAt);
+
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/45 px-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-md rounded-lg border border-[#d8ddd5] bg-white shadow-xl">
@@ -2009,13 +2031,13 @@ function PastPeriodSubscriptionModal({
             <CalendarClock size={20} aria-hidden />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">지난 달 모집 기간입니다.</h2>
+            <h2 className="text-lg font-semibold">이미 지난 모집 기간입니다.</h2>
             <p className="text-sm text-[#66746d]">{prompt.notice.poolName}</p>
           </div>
         </div>
         <div className="space-y-4 px-5 py-5">
           <p className="text-sm font-semibold leading-6 text-[#31413b]">
-            이번 달 모집일과 다를 수 있습니다! <br></br>이번 달 같은 날에 알림을 보낼까요?
+            {targetMonthDescription} 공지를 기다리거나, {targetMonth} 같은 날짜에 사용자 지정 알림을 등록할까요?
           </p>
           <div className="grid gap-2 rounded-md border border-[#e3e7e1] bg-[#fafbf8] px-3 py-3 text-sm">
             <div className="flex items-center justify-between gap-3">
@@ -2025,15 +2047,16 @@ function PastPeriodSubscriptionModal({
               </span>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[#7c8982]">예상 알림 기간</span>
+              <span className="text-[#7c8982]">사용자 지정 기간</span>
               <span className="font-semibold text-[#0f766e]">
                 {formatDate(prompt.shiftedPeriod.startsAt)} - {formatDate(prompt.shiftedPeriod.endsAt)}
               </span>
             </div>
           </div>
-          <p className="text-xs leading-5 text-[#946123]">
-            공지 원문의 일자를 현재 월로 옮긴 예상 기간이며, 실제 모집 공지와 다를 수 있습니다.
-          </p>
+          <div className="rounded-md border border-[#f1c98d] bg-[#fff7e8] px-3 py-3 text-xs leading-5 text-[#805317]">
+            <strong>주의:</strong> 실제 공지에서 확인한 모집 기간이 아니라 임의로 지정한 사용자 알림입니다.
+            실제 모집 일정과 다를 수 있으므로 새 공지가 올라오면 반드시 원문을 확인해주세요.
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <button
               className="inline-flex h-10 items-center justify-center rounded-lg border border-[#cdd5cf] bg-white px-4 text-sm font-semibold text-[#31413b] transition hover:border-[#0f766e] disabled:opacity-50"
@@ -2041,7 +2064,7 @@ function PastPeriodSubscriptionModal({
               disabled={busy}
               type="button"
             >
-              취소
+              새 공지 기다리기
             </button>
             <button
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#0f766e] px-4 text-sm font-semibold text-white transition hover:bg-[#0b5f59] disabled:opacity-50"
@@ -2050,7 +2073,7 @@ function PastPeriodSubscriptionModal({
               type="button"
             >
               <Bell size={16} aria-hidden />
-              {busy ? "구독 중..." : "이 날짜로 구독"}
+              {busy ? "등록 중..." : `${targetMonth} 날짜로 등록`}
             </button>
           </div>
         </div>
@@ -2257,7 +2280,7 @@ function PeriodSelectionRow({
 }) {
   const title = buildSubscriptionTitle(notice, period);
   const key = subscriptionKey(notice.poolId, title, period.startsAt, period.endsAt);
-  const shiftedPeriod = isPastMonthPeriod(period) ? shiftPeriodToCurrentMonth(period) : null;
+  const shiftedPeriod = isClosedPeriod(period) ? shiftClosedPeriodToNextAvailableMonth(period) : null;
   const shiftedTitle = shiftedPeriod ? buildEstimatedSubscriptionTitle(notice, shiftedPeriod) : null;
   const shiftedKey =
     shiftedPeriod && shiftedTitle
@@ -2535,42 +2558,82 @@ function buildSubscriptionTitle(notice: PoolNotice, period: NoticeRegistrationPe
 
 function buildEstimatedSubscriptionTitle(notice: PoolNotice, period: NoticeRegistrationPeriod) {
   const baseTitle = buildSubscriptionTitle(notice, period);
-  const suffix = " (이번 달 예상)";
+  const current = seoulDateParts(new Date());
+  const target = seoulDateParts(new Date(period.startsAt));
+  const monthOffset = (target.year - current.year) * 12 + target.month - current.month;
+  const suffix = monthOffset === 0 ? " (이번 달 예상)" : ` (${formatTargetMonth(period.startsAt)} 사용자 지정)`;
   return `${baseTitle.slice(0, 120 - suffix.length)}${suffix}`;
 }
 
-function isPastMonthPeriod(period: NoticeRegistrationPeriod) {
-  const current = seoulDateParts(new Date());
-  const periodEnd = seoulDateParts(new Date(period.endsAt));
-  return periodEnd.year < current.year || (periodEnd.year === current.year && periodEnd.month < current.month);
+function isClosedPeriod(period: NoticeRegistrationPeriod, now = new Date()) {
+  const endsAt = new Date(period.endsAt);
+  return !Number.isNaN(endsAt.getTime()) && endsAt.getTime() <= now.getTime();
 }
 
-function shiftPeriodToCurrentMonth(period: NoticeRegistrationPeriod): NoticeRegistrationPeriod {
-  const current = seoulDateParts(new Date());
+function shiftClosedPeriodToNextAvailableMonth(
+  period: NoticeRegistrationPeriod,
+  now = new Date(),
+): NoticeRegistrationPeriod {
+  const current = seoulDateParts(now);
   const sourceStart = seoulDateParts(new Date(period.startsAt));
   const sourceEnd = seoulDateParts(new Date(period.endsAt));
   const dayMatches = Array.from((period.periodText ?? "").matchAll(/(\d{1,2})\s*일/g)).map((match) =>
     Number(match[1]),
   );
   const startDay = dayMatches[0] ?? sourceStart.day;
-  const sourceCrossesMonth =
-    sourceEnd.year > sourceStart.year ||
-    (sourceEnd.year === sourceStart.year && sourceEnd.month > sourceStart.month) ||
-    /익월/.test(period.periodText ?? "");
-  const targetStart = normalizeYearMonth(current.year, current.month);
-  const targetEnd = normalizeYearMonth(current.year, current.month + (sourceCrossesMonth ? 1 : 0));
-  const endDay = /말일/.test(period.periodText ?? "")
-    ? daysInMonth(targetEnd.year, targetEnd.month)
-    : dayMatches[1] ?? sourceEnd.day;
-  const safeStartDay = Math.min(startDay, daysInMonth(targetStart.year, targetStart.month));
-  const safeEndDay = Math.min(endDay, daysInMonth(targetEnd.year, targetEnd.month));
+  const sourceMonthOffset = Math.max(
+    0,
+    (sourceEnd.year - sourceStart.year) * 12 + sourceEnd.month - sourceStart.month,
+  );
+  const sourceStartsBeforeCurrentMonth =
+    sourceStart.year < current.year || (sourceStart.year === current.year && sourceStart.month < current.month);
+  let targetStart = normalizeYearMonth(
+    current.year,
+    current.month + (sourceStartsBeforeCurrentMonth ? 0 : 1),
+  );
 
-  return {
-    ...period,
-    id: null,
-    startsAt: seoulDateToIso(targetStart.year, targetStart.month, safeStartDay, false),
-    endsAt: seoulDateToIso(targetEnd.year, targetEnd.month, safeEndDay, true),
-  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const targetEnd = normalizeYearMonth(targetStart.year, targetStart.month + sourceMonthOffset);
+    const endDay = /말일/.test(period.periodText ?? "")
+      ? daysInMonth(targetEnd.year, targetEnd.month)
+      : dayMatches[1] ?? sourceEnd.day;
+    const shiftedPeriod = {
+      ...period,
+      id: null,
+      startsAt: seoulDateToIso(
+        targetStart.year,
+        targetStart.month,
+        Math.min(startDay, daysInMonth(targetStart.year, targetStart.month)),
+        false,
+      ),
+      endsAt: seoulDateToIso(
+        targetEnd.year,
+        targetEnd.month,
+        Math.min(endDay, daysInMonth(targetEnd.year, targetEnd.month)),
+        true,
+      ),
+    };
+    if (new Date(shiftedPeriod.endsAt).getTime() > now.getTime()) {
+      return shiftedPeriod;
+    }
+    targetStart = normalizeYearMonth(targetStart.year, targetStart.month + 1);
+  }
+
+  throw new Error("미래 사용자 지정 모집 기간을 계산하지 못했습니다.");
+}
+
+function formatTargetMonth(value: string) {
+  const target = seoulDateParts(new Date(value));
+  const current = seoulDateParts(new Date());
+  return target.year === current.year ? `${target.month}월` : `${target.year}년 ${target.month}월`;
+}
+
+function formatTargetMonthDescription(value: string) {
+  const target = seoulDateParts(new Date(value));
+  const current = seoulDateParts(new Date());
+  const monthOffset = (target.year - current.year) * 12 + target.month - current.month;
+  const relativeLabel = monthOffset === 0 ? "이번 달" : monthOffset === 1 ? "다음 달" : `${monthOffset}개월 후`;
+  return `${formatTargetMonth(value)}(${relativeLabel})`;
 }
 
 function seoulDateParts(date: Date) {
@@ -2651,6 +2714,20 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
+}
+
+function hasLocationCandidateCoordinates(candidate: LocationSearchCandidate): candidate is LocationSearchCandidate & {
+  latitude: number;
+  longitude: number;
+} {
+  return (
+    candidate.latitude !== null &&
+    candidate.longitude !== null &&
+    Number.isFinite(candidate.latitude) &&
+    Number.isFinite(candidate.longitude) &&
+    Math.abs(candidate.latitude) <= 90 &&
+    Math.abs(candidate.longitude) <= 180
+  );
 }
 
 function isPushTokenMissingError(error: unknown) {

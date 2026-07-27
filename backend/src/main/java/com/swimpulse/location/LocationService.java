@@ -25,6 +25,7 @@ public class LocationService {
 	private static final Logger log = LoggerFactory.getLogger(LocationService.class);
 	private static final int DEFAULT_DISPLAY = 5;
 	private static final int MAX_DISPLAY = 10;
+	private static final int SEARCH_GEOCODE_CONCURRENCY = 5;
 	private static final String IMPOSSIBLE_NORMALIZED_VALUE = "\u0000";
 
 	private final NaverLocalSearchClient naverLocalSearchClient;
@@ -53,9 +54,85 @@ public class LocationService {
 		List<LocationSearchCandidate> candidates = recordStep("naver_local_search", () ->
 				naverLocalSearchClient.search(normalizedQuery, normalizedDisplay)
 		);
-		meterRegistry.summary("swimpulse.location.search.result_count").record(candidates.size());
-		log.info("Location search completed. query={} resultCount={}", normalizedQuery, candidates.size());
-		return candidates;
+		List<LocationSearchCandidate> resolvedCandidates = enrichMissingCoordinates(candidates);
+		meterRegistry.summary("swimpulse.location.search.result_count").record(resolvedCandidates.size());
+		log.info("Location search completed. query={} resultCount={} selectableCount={}",
+				normalizedQuery,
+				resolvedCandidates.size(),
+				resolvedCandidates.stream().filter(this::hasCoordinates).count());
+		return resolvedCandidates;
+	}
+
+	private List<LocationSearchCandidate> enrichMissingCoordinates(List<LocationSearchCandidate> candidates) {
+		if (candidates.isEmpty() || candidates.stream().allMatch(this::hasCoordinates)
+				|| !naverMapsGeocodingClient.isConfigured()) {
+			return candidates;
+		}
+
+		List<String> roadAddresses = candidates.stream()
+				.filter(candidate -> !hasCoordinates(candidate))
+				.map(LocationSearchCandidate::roadAddress)
+				.filter(this::hasText)
+				.distinct()
+				.toList();
+		Map<String, NaverMapsGeocodingClient.GeocodeBatchResult> roadResults =
+				naverMapsGeocodingClient.geocodeAll(roadAddresses, SEARCH_GEOCODE_CONCURRENCY);
+
+		List<LocationSearchCandidate> roadResolved = candidates.stream()
+				.map(candidate -> enrichCandidate(
+						candidate,
+						geocodeResult(roadResults, candidate.roadAddress())
+				))
+				.toList();
+
+		List<String> lotAddresses = roadResolved.stream()
+				.filter(candidate -> !hasCoordinates(candidate))
+				.filter(candidate -> hasText(candidate.address()))
+				.filter(candidate -> !candidate.address().equals(candidate.roadAddress()))
+				.map(LocationSearchCandidate::address)
+				.distinct()
+				.toList();
+		Map<String, NaverMapsGeocodingClient.GeocodeBatchResult> lotResults =
+				naverMapsGeocodingClient.geocodeAll(lotAddresses, SEARCH_GEOCODE_CONCURRENCY);
+
+		return roadResolved.stream()
+				.map(candidate -> enrichCandidate(
+						candidate,
+						geocodeResult(lotResults, candidate.address())
+				))
+				.toList();
+	}
+
+	private NaverMapsGeocodingClient.GeocodeBatchResult geocodeResult(
+			Map<String, NaverMapsGeocodingClient.GeocodeBatchResult> results,
+			String address
+	) {
+		return hasText(address) ? results.get(address) : null;
+	}
+
+	private LocationSearchCandidate enrichCandidate(
+			LocationSearchCandidate candidate,
+			NaverMapsGeocodingClient.GeocodeBatchResult result
+	) {
+		if (hasCoordinates(candidate) || result == null || result.exception() != null) {
+			return candidate;
+		}
+		return result.coordinates()
+				.map(coordinates -> candidate.withEnrichment(
+						coordinates.latitude(),
+						coordinates.longitude(),
+						candidate.distanceMeters()
+				))
+				.orElse(candidate);
+	}
+
+	private boolean hasCoordinates(LocationSearchCandidate candidate) {
+		return candidate.latitude() != null
+				&& candidate.longitude() != null
+				&& Double.isFinite(candidate.latitude())
+				&& Double.isFinite(candidate.longitude())
+				&& Math.abs(candidate.latitude()) <= 90
+				&& Math.abs(candidate.longitude()) <= 180;
 	}
 
 	public GeocodedLocationResponse geocode(String address) {

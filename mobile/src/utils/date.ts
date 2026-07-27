@@ -1,6 +1,5 @@
 import type {EventStatus, RegistrationEvent, Subscription} from '../api/types';
 
-const MINUTE_MS = 60 * 1000;
 export const SEOUL_TIME_ZONE = 'Asia/Seoul';
 
 export function formatDateTime(value: string | null | undefined) {
@@ -61,26 +60,82 @@ export function isOcrInProgress(status: string | undefined) {
 }
 
 export function isPastPeriod(startsAt: string, endsAt: string) {
-  return new Date(endsAt).getTime() < Date.now() - MINUTE_MS;
+  const end = new Date(endsAt);
+  return !Number.isNaN(end.getTime()) && end.getTime() <= Date.now();
 }
 
-export function shiftPeriodToCurrentMonth(startsAt: string, endsAt: string) {
+export function shiftPeriodToNextAvailableMonth(
+  startsAt: string,
+  endsAt: string,
+  now = new Date(),
+) {
   const start = new Date(startsAt);
   const end = new Date(endsAt);
-  const now = new Date();
-  const shiftedStart = new Date(start);
-  const shiftedEnd = new Date(end);
-  shiftedStart.setFullYear(now.getFullYear(), now.getMonth(), start.getDate());
-  shiftedEnd.setFullYear(now.getFullYear(), now.getMonth(), end.getDate());
-
-  if (shiftedEnd.getTime() <= shiftedStart.getTime()) {
-    shiftedEnd.setMonth(shiftedStart.getMonth() + 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error('모집 기간 날짜 형식이 올바르지 않습니다.');
   }
 
-  return {
-    registrationStartsAt: shiftedStart.toISOString(),
-    registrationEndsAt: shiftedEnd.toISOString(),
-  };
+  const current = seoulDateTimeParts(now);
+  const sourceStart = seoulDateTimeParts(start);
+  const sourceEnd = seoulDateTimeParts(end);
+  const sourceMonthOffset = Math.max(
+    0,
+    (sourceEnd.year - sourceStart.year) * 12 + sourceEnd.month - sourceStart.month,
+  );
+  const sourceStartsBeforeCurrentMonth =
+    sourceStart.year < current.year ||
+    (sourceStart.year === current.year && sourceStart.month < current.month);
+  let targetStartMonth = normalizeYearMonth(
+    current.year,
+    current.month + (sourceStartsBeforeCurrentMonth ? 0 : 1),
+  );
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const targetEndMonth = normalizeYearMonth(
+      targetStartMonth.year,
+      targetStartMonth.month + sourceMonthOffset,
+    );
+    const shiftedStart = seoulDateTimeToIso(
+      targetStartMonth.year,
+      targetStartMonth.month,
+      Math.min(sourceStart.day, daysInMonth(targetStartMonth.year, targetStartMonth.month)),
+      sourceStart.hour,
+      sourceStart.minute,
+      sourceStart.second,
+    );
+    const shiftedEnd = seoulDateTimeToIso(
+      targetEndMonth.year,
+      targetEndMonth.month,
+      Math.min(sourceEnd.day, daysInMonth(targetEndMonth.year, targetEndMonth.month)),
+      sourceEnd.hour,
+      sourceEnd.minute,
+      sourceEnd.second,
+    );
+
+    if (new Date(shiftedEnd).getTime() > now.getTime()) {
+      return {
+        registrationStartsAt: shiftedStart,
+        registrationEndsAt: shiftedEnd,
+      };
+    }
+    targetStartMonth = normalizeYearMonth(targetStartMonth.year, targetStartMonth.month + 1);
+  }
+
+  throw new Error('미래 사용자 지정 모집 기간을 계산하지 못했습니다.');
+}
+
+export function formatMonthLabel(value: string, now = new Date()) {
+  const target = seoulDateTimeParts(new Date(value));
+  const current = seoulDateTimeParts(now);
+  return target.year === current.year ? `${target.month}월` : `${target.year}년 ${target.month}월`;
+}
+
+export function formatMonthDescription(value: string, now = new Date()) {
+  const target = seoulDateTimeParts(new Date(value));
+  const current = seoulDateTimeParts(now);
+  const monthOffset = (target.year - current.year) * 12 + target.month - current.month;
+  const relative = monthOffset === 0 ? '이번 달' : monthOffset === 1 ? '다음 달' : `${monthOffset}개월 후`;
+  return `${formatMonthLabel(value, now)}(${relative})`;
 }
 
 export function toInputDateTime(value: string) {
@@ -135,4 +190,49 @@ export function fromInputDateTime(value: string) {
     return null;
   }
   return date.toISOString();
+}
+
+function seoulDateTimeParts(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SEOUL_TIME_ZONE,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const value = (type: string) => Number(parts.find(part => part.type === type)?.value ?? 0);
+  return {
+    year: value('year'),
+    month: value('month'),
+    day: value('day'),
+    hour: value('hour'),
+    minute: value('minute'),
+    second: value('second'),
+  };
+}
+
+function normalizeYearMonth(year: number, month: number) {
+  const normalized = new Date(Date.UTC(year, month - 1, 1));
+  return {
+    year: normalized.getUTCFullYear(),
+    month: normalized.getUTCMonth() + 1,
+  };
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function seoulDateTimeToIso(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+) {
+  return new Date(Date.UTC(year, month - 1, day, hour - 9, minute, second)).toISOString();
 }

@@ -47,7 +47,7 @@ public class NaverMapsGeocodingClient {
 			RedisJsonCacheService redisCache,
 			RedisSingleFlightService singleFlightService,
 			@Value("${swimpulse.cache.geocode-success-ttl:P30D}") Duration geocodeSuccessTtl,
-			@Value("${swimpulse.cache.geocode-failure-ttl:P1D}") Duration geocodeFailureTtl,
+			@Value("${swimpulse.cache.geocode-failure-ttl:PT1H}") Duration geocodeFailureTtl,
 			@Value("${swimpulse.cache.reverse-geocode-success-ttl:P7D}") Duration reverseGeocodeSuccessTtl,
 			@Value("${swimpulse.cache.reverse-geocode-failure-ttl:P1D}") Duration reverseGeocodeFailureTtl,
 			@Value("${swimpulse.cache.single-flight-lock-ttl-ms:3000}") long singleFlightLockTtlMs,
@@ -340,7 +340,7 @@ public class NaverMapsGeocodingClient {
 	}
 
 	private String geocodeCacheKey(String normalizedAddress) {
-		return "swimpulse:cache:geocode:v1:" + redisCache.hash(normalizedAddress);
+		return "swimpulse:cache:geocode:v2:" + redisCache.hash(normalizedAddress);
 	}
 
 	private String bucket(double value) {

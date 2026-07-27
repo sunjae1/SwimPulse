@@ -9,6 +9,7 @@ import com.swimpulse.pool.NaverMapsGeocodingClient;
 import com.swimpulse.pool.PoolRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,5 +74,80 @@ class LocationServiceTests {
 				org.mockito.ArgumentMatchers.any()
 		);
 		verify(naverMapsGeocodingClient, never()).geocode(org.mockito.ArgumentMatchers.anyString());
+	}
+
+	@Test
+	void searchKeepsLocalSearchCoordinatesWithoutGeocoding() {
+		LocationSearchCandidate candidate = LocationSearchCandidate.basic(
+				"소사국민체육센터",
+				"스포츠시설",
+				"경기도 부천시 소사구 소사본동 64",
+				"경기도 부천시 소사구 경인옛로 73",
+				null
+		).withEnrichment(37.4801, 126.7952, null);
+		when(naverLocalSearchClient.search("소사국민체육센터", 5)).thenReturn(List.of(candidate));
+
+		List<LocationSearchCandidate> results = locationService.search("소사국민체육센터", 5, null, null);
+
+		assertEquals(37.4801, results.getFirst().latitude());
+		assertEquals(126.7952, results.getFirst().longitude());
+		verify(naverMapsGeocodingClient, never()).geocodeAll(
+				org.mockito.ArgumentMatchers.anyCollection(),
+				org.mockito.ArgumentMatchers.anyInt()
+		);
+	}
+
+	@Test
+	void searchFallsBackFromRoadAddressToLotAddress() {
+		String roadAddress = "경기도 부천시 소사구 소사본동 경인옛로 73";
+		String lotAddress = "경기도 부천시 소사구 소사본동 64";
+		LocationSearchCandidate candidate = LocationSearchCandidate.basic(
+				"소사국민체육센터",
+				"스포츠시설",
+				lotAddress,
+				roadAddress,
+				null
+		);
+		when(naverLocalSearchClient.search("소사국민체육센터", 5)).thenReturn(List.of(candidate));
+		when(naverMapsGeocodingClient.isConfigured()).thenReturn(true);
+		when(naverMapsGeocodingClient.geocodeAll(List.of(roadAddress), 5))
+				.thenReturn(Map.of(roadAddress, NaverMapsGeocodingClient.GeocodeBatchResult.miss()));
+		when(naverMapsGeocodingClient.geocodeAll(List.of(lotAddress), 5))
+				.thenReturn(Map.of(
+						lotAddress,
+						NaverMapsGeocodingClient.GeocodeBatchResult.hit(
+								new NaverMapsGeocodingClient.Coordinates(37.4801, 126.7952)
+						)
+				));
+
+		List<LocationSearchCandidate> results = locationService.search("소사국민체육센터", 5, null, null);
+
+		assertEquals(37.4801, results.getFirst().latitude());
+		assertEquals(126.7952, results.getFirst().longitude());
+	}
+
+	@Test
+	void searchKeepsCandidateDisabledWhenAllCoordinateLookupsMiss() {
+		String roadAddress = "경기도 부천시 소사구 소사본동 경인옛로 73";
+		String lotAddress = "경기도 부천시 소사구 소사본동 64";
+		LocationSearchCandidate candidate = LocationSearchCandidate.basic(
+				"소사국민체육센터",
+				"스포츠시설",
+				lotAddress,
+				roadAddress,
+				null
+		);
+		when(naverLocalSearchClient.search("소사국민체육센터", 5)).thenReturn(List.of(candidate));
+		when(naverMapsGeocodingClient.isConfigured()).thenReturn(true);
+		when(naverMapsGeocodingClient.geocodeAll(List.of(roadAddress), 5))
+				.thenReturn(Map.of(roadAddress, NaverMapsGeocodingClient.GeocodeBatchResult.miss()));
+		when(naverMapsGeocodingClient.geocodeAll(List.of(lotAddress), 5))
+				.thenReturn(Map.of(lotAddress, NaverMapsGeocodingClient.GeocodeBatchResult.miss()));
+
+		List<LocationSearchCandidate> results = locationService.search("소사국민체육센터", 5, null, null);
+
+		assertEquals(1, results.size());
+		assertEquals(null, results.getFirst().latitude());
+		assertEquals(null, results.getFirst().longitude());
 	}
 }

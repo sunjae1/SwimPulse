@@ -700,6 +700,7 @@ public class PoolService {
 			Double originLongitude
 	) {
 		List<String> addresses = candidates.stream()
+				.filter(candidate -> !hasCandidateCoordinates(candidate))
 				.map(this::resolveCandidateAddress)
 				.filter(this::hasText)
 				.distinct()
@@ -719,6 +720,20 @@ public class PoolService {
 			Double originLatitude,
 			Double originLongitude
 	) {
+		if (hasCandidateCoordinates(candidate)) {
+			double distance = locationService.distanceMeters(
+					originLatitude,
+					originLongitude,
+					candidate.latitude(),
+					candidate.longitude()
+			);
+			return new ResolvedLocationCandidate(
+					candidate,
+					candidate.latitude(),
+					candidate.longitude(),
+					distance
+			);
+		}
 		String address = resolveCandidateAddress(candidate);
 		if (!hasText(address)) {
 			return new ResolvedLocationCandidate(candidate, null, null, Double.MAX_VALUE);
@@ -752,6 +767,15 @@ public class PoolService {
 				coordinates.longitude()
 		);
 		return new ResolvedLocationCandidate(candidate, coordinates.latitude(), coordinates.longitude(), distance);
+	}
+
+	private boolean hasCandidateCoordinates(LocationSearchCandidate candidate) {
+		return candidate.latitude() != null
+				&& candidate.longitude() != null
+				&& Double.isFinite(candidate.latitude())
+				&& Double.isFinite(candidate.longitude())
+				&& Math.abs(candidate.latitude()) <= 90
+				&& Math.abs(candidate.longitude()) <= 180;
 	}
 
 	private PoolLocationCandidateResponse enrichLocationCandidate(ResolvedLocationCandidate candidate, Pool exactMatch) {
